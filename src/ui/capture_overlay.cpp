@@ -19,6 +19,7 @@
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QPalette>
 #include <QPainter>
 #include <QPushButton>
 #include <QScreen>
@@ -37,6 +38,43 @@ QString qString(const std::string& value) {
 QColor followSystemColor() {
     const auto scheme = QGuiApplication::styleHints()->colorScheme();
     return scheme == Qt::ColorScheme::Light ? QColor(245, 245, 245) : QColor(17, 19, 23);
+}
+
+QString cssRgba(QColor color, int alpha = -1) {
+    if (alpha >= 0)
+        color.setAlpha(alpha);
+    return QStringLiteral("rgba(%1,%2,%3,%4)").arg(color.red()).arg(color.green()).arg(color.blue()).arg(color.alpha());
+}
+
+QColor mixedColor(QColor a, QColor b, double amount) {
+    const auto mix = [&](int av, int bv) { return static_cast<int>(std::round(av * (1.0 - amount) + bv * amount)); };
+    return QColor(mix(a.red(), b.red()), mix(a.green(), b.green()), mix(a.blue(), b.blue()), mix(a.alpha(), b.alpha()));
+}
+
+QString toolbarStyleSheet(const QPalette& palette) {
+    const QColor window = palette.color(QPalette::Window);
+    const QColor button = palette.color(QPalette::Button);
+    const QColor text = palette.color(QPalette::WindowText);
+    const QColor highlight = palette.color(QPalette::Highlight);
+    const QColor highlightedText = palette.color(QPalette::HighlightedText);
+    const QColor border = mixedColor(text, window, 0.55);
+    const QColor hover = mixedColor(button, highlight, 0.16);
+    const QColor checked = mixedColor(button, highlight, 0.32);
+
+    return QStringLiteral(
+               "#toolbar { background: %1; border: 1px solid %2; border-radius: 8px; }"
+               "QPushButton { color: %3; background: transparent; padding: 6px 10px; border: none; border-radius: 5px; }"
+               "QPushButton:hover { background: %4; }"
+               "QPushButton:checked { color: %3; background: %5; }"
+               "QPushButton:pressed { color: %6; background: %7; }"
+               "QComboBox { color: %3; background: %8; border: 1px solid %2; border-radius: 5px; padding: 5px 24px 5px 9px; }"
+               "QComboBox::drop-down { border: none; width: 18px; }"
+               "QComboBox QAbstractItemView { color: %3; background: %9; selection-color: %6; selection-background-color: %7; outline: none; }"
+               "QCheckBox { color: %3; spacing: 6px; }"
+               "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 8px; border: 1px solid %2; background: %8; }"
+               "QCheckBox::indicator:checked { background: %7; border-color: %7; }"
+               "QLabel { color: %3; }")
+        .arg(cssRgba(window, 238), cssRgba(border, 150), cssRgba(text), cssRgba(hover, 180), cssRgba(checked, 220), cssRgba(highlightedText), cssRgba(highlight), cssRgba(button, 170), cssRgba(window));
 }
 
 QRect jsonRect(const QJsonObject& obj) {
@@ -152,18 +190,8 @@ void CaptureOverlay::captureScreensBeforeOverlay() {
 void CaptureOverlay::buildToolbar() {
     m_toolbar = new QWidget(this);
     m_toolbar->setObjectName("toolbar");
-    m_toolbar->setStyleSheet(
-        "#toolbar { background: rgba(20, 22, 26, 238); border: 1px solid rgba(255,255,255,90); border-radius: 8px; }"
-        "QPushButton { color: #f4f7fb; background: transparent; padding: 6px 10px; border: none; border-radius: 5px; }"
-        "QPushButton:hover { background: rgba(255,255,255,30); }"
-        "QPushButton:checked { color: #ffffff; background: rgba(255,255,255,64); }"
-        "QComboBox { color: #f4f7fb; background: rgba(255,255,255,18); border: 1px solid rgba(255,255,255,36); border-radius: 5px; padding: 5px 24px 5px 9px; }"
-        "QComboBox::drop-down { border: none; width: 18px; }"
-        "QComboBox QAbstractItemView { color: #f4f7fb; background: #1f2329; selection-background-color: #3b4654; outline: none; }"
-        "QCheckBox { color: #f4f7fb; spacing: 6px; }"
-        "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,90); background: rgba(255,255,255,18); }"
-        "QCheckBox::indicator:checked { background: #3ddc84; border-color: #3ddc84; }"
-        "QLabel { color: #d8dee8; }");
+    m_toolbar->setAttribute(Qt::WA_StyledBackground);
+    m_toolbar->setStyleSheet(toolbarStyleSheet(QApplication::palette()));
 
     auto* layout = new QHBoxLayout(m_toolbar);
     layout->setContentsMargins(10, 7, 10, 7);
