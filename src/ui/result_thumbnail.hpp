@@ -1,11 +1,15 @@
 #pragma once
 
-#include <QLabel>
 #include <QMargins>
 #include <QPoint>
 #include <QTimer>
+#include <QWidget>
 
-class ResultThumbnail final : public QLabel {
+class QLabel;
+class QPixmap;
+class QWidget;
+
+class ResultThumbnail final : public QWidget {
     Q_OBJECT
 
   public:
@@ -21,8 +25,12 @@ class ResultThumbnail final : public QLabel {
 
   private:
     bool openPath(const QString& path);
+    void toggleMenu();
+    void applyLayerSize();
 
     QString m_path;
+    QLabel* m_imageLabel = nullptr;
+    QWidget* m_menuPanel = nullptr;
     QPoint  m_pressGlobal;
     QPoint  m_dragStart;
     QMargins m_dragMargins;

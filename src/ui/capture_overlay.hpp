@@ -11,8 +11,8 @@
 
 class QButtonGroup;
 class QCheckBox;
-class QComboBox;
 class QLabel;
+class InlineSelect;
 
 class CaptureOverlay final : public QMainWindow {
     Q_OBJECT
@@ -63,8 +63,8 @@ class CaptureOverlay final : public QMainWindow {
     QPoint                    m_dragEnd;
 
     QWidget*     m_toolbar = nullptr;
-    QComboBox*   m_fullscreenScope = nullptr;
-    QComboBox*   m_windowBackground = nullptr;
+    InlineSelect* m_fullscreenScope = nullptr;
+    InlineSelect* m_windowBackground = nullptr;
     QCheckBox*   m_save = nullptr;
     QCheckBox*   m_clipboard = nullptr;
     QCheckBox*   m_thumbnail = nullptr;

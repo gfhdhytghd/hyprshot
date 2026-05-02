@@ -8,9 +8,9 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QClipboard>
-#include <QComboBox>
 #include <QDateTime>
 #include <QDir>
+#include <QFrame>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -18,6 +18,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPainter>
@@ -25,12 +26,39 @@
 #include <QPushButton>
 #include <QScreen>
 #include <QStandardPaths>
+#include <QStringList>
 #include <QStyleHints>
+#include <QVBoxLayout>
 #include <QTimer>
 
+#include <algorithm>
 #include <cstdlib>
 
+class InlineSelect final : public QWidget {
+  public:
+    explicit InlineSelect(QWidget* popupParent, QWidget* parent = nullptr);
+
+    void addItems(const QStringList& items);
+    void setCurrentText(const QString& text);
+    QString currentText() const;
+    void hidePopup();
+    bool isPopupVisible() const;
+
+  private:
+    void showPopup();
+    void choose(const QString& text);
+
+    QWidget*     m_popupParent = nullptr;
+    QPushButton* m_button = nullptr;
+    QFrame*      m_panel = nullptr;
+    QVBoxLayout* m_panelLayout = nullptr;
+    QStringList  m_items;
+    QString      m_current;
+};
+
 namespace {
+
+InlineSelect* g_openSelect = nullptr;
 
 QString qString(const std::string& value) {
     return QString::fromStdString(value);
@@ -68,14 +96,28 @@ QString toolbarStyleSheet(const QPalette& palette) {
                "QPushButton:hover { background: %4; }"
                "QPushButton:checked { color: %3; background: %5; }"
                "QPushButton:pressed { color: %6; background: %7; }"
-               "QComboBox { color: %3; background: %8; border: 1px solid %2; border-radius: 5px; padding: 5px 24px 5px 9px; }"
-               "QComboBox::drop-down { border: none; width: 18px; }"
-               "QComboBox QAbstractItemView { color: %3; background: %9; selection-color: %6; selection-background-color: %7; outline: none; }"
                "QCheckBox { color: %3; spacing: 6px; }"
                "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 8px; border: 1px solid %2; background: %8; }"
                "QCheckBox::indicator:checked { background: %7; border-color: %7; }"
                "QLabel { color: %3; }")
-        .arg(cssRgba(window, 238), cssRgba(border, 150), cssRgba(text), cssRgba(hover, 180), cssRgba(checked, 220), cssRgba(highlightedText), cssRgba(highlight), cssRgba(button, 170), cssRgba(window));
+        .arg(cssRgba(window, 238), cssRgba(border, 150), cssRgba(text), cssRgba(hover, 180), cssRgba(checked, 220), cssRgba(highlightedText), cssRgba(highlight), cssRgba(button, 170));
+}
+
+QString popupStyleSheet(const QPalette& palette) {
+    const QColor window = palette.color(QPalette::Window);
+    const QColor button = palette.color(QPalette::Button);
+    const QColor text = palette.color(QPalette::WindowText);
+    const QColor highlight = palette.color(QPalette::Highlight);
+    const QColor highlightedText = palette.color(QPalette::HighlightedText);
+    const QColor border = mixedColor(text, window, 0.55);
+    const QColor hover = mixedColor(button, highlight, 0.16);
+
+    return QStringLiteral(
+               "#inlineSelectPopup { background: %1; border: 1px solid %2; border-radius: 7px; }"
+               "#inlineSelectPopup QPushButton { color: %3; background: transparent; padding: 7px 12px; border: none; border-radius: 5px; text-align: left; }"
+               "#inlineSelectPopup QPushButton:hover { background: %4; }"
+               "#inlineSelectPopup QPushButton:checked { color: %5; background: %6; }")
+        .arg(cssRgba(window, 246), cssRgba(border, 150), cssRgba(text), cssRgba(hover, 210), cssRgba(highlightedText), cssRgba(highlight));
 }
 
 QRect jsonRect(const QJsonObject& obj) {
@@ -98,6 +140,92 @@ QImage loadRawRgba(const QString& path, int width, int height) {
 }
 
 } // namespace
+
+InlineSelect::InlineSelect(QWidget* popupParent, QWidget* parent) : QWidget(parent), m_popupParent(popupParent) {
+    auto* layout = new QHBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+
+    m_button = new QPushButton(this);
+    m_button->setCheckable(true);
+    layout->addWidget(m_button);
+    connect(m_button, &QPushButton::clicked, this, [this] {
+        if (isPopupVisible())
+            hidePopup();
+        else
+            showPopup();
+    });
+
+    m_panel = new QFrame(m_popupParent);
+    m_panel->setObjectName("inlineSelectPopup");
+    m_panel->setAttribute(Qt::WA_StyledBackground);
+    m_panel->setStyleSheet(popupStyleSheet(QApplication::palette()));
+    m_panel->hide();
+
+    m_panelLayout = new QVBoxLayout(m_panel);
+    m_panelLayout->setContentsMargins(5, 5, 5, 5);
+    m_panelLayout->setSpacing(2);
+}
+
+void InlineSelect::addItems(const QStringList& items) {
+    m_items = items;
+    while (auto* item = m_panelLayout->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+
+    for (const auto& item : m_items) {
+        auto* button = new QPushButton(item, m_panel);
+        button->setCheckable(true);
+        connect(button, &QPushButton::clicked, this, [this, item] { choose(item); });
+        m_panelLayout->addWidget(button);
+    }
+
+    if (m_current.isEmpty() && !m_items.isEmpty())
+        setCurrentText(m_items.first());
+}
+
+void InlineSelect::setCurrentText(const QString& text) {
+    m_current = text;
+    m_button->setText(text);
+    for (auto* button : m_panel->findChildren<QPushButton*>())
+        button->setChecked(button->text() == text);
+}
+
+QString InlineSelect::currentText() const {
+    return m_current;
+}
+
+void InlineSelect::hidePopup() {
+    m_panel->hide();
+    m_button->setChecked(false);
+    if (g_openSelect == this)
+        g_openSelect = nullptr;
+}
+
+bool InlineSelect::isPopupVisible() const {
+    return m_panel->isVisible();
+}
+
+void InlineSelect::showPopup() {
+    if (g_openSelect && g_openSelect != this)
+        g_openSelect->hidePopup();
+    m_panel->adjustSize();
+    QPoint pos = mapTo(m_popupParent, QPoint(0, height() + 5));
+    if (pos.x() + m_panel->width() > m_popupParent->width() - 8)
+        pos.setX(std::max(8, m_popupParent->width() - m_panel->width() - 8));
+    if (pos.y() + m_panel->height() > m_popupParent->height() - 8)
+        pos.setY(std::max(8, mapTo(m_popupParent, QPoint(0, 0)).y() - m_panel->height() - 5));
+    m_panel->move(pos);
+    m_panel->raise();
+    m_panel->show();
+    m_button->setChecked(true);
+    g_openSelect = this;
+}
+
+void InlineSelect::choose(const QString& text) {
+    setCurrentText(text);
+    hidePopup();
+}
 
 CaptureOverlay::CaptureOverlay(hyprshot::CaptureDefaults defaults, bool quick, QString sessionJson, QWidget* parent)
     : QMainWindow(parent), m_defaults(std::move(defaults)), m_mode(m_defaults.mode), m_quick(quick) {
@@ -220,13 +348,13 @@ void CaptureOverlay::buildToolbar() {
     addMode("Region", hyprshot::CaptureMode::Region);
     addMode("Window", hyprshot::CaptureMode::Window);
 
-    m_fullscreenScope = new QComboBox(m_toolbar);
-    m_fullscreenScope->addItems({"all", "current", "per-monitor"});
+    m_fullscreenScope = new InlineSelect(this, m_toolbar);
+    m_fullscreenScope->addItems(QStringList{"all", "current", "per-monitor"});
     m_fullscreenScope->setCurrentText(qString(hyprshot::toString(m_defaults.fullscreenScope)));
     layout->addWidget(m_fullscreenScope);
 
-    m_windowBackground = new QComboBox(m_toolbar);
-    m_windowBackground->addItems({"follow-system", "white", "black", "real", "transparent"});
+    m_windowBackground = new InlineSelect(this, m_toolbar);
+    m_windowBackground->addItems(QStringList{"follow-system", "white", "black", "real", "transparent"});
     m_windowBackground->setCurrentText(qString(hyprshot::toString(m_defaults.windowBackground)));
     layout->addWidget(m_windowBackground);
 
@@ -284,6 +412,10 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
 void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
     if (m_toolbar->geometry().contains(event->pos()))
         return;
+    if (m_fullscreenScope)
+        m_fullscreenScope->hidePopup();
+    if (m_windowBackground)
+        m_windowBackground->hidePopup();
     if (event->button() != Qt::LeftButton)
         return;
 

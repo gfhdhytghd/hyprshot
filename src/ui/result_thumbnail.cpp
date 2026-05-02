@@ -5,30 +5,74 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QContextMenuEvent>
-#include <QDir>
+#include <QFileInfo>
 #include <QGuiApplication>
-#include <QMenu>
-#include <QMimeData>
+#include <QLabel>
 #include <QMouseEvent>
 #include <QPalette>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QPushButton>
 #include <QStyleHints>
+#include <QVBoxLayout>
 
 #include <algorithm>
+#include <utility>
 
-ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, int timeoutMs, QWidget* parent) : QLabel(parent), m_path(std::move(path)) {
+ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, int timeoutMs, QWidget* parent) : QWidget(parent), m_path(std::move(path)) {
     setWindowFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus);
     setFocusPolicy(Qt::NoFocus);
+    setObjectName("thumbnail");
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
     setAttribute(Qt::WA_StyledBackground);
-    setPixmap(pixmap.scaled(180, 120, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+
     const auto palette = QApplication::palette();
     const QColor bg = palette.color(QPalette::Window);
     const QColor fg = palette.color(QPalette::WindowText);
-    setStyleSheet(QStringLiteral("QLabel { padding: 6px; background: rgba(%1,%2,%3,220); border: 1px solid rgba(%4,%5,%6,95); border-radius: 8px; }")
-                      .arg(bg.red()).arg(bg.green()).arg(bg.blue()).arg(fg.red()).arg(fg.green()).arg(fg.blue()));
+    const QColor highlight = palette.color(QPalette::Highlight);
+    setStyleSheet(QStringLiteral(
+                      "#thumbnail { background: rgba(%1,%2,%3,220); border: 1px solid rgba(%4,%5,%6,95); border-radius: 8px; }"
+                      "#thumbnailMenu QPushButton { color: rgba(%4,%5,%6,255); background: transparent; padding: 7px 10px; border: none; border-radius: 5px; text-align: left; }"
+                      "#thumbnailMenu QPushButton:hover { background: rgba(%7,%8,%9,75); }")
+                      .arg(bg.red()).arg(bg.green()).arg(bg.blue()).arg(fg.red()).arg(fg.green()).arg(fg.blue()).arg(highlight.red()).arg(highlight.green()).arg(highlight.blue()));
+
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setSpacing(6);
+
+    m_imageLabel = new QLabel(this);
+    m_imageLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_imageLabel->setPixmap(pixmap.scaled(180, 120, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    layout->addWidget(m_imageLabel);
+
+    m_menuPanel = new QWidget(this);
+    m_menuPanel->setObjectName("thumbnailMenu");
+    auto* menuLayout = new QVBoxLayout(m_menuPanel);
+    menuLayout->setContentsMargins(0, 0, 0, 0);
+    menuLayout->setSpacing(2);
+    const auto addAction = [&](const QString& text, auto&& callback) {
+        auto* buttonWidget = new QPushButton(text, m_menuPanel);
+        connect(buttonWidget, &QPushButton::clicked, this, std::forward<decltype(callback)>(callback));
+        menuLayout->addWidget(buttonWidget);
+    };
+    addAction("Open", [this] {
+        if (!m_path.isEmpty() && openPath(m_path))
+            close();
+    });
+    addAction("Copy image", [this] {
+        const auto currentPixmap = m_imageLabel->pixmap();
+        if (!currentPixmap.isNull())
+            QGuiApplication::clipboard()->setPixmap(currentPixmap);
+    });
+    addAction("Show in folder", [this] {
+        if (!m_path.isEmpty())
+            openPath(QFileInfo(m_path).absolutePath());
+    });
+    addAction("Close", [this] { close(); });
+    m_menuPanel->hide();
+    layout->addWidget(m_menuPanel);
+
     adjustSize();
     winId();
     if (auto* layerWindow = LayerShellQt::Window::get(windowHandle())) {
@@ -87,26 +131,8 @@ void ResultThumbnail::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 void ResultThumbnail::contextMenuEvent(QContextMenuEvent* event) {
-    m_closeTimer.stop();
-    QMenu menu(this);
-    const auto openAction = menu.addAction("Open");
-    const auto copyAction = menu.addAction("Copy image");
-    const auto showAction = menu.addAction("Show in folder");
-    menu.addSeparator();
-    const auto closeAction = menu.addAction("Close");
-
-    const auto chosen = menu.exec(event->globalPos());
-    if (chosen == openAction && !m_path.isEmpty()) {
-        openPath(m_path);
-    } else if (chosen == copyAction) {
-        const auto currentPixmap = pixmap();
-        if (!currentPixmap.isNull())
-            QGuiApplication::clipboard()->setPixmap(currentPixmap);
-    } else if (chosen == showAction && !m_path.isEmpty()) {
-        openPath(QFileInfo(m_path).absolutePath());
-    } else if (chosen == closeAction) {
-        close();
-    }
+    event->accept();
+    toggleMenu();
 }
 
 bool ResultThumbnail::openPath(const QString& path) {
@@ -117,6 +143,18 @@ bool ResultThumbnail::openPath(const QString& path) {
     process.setProgram("xdg-open");
     process.setArguments({path});
     return process.startDetached();
+}
+
+void ResultThumbnail::toggleMenu() {
+    m_closeTimer.stop();
+    m_menuPanel->setVisible(!m_menuPanel->isVisible());
+    applyLayerSize();
+}
+
+void ResultThumbnail::applyLayerSize() {
+    adjustSize();
+    if (auto* layerWindow = LayerShellQt::Window::get(windowHandle()))
+        layerWindow->setDesiredSize(size());
 }
 
 void ResultThumbnail::enterEvent(QEnterEvent*) {
