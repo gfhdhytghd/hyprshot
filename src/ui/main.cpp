@@ -1,10 +1,12 @@
 #include "shared/config.hpp"
 #include "ui/capture_overlay.hpp"
+#include "ui/result_thumbnail.hpp"
 
 #include <LayerShellQt/Shell>
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QPixmap>
 
 namespace {
 
@@ -15,6 +17,14 @@ bool flagValue(const QCommandLineParser& parser, const QString& name, bool fallb
     return value != "0" && value != "false";
 }
 
+bool hasArgument(int argc, char** argv, const char* name) {
+    for (int i = 1; i < argc; ++i) {
+        if (QString::fromLocal8Bit(argv[i]) == QLatin1String(name))
+            return true;
+    }
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -22,6 +32,7 @@ int main(int argc, char** argv) {
 #if LAYERSHELLQTINTERFACE_ENABLE_DEPRECATED_SINCE(6, 6)
     LayerShellQt::Shell::useLayerShell();
 #endif
+
     QApplication app(argc, argv);
     QApplication::setApplicationName("hyprshot-ui");
 
@@ -42,9 +53,18 @@ int main(int argc, char** argv) {
         {"filename-template", "Filename strftime template.", "template", "Screenshot-%Y-%m-%d-%H%M%S.png"},
         {"thumbnail-timeout-ms", "Thumbnail timeout.", "ms", "5000"},
         {"session-json", "Compositor session metadata.", "json", "{}"},
+        {"thumbnail-window", "Show a normal thumbnail window for an image path.", "path"},
         {"quick", "Capture immediately."},
     });
     parser.process(app);
+
+    if (hasArgument(argc, argv, "--thumbnail-window")) {
+        ResultThumbnail thumbnail(QPixmap(parser.value("thumbnail-window")),
+                                  parser.value("thumbnail-window"),
+                                  parser.value("thumbnail-timeout-ms").toInt());
+        thumbnail.show();
+        return app.exec();
+    }
 
     hyprshot::CaptureDefaults defaults;
     defaults.mode = hyprshot::parseCaptureMode(parser.value("mode").toStdString(), defaults.mode);

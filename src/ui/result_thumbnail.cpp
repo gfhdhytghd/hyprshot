@@ -1,5 +1,7 @@
 #include "ui/result_thumbnail.hpp"
 
+#include <LayerShellQt/Window>
+
 #include <QApplication>
 #include <QClipboard>
 #include <QContextMenuEvent>
@@ -9,14 +11,33 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QPalette>
 #include <QUrl>
 
 ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, int timeoutMs, QWidget* parent) : QLabel(parent), m_path(std::move(path)) {
-    setWindowFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint);
+    setWindowFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus);
+    setFocusPolicy(Qt::NoFocus);
     setAttribute(Qt::WA_TranslucentBackground);
+    setAttribute(Qt::WA_ShowWithoutActivating);
+    setAttribute(Qt::WA_StyledBackground);
     setPixmap(pixmap.scaled(180, 120, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    setStyleSheet("QLabel { padding: 6px; background: rgba(20, 24, 28, 190); border: 1px solid rgba(255,255,255,90); border-radius: 8px; }");
+    const auto palette = QApplication::palette();
+    const QColor bg = palette.color(QPalette::Window);
+    const QColor fg = palette.color(QPalette::WindowText);
+    setStyleSheet(QStringLiteral("QLabel { padding: 6px; background: rgba(%1,%2,%3,220); border: 1px solid rgba(%4,%5,%6,95); border-radius: 8px; }")
+                      .arg(bg.red()).arg(bg.green()).arg(bg.blue()).arg(fg.red()).arg(fg.green()).arg(fg.blue()));
     adjustSize();
+    winId();
+    if (auto* layerWindow = LayerShellQt::Window::get(windowHandle())) {
+        layerWindow->setScope("hyprshot-thumbnail");
+        layerWindow->setLayer(LayerShellQt::Window::LayerOverlay);
+        layerWindow->setAnchors(LayerShellQt::Window::Anchors{LayerShellQt::Window::AnchorRight} | LayerShellQt::Window::AnchorBottom);
+        layerWindow->setMargins(QMargins(0, 0, 24, 24));
+        layerWindow->setExclusiveZone(0);
+        layerWindow->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityNone);
+        layerWindow->setActivateOnShow(false);
+        layerWindow->setDesiredSize(size());
+    }
 
     if (timeoutMs > 0) {
         m_closeTimer.setSingleShot(true);

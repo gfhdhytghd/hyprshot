@@ -21,6 +21,7 @@
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPainter>
+#include <QProcess>
 #include <QPushButton>
 #include <QScreen>
 #include <QStandardPaths>
@@ -175,6 +176,16 @@ void CaptureOverlay::captureScreensBeforeOverlay() {
             painter.drawImage(QRect(target, artifact.logicalGeometry.size()), artifact.image);
         }
         return;
+    }
+
+    QProcess grim;
+    grim.start("grim", {"-t", "png", "-"});
+    if (grim.waitForFinished(1500) && grim.exitStatus() == QProcess::NormalExit && grim.exitCode() == 0) {
+        QImage grimImage;
+        if (grimImage.loadFromData(grim.readAllStandardOutput(), "PNG") && !grimImage.isNull()) {
+            painter.drawImage(m_desktopImage.rect(), grimImage);
+            return;
+        }
     }
 
     const auto screens = QGuiApplication::screens();
@@ -398,11 +409,19 @@ void CaptureOverlay::saveImage(const QImage& image) {
 }
 
 void CaptureOverlay::showThumbnail(const QImage& image, const QString& path) {
-    auto* thumb = new ResultThumbnail(QPixmap::fromImage(image), path, static_cast<int>(m_defaults.thumbnailTimeoutMs));
-    const QRect screen = QGuiApplication::primaryScreen() ? QGuiApplication::primaryScreen()->availableGeometry() : geometry();
-    thumb->move(screen.right() - thumb->width() - 24, screen.bottom() - thumb->height() - 24);
-    thumb->show();
-    connect(thumb, &QObject::destroyed, qApp, &QCoreApplication::quit);
+    QString thumbPath = path;
+    if (thumbPath.isEmpty()) {
+        const auto runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+        QDir dir(runtimeDir.isEmpty() ? QDir::tempPath() : runtimeDir);
+        if (!dir.exists("hyprshot"))
+            dir.mkpath("hyprshot");
+        thumbPath = dir.filePath(QStringLiteral("hyprshot/thumbnail-%1.png").arg(QDateTime::currentMSecsSinceEpoch()));
+        image.save(thumbPath, "PNG");
+    }
+
+    QProcess::startDetached(QCoreApplication::applicationFilePath(),
+                            {"--thumbnail-window", thumbPath, "--thumbnail-timeout-ms", QString::number(m_defaults.thumbnailTimeoutMs)});
+    qApp->quit();
 }
 
 void CaptureOverlay::cancelCapture() {
