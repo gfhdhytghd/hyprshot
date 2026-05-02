@@ -63,7 +63,8 @@ std::string encodeSessionJson(const CaptureSession& session) {
         const auto& mon = session.monitors[i];
         out << "{\"name\":" << quote(mon.name) << ",\"geometry\":";
         appendRect(out, mon.logicalGeometry);
-        out << ",\"scale\":" << mon.scale << ",\"transform\":" << mon.transform << "}";
+        out << ",\"scale\":" << mon.scale << ",\"transform\":" << mon.transform << ",\"artifactPath\":" << quote(mon.artifactPath)
+            << ",\"artifactWidth\":" << mon.artifactWidth << ",\"artifactHeight\":" << mon.artifactHeight << "}";
     }
     out << "],\"windows\":[";
     for (std::size_t i = 0; i < session.windows.size(); ++i) {
@@ -74,7 +75,8 @@ std::string encodeSessionJson(const CaptureSession& session) {
         appendRect(out, win.visibleGeometry);
         out << ",\"fullGeometry\":";
         appendRect(out, win.fullGeometry);
-        out << ",\"zIndex\":" << win.zIndex << ",\"selectable\":" << (win.selectable ? "true" : "false") << "}";
+        out << ",\"artifactPath\":" << quote(win.artifactPath) << ",\"artifactWidth\":" << win.artifactWidth << ",\"artifactHeight\":" << win.artifactHeight
+            << ",\"zIndex\":" << win.zIndex << ",\"selectable\":" << (win.selectable ? "true" : "false") << "}";
     }
     out << "]}";
     return out.str();

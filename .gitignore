@@ -1,4 +1,6 @@
 build-cmake/
+build-debug/
+build-hyprpm/
 build/
 cmake-build-*/
 CMakeUserPresets.json

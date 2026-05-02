@@ -8,8 +8,8 @@ commit_pins = [
 [hyprshot]
 description = "Hyprland-only screenshot overlay"
 authors = ["wilf"]
-output = "build-cmake/libhyprshot.so"
+output = "build-hyprpm/libhyprshot.so"
 build = [
-    "cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release",
-    "cmake --build build-cmake --target hyprshot hyprshot-ui"
+    "cmake -S . -B build-hyprpm -DCMAKE_BUILD_TYPE=Release",
+    "cmake --build build-hyprpm --target hyprshot hyprshot-ui"
 ]

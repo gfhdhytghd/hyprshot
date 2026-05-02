@@ -1,9 +1,12 @@
 #include "plugin/session_launcher.hpp"
 
+#include "plugin/artifact_capture.hpp"
 #include "shared/protocol.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
 #include <sstream>
 #include <sys/types.h>
 #include <unistd.h>
@@ -18,12 +21,38 @@ std::string boolArg(bool value) {
     return value ? "1" : "0";
 }
 
+std::vector<std::string> helperCandidates(const std::string& configured) {
+    std::vector<std::string> candidates;
+    if (!configured.empty())
+        candidates.push_back(configured);
+
+    if (const char* helperEnv = std::getenv("HYPRSHOT_HELPER"); helperEnv && *helperEnv)
+        candidates.push_back(helperEnv);
+
+    candidates.push_back("hyprshot-ui");
+
+    std::vector<std::string> unique;
+    for (auto& candidate : candidates) {
+        if (std::find(unique.begin(), unique.end(), candidate) == unique.end())
+            unique.push_back(candidate);
+    }
+    return unique;
+}
+
+std::string firstRunnableHelper(const std::string& configured) {
+    for (const auto& candidate : helperCandidates(configured)) {
+        if (candidate.find('/') == std::string::npos)
+            return candidate;
+        if (std::filesystem::exists(candidate))
+            return candidate;
+    }
+    return configured.empty() ? "hyprshot-ui" : configured;
+}
+
 } // namespace
 
 LaunchResult launchHelper(const LaunchRequest& request) {
-    CaptureSession session;
-    session.id = makeSessionId();
-    session.defaults = request.defaults;
+    CaptureSession session = captureCompositorArtifacts(request.defaults);
     session.defaults.mode = request.requestedMode;
 
     const auto sessionJson = encodeSessionJson(session);
@@ -33,7 +62,7 @@ LaunchResult launchHelper(const LaunchRequest& request) {
 
     if (pid == 0) {
         std::vector<std::string> args;
-        args.push_back(request.defaults.helper.empty() ? "hyprshot-ui" : request.defaults.helper);
+        args.push_back(firstRunnableHelper(request.defaults.helper));
         args.push_back("--mode");
         args.push_back(toString(request.requestedMode));
         args.push_back("--fullscreen-scope");

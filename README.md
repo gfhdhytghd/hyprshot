@@ -33,15 +33,27 @@ plugin {
 bind = SUPER SHIFT, S, hyprshot:open
 ```
 
-When testing from the build tree before installation, set:
+## Install the helper
+
+`hyprpm` installs the compositor plugin `.so`, but it does not install the companion Qt helper. Build and install the helper into a directory visible from the Hyprland session:
+
+```sh
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+cmake --build build-release --target hyprshot-ui
+cmake --install build-release --prefix "$HOME/.local"
+```
+
+Make sure `~/.local/bin` is in the environment that launches Hyprland. If not, use an absolute helper path:
 
 ```ini
 plugin {
     hyprshot {
-        helper = /home/wilf/data/hyprshot/build-cmake/hyprshot-ui
+        helper = /home/you/.local/bin/hyprshot-ui
     }
 }
 ```
+
+For development without installing, point `helper` at the build-tree executable or launch Hyprland with `HYPRSHOT_HELPER=/path/to/hyprshot-ui`.
 
 ## Build
 

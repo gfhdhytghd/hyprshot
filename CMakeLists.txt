@@ -25,9 +25,11 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(HYPR_DEPS REQUIRED hyprland)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(LayerShellQt REQUIRED)
 
 add_library(hyprshot SHARED
   src/plugin/main.cpp
+  src/plugin/artifact_capture.cpp
   src/plugin/session_launcher.cpp
   src/shared/config.cpp
   src/shared/protocol.cpp
@@ -46,7 +48,7 @@ add_executable(hyprshot-ui
 )
 
 target_include_directories(hyprshot-ui PRIVATE src)
-target_link_libraries(hyprshot-ui PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(hyprshot-ui PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets LayerShellQt::Interface)
 
 if(BUILD_TESTING)
   add_executable(hyprshot-config-test

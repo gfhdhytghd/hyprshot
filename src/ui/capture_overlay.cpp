@@ -2,6 +2,8 @@
 
 #include "ui/result_thumbnail.hpp"
 
+#include <LayerShellQt/Window>
+
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -12,6 +14,9 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -34,35 +39,107 @@ QColor followSystemColor() {
     return scheme == Qt::ColorScheme::Light ? QColor(245, 245, 245) : QColor(17, 19, 23);
 }
 
+QRect jsonRect(const QJsonObject& obj) {
+    return QRect(QPoint(static_cast<int>(std::floor(obj.value("x").toDouble())), static_cast<int>(std::floor(obj.value("y").toDouble()))),
+                 QSize(std::max(1, static_cast<int>(std::ceil(obj.value("width").toDouble()))), std::max(1, static_cast<int>(std::ceil(obj.value("height").toDouble())))));
+}
+
+QImage loadRawRgba(const QString& path, int width, int height) {
+    QFile file(path);
+    if (path.isEmpty() || width <= 0 || height <= 0 || !file.open(QIODevice::ReadOnly))
+        return {};
+
+    const QByteArray bytes = file.readAll();
+    const qsizetype expected = static_cast<qsizetype>(width) * static_cast<qsizetype>(height) * 4;
+    if (bytes.size() < expected)
+        return {};
+
+    QImage image(reinterpret_cast<const uchar*>(bytes.constData()), width, height, width * 4, QImage::Format_RGBA8888);
+    return image.copy();
+}
+
 } // namespace
 
-CaptureOverlay::CaptureOverlay(hyprshot::CaptureDefaults defaults, bool quick, QWidget* parent)
+CaptureOverlay::CaptureOverlay(hyprshot::CaptureDefaults defaults, bool quick, QString sessionJson, QWidget* parent)
     : QMainWindow(parent), m_defaults(std::move(defaults)), m_mode(m_defaults.mode), m_quick(quick) {
-    setWindowFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint);
+    setWindowFlags(Qt::FramelessWindowHint | Qt::Tool);
     setAttribute(Qt::WA_TranslucentBackground);
     setMouseTracking(true);
     setCursor(Qt::CrossCursor);
 
+    parseSessionJson(sessionJson);
     captureScreensBeforeOverlay();
     setGeometry(m_desktopGeometry.isValid() ? m_desktopGeometry : QRect(0, 0, 1280, 720));
 
     buildToolbar();
+    winId();
+    if (auto* layerWindow = LayerShellQt::Window::get(windowHandle())) {
+        layerWindow->setScope("hyprshot-ui");
+        layerWindow->setLayer(LayerShellQt::Window::LayerOverlay);
+        layerWindow->setAnchors(LayerShellQt::Window::Anchors{LayerShellQt::Window::AnchorTop} | LayerShellQt::Window::AnchorBottom |
+                                LayerShellQt::Window::AnchorLeft | LayerShellQt::Window::AnchorRight);
+        layerWindow->setExclusiveZone(0);
+        layerWindow->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityOnDemand);
+        layerWindow->setActivateOnShow(true);
+        layerWindow->setDesiredSize(size());
+    }
     if (m_quick)
         QTimer::singleShot(0, this, &CaptureOverlay::finishCapture);
 }
 
+void CaptureOverlay::parseSessionJson(const QString& json) {
+    const auto doc = QJsonDocument::fromJson(json.toUtf8());
+    if (!doc.isObject())
+        return;
+
+    const auto root = doc.object();
+    for (const auto value : root.value("monitors").toArray()) {
+        const auto obj = value.toObject();
+        MonitorArtifact artifact;
+        artifact.name = obj.value("name").toString();
+        artifact.logicalGeometry = jsonRect(obj.value("geometry").toObject());
+        artifact.image = loadRawRgba(obj.value("artifactPath").toString(), obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt());
+        if (!artifact.logicalGeometry.isValid())
+            continue;
+        m_desktopGeometry = m_desktopGeometry.united(artifact.logicalGeometry);
+        if (!artifact.image.isNull())
+            m_monitorArtifacts.push_back(std::move(artifact));
+    }
+
+    for (const auto value : root.value("windows").toArray()) {
+        const auto obj = value.toObject();
+        WindowArtifact artifact;
+        artifact.title = obj.value("title").toString();
+        artifact.appClass = obj.value("class").toString();
+        artifact.visibleGeometry = jsonRect(obj.value("visibleGeometry").toObject());
+        artifact.fullGeometry = jsonRect(obj.value("fullGeometry").toObject());
+        artifact.image = loadRawRgba(obj.value("artifactPath").toString(), obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt());
+        if (artifact.fullGeometry.isValid() && !artifact.image.isNull())
+            m_windowArtifacts.push_back(std::move(artifact));
+    }
+}
+
 void CaptureOverlay::captureScreensBeforeOverlay() {
-    const auto screens = QGuiApplication::screens();
-    for (const auto* screen : screens)
-        m_desktopGeometry = m_desktopGeometry.united(screen->geometry());
+    if (!m_desktopGeometry.isValid())
+        for (const auto* screen : QGuiApplication::screens())
+            m_desktopGeometry = m_desktopGeometry.united(screen->geometry());
 
     if (!m_desktopGeometry.isValid())
         return;
 
-    m_desktopImage = QImage(m_desktopGeometry.size(), QImage::Format_ARGB32_Premultiplied);
+    m_desktopImage = QImage(m_desktopGeometry.size(), QImage::Format_RGBA8888);
     m_desktopImage.fill(QColor(30, 34, 38));
 
     QPainter painter(&m_desktopImage);
+    if (!m_monitorArtifacts.empty()) {
+        for (const auto& artifact : m_monitorArtifacts) {
+            const QPoint target = artifact.logicalGeometry.topLeft() - m_desktopGeometry.topLeft();
+            painter.drawImage(QRect(target, artifact.logicalGeometry.size()), artifact.image);
+        }
+        return;
+    }
+
+    const auto screens = QGuiApplication::screens();
     for (auto* screen : screens) {
         const QPixmap pixmap = screen->grabWindow(0);
         if (pixmap.isNull())
@@ -76,10 +153,17 @@ void CaptureOverlay::buildToolbar() {
     m_toolbar = new QWidget(this);
     m_toolbar->setObjectName("toolbar");
     m_toolbar->setStyleSheet(
-        "#toolbar { background: rgba(26, 29, 33, 230); border: 1px solid rgba(255,255,255,70); border-radius: 8px; }"
-        "QPushButton { color: white; padding: 6px 10px; border: none; border-radius: 5px; }"
-        "QPushButton:checked { background: rgba(255,255,255,45); }"
-        "QComboBox, QCheckBox, QLabel { color: white; }");
+        "#toolbar { background: rgba(20, 22, 26, 238); border: 1px solid rgba(255,255,255,90); border-radius: 8px; }"
+        "QPushButton { color: #f4f7fb; background: transparent; padding: 6px 10px; border: none; border-radius: 5px; }"
+        "QPushButton:hover { background: rgba(255,255,255,30); }"
+        "QPushButton:checked { color: #ffffff; background: rgba(255,255,255,64); }"
+        "QComboBox { color: #f4f7fb; background: rgba(255,255,255,18); border: 1px solid rgba(255,255,255,36); border-radius: 5px; padding: 5px 24px 5px 9px; }"
+        "QComboBox::drop-down { border: none; width: 18px; }"
+        "QComboBox QAbstractItemView { color: #f4f7fb; background: #1f2329; selection-background-color: #3b4654; outline: none; }"
+        "QCheckBox { color: #f4f7fb; spacing: 6px; }"
+        "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,90); background: rgba(255,255,255,18); }"
+        "QCheckBox::indicator:checked { background: #3ddc84; border-color: #3ddc84; }"
+        "QLabel { color: #d8dee8; }");
 
     auto* layout = new QHBoxLayout(m_toolbar);
     layout->setContentsMargins(10, 7, 10, 7);
@@ -151,8 +235,8 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
         painter.setPen(QPen(QColor(255, 255, 255, 230), 2));
         painter.drawRect(sel.adjusted(0, 0, -1, -1));
     } else if (m_mode == hyprshot::CaptureMode::Window) {
-        const QPoint pos = mapFromGlobal(QCursor::pos());
-        const QRect target(pos.x() - 180, pos.y() - 110, 360, 220);
+        const auto* window = hoveredWindow();
+        const QRect target = window ? window->fullGeometry.translated(-geometry().topLeft()) : QRect(mapFromGlobal(QCursor::pos()) - QPoint(180, 110), QSize(360, 220));
         painter.setPen(QPen(QColor(255, 255, 255, 220), 2));
         painter.drawRoundedRect(target, 8, 8);
     }
@@ -202,10 +286,21 @@ QRect CaptureOverlay::captureRectForMode() const {
     if (m_mode == hyprshot::CaptureMode::Region && normalizedSelection().isValid())
         return normalizedSelection();
     if (m_mode == hyprshot::CaptureMode::Window) {
+        if (const auto* window = hoveredWindow())
+            return window->fullGeometry.translated(-geometry().topLeft());
         const QPoint pos = mapFromGlobal(QCursor::pos());
         return QRect(pos.x() - 180, pos.y() - 110, 360, 220).intersected(rect());
     }
     return rect();
+}
+
+const CaptureOverlay::WindowArtifact* CaptureOverlay::hoveredWindow() const {
+    const QPoint global = QCursor::pos();
+    for (auto it = m_windowArtifacts.rbegin(); it != m_windowArtifacts.rend(); ++it) {
+        if (it->fullGeometry.contains(global) || it->visibleGeometry.contains(global))
+            return &*it;
+    }
+    return nullptr;
 }
 
 QImage CaptureOverlay::renderResultImage() const {
@@ -216,6 +311,8 @@ QImage CaptureOverlay::renderResultImage() const {
     QPainter painter(&image);
     const auto bg = hyprshot::parseWindowBackground(m_windowBackground->currentText().toStdString(), m_defaults.windowBackground);
     const QRect desktopSource = cap.translated(geometry().topLeft() - m_desktopGeometry.topLeft());
+
+    const auto* windowArtifact = m_mode == hyprshot::CaptureMode::Window ? hoveredWindow() : nullptr;
 
     if (m_mode != hyprshot::CaptureMode::Window && !m_desktopImage.isNull()) {
         painter.drawImage(image.rect(), m_desktopImage, desktopSource);
@@ -234,13 +331,13 @@ QImage CaptureOverlay::renderResultImage() const {
         painter.fillRect(image.rect(), QColor(30, 34, 38));
     }
 
-    if (m_mode == hyprshot::CaptureMode::Window && !m_desktopImage.isNull()) {
-        painter.drawImage(image.rect(), m_desktopImage, desktopSource);
+    if (m_mode == hyprshot::CaptureMode::Window && windowArtifact && !windowArtifact->image.isNull()) {
+        painter.drawImage(image.rect(), windowArtifact->image);
         if (bg == hyprshot::WindowBackground::Transparent) {
-            painter.setCompositionMode(QPainter::CompositionMode_DestinationIn);
-            painter.fillRect(image.rect(), QColor(255, 255, 255, 230));
-            painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+            // The artifact itself already carries the compositor alpha.
         }
+    } else if (m_mode == hyprshot::CaptureMode::Window && !m_desktopImage.isNull()) {
+        painter.drawImage(image.rect(), m_desktopImage, desktopSource);
     }
     return image;
 }

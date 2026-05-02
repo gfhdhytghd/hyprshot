@@ -66,8 +66,10 @@ SDispatchResult openCapture(const std::string& args, bool quick) {
     auto defaults = readDefaults();
     const auto requestedMode = hyprshot::parseCaptureMode(args, defaults.mode);
     const auto result = hyprshot::launchHelper({.defaults = defaults, .requestedMode = requestedMode, .quick = quick});
-    if (!result.success)
+    if (!result.success) {
+        HyprlandAPI::addNotification(g_pluginHandle, "[hyprshot] " + result.error, CHyprColor(1.0, 0.2, 0.2, 1.0), 5000);
         return {.success = false, .error = result.error};
+    }
     return {.success = true};
 }
 

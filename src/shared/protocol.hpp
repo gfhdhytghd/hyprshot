@@ -21,6 +21,9 @@ struct MonitorInfo {
     Rect        logicalGeometry;
     double      scale = 1.0;
     int         transform = 0;
+    std::string artifactPath;
+    int         artifactWidth = 0;
+    int         artifactHeight = 0;
 };
 
 struct WindowInfo {
@@ -29,6 +32,9 @@ struct WindowInfo {
     std::string appClass;
     Rect        visibleGeometry;
     Rect        fullGeometry;
+    std::string artifactPath;
+    int         artifactWidth = 0;
+    int         artifactHeight = 0;
     int         zIndex = 0;
     bool        selectable = true;
 };

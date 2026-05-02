@@ -1,6 +1,8 @@
 #include "shared/config.hpp"
 #include "ui/capture_overlay.hpp"
 
+#include <LayerShellQt/Shell>
+
 #include <QApplication>
 #include <QCommandLineParser>
 
@@ -16,6 +18,10 @@ bool flagValue(const QCommandLineParser& parser, const QString& name, bool fallb
 } // namespace
 
 int main(int argc, char** argv) {
+    qputenv("QT_WAYLAND_SHELL_INTEGRATION", "layer-shell");
+#if LAYERSHELLQTINTERFACE_ENABLE_DEPRECATED_SINCE(6, 6)
+    LayerShellQt::Shell::useLayerShell();
+#endif
     QApplication app(argc, argv);
     QApplication::setApplicationName("hyprshot-ui");
 
@@ -55,7 +61,7 @@ int main(int argc, char** argv) {
     defaults.filenameTemplate = parser.value("filename-template").toStdString();
     defaults.thumbnailTimeoutMs = parser.value("thumbnail-timeout-ms").toLongLong();
 
-    CaptureOverlay overlay(defaults, parser.isSet("quick"));
+    CaptureOverlay overlay(defaults, parser.isSet("quick"), parser.value("session-json"));
     overlay.show();
     overlay.activateWindow();
     overlay.raise();
