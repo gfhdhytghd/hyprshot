@@ -1,0 +1,64 @@
+#include "shared/config.hpp"
+#include "ui/capture_overlay.hpp"
+
+#include <QApplication>
+#include <QCommandLineParser>
+
+namespace {
+
+bool flagValue(const QCommandLineParser& parser, const QString& name, bool fallback) {
+    const auto value = parser.value(name);
+    if (value.isEmpty())
+        return fallback;
+    return value != "0" && value != "false";
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    QApplication app(argc, argv);
+    QApplication::setApplicationName("hyprshot-ui");
+
+    QCommandLineParser parser;
+    parser.addHelpOption();
+    parser.addOptions({
+        {{"m", "mode"}, "Capture mode.", "mode", "region"},
+        {"fullscreen-scope", "Fullscreen scope.", "scope", "all"},
+        {"region-scope", "Region scope.", "scope", "global"},
+        {"window-background", "Window background.", "background", "follow-system"},
+        {"window-border", "Window border policy.", "policy", "keep"},
+        {"window-shadow", "Window shadow policy.", "policy", "keep"},
+        {"save", "Save output.", "0|1", "1"},
+        {"clipboard", "Copy output.", "0|1", "1"},
+        {"thumbnail", "Show thumbnail.", "0|1", "1"},
+        {"include-cursor", "Include cursor.", "0|1", "0"},
+        {"save-dir", "Save directory.", "path", "~/Pictures/Screenshots"},
+        {"filename-template", "Filename strftime template.", "template", "Screenshot-%Y-%m-%d-%H%M%S.png"},
+        {"thumbnail-timeout-ms", "Thumbnail timeout.", "ms", "5000"},
+        {"session-json", "Compositor session metadata.", "json", "{}"},
+        {"quick", "Capture immediately."},
+    });
+    parser.process(app);
+
+    hyprshot::CaptureDefaults defaults;
+    defaults.mode = hyprshot::parseCaptureMode(parser.value("mode").toStdString(), defaults.mode);
+    defaults.fullscreenScope = hyprshot::parseFullscreenScope(parser.value("fullscreen-scope").toStdString(), defaults.fullscreenScope);
+    defaults.regionScope = hyprshot::parseRegionScope(parser.value("region-scope").toStdString(), defaults.regionScope);
+    defaults.windowBackground = hyprshot::parseWindowBackground(parser.value("window-background").toStdString(), defaults.windowBackground);
+    defaults.windowBorder = hyprshot::parseDecorationPolicy(parser.value("window-border").toStdString(), defaults.windowBorder);
+    defaults.windowShadow = hyprshot::parseDecorationPolicy(parser.value("window-shadow").toStdString(), defaults.windowShadow);
+    defaults.save = flagValue(parser, "save", defaults.save);
+    defaults.clipboard = flagValue(parser, "clipboard", defaults.clipboard);
+    defaults.showThumbnail = flagValue(parser, "thumbnail", defaults.showThumbnail);
+    defaults.includeCursor = flagValue(parser, "include-cursor", defaults.includeCursor);
+    defaults.saveDir = parser.value("save-dir").toStdString();
+    defaults.filenameTemplate = parser.value("filename-template").toStdString();
+    defaults.thumbnailTimeoutMs = parser.value("thumbnail-timeout-ms").toLongLong();
+
+    CaptureOverlay overlay(defaults, parser.isSet("quick"));
+    overlay.show();
+    overlay.activateWindow();
+    overlay.raise();
+
+    return app.exec();
+}
