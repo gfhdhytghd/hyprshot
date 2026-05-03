@@ -51,6 +51,7 @@ int main() {
     assert(json.find("\"windowBackground\":\"follow-system\"") != std::string::npos);
     assert(json.find("\"fullGeometry\"") != std::string::npos);
     assert(json.find("\"artifactPath\":\"/tmp/window.rgba\"") != std::string::npos);
+    assert(json.find("\"artifactTopDown\":true") != std::string::npos);
 
     std::cout << "hyprshot config tests passed\n";
     return 0;

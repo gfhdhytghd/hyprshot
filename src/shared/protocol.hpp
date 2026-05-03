@@ -24,6 +24,7 @@ struct MonitorInfo {
     std::string artifactPath;
     int         artifactWidth = 0;
     int         artifactHeight = 0;
+    bool        artifactTopDown = true;
 };
 
 struct WindowInfo {
@@ -35,6 +36,7 @@ struct WindowInfo {
     std::string artifactPath;
     int         artifactWidth = 0;
     int         artifactHeight = 0;
+    bool        artifactTopDown = true;
     int         zIndex = 0;
     bool        selectable = true;
 };

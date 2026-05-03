@@ -122,7 +122,13 @@ QRect jsonRect(const QJsonObject& obj) {
                  QSize(std::max(1, static_cast<int>(std::ceil(obj.value("width").toDouble()))), std::max(1, static_cast<int>(std::ceil(obj.value("height").toDouble())))));
 }
 
-QImage loadRawRgba(const QString& path, int width, int height) {
+bool artifactTopDown(const QJsonObject& obj) {
+    // Older plugin builds emitted raw GL readback without orientation metadata.
+    // The observed legacy artifact layout is bottom-up.
+    return obj.contains("artifactTopDown") ? obj.value("artifactTopDown").toBool(true) : false;
+}
+
+QImage loadRawRgba(const QString& path, int width, int height, bool topDown) {
     QFile file(path);
     if (path.isEmpty() || width <= 0 || height <= 0 || !file.open(QIODevice::ReadOnly))
         return {};
@@ -133,7 +139,8 @@ QImage loadRawRgba(const QString& path, int width, int height) {
         return {};
 
     QImage image(reinterpret_cast<const uchar*>(bytes.constData()), width, height, width * 4, QImage::Format_RGBA8888);
-    return image.copy();
+    QImage copy = image.copy();
+    return topDown ? copy : copy.flipped(Qt::Vertical);
 }
 
 } // namespace
@@ -275,7 +282,7 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
         MonitorArtifact artifact;
         artifact.name = obj.value("name").toString();
         artifact.logicalGeometry = jsonRect(obj.value("geometry").toObject());
-        artifact.image = loadRawRgba(obj.value("artifactPath").toString(), obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt());
+        artifact.image = loadRawRgba(obj.value("artifactPath").toString(), obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt(), artifactTopDown(obj));
         if (!artifact.logicalGeometry.isValid())
             continue;
         m_desktopGeometry = m_desktopGeometry.united(artifact.logicalGeometry);
@@ -290,7 +297,7 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
         artifact.appClass = obj.value("class").toString();
         artifact.visibleGeometry = jsonRect(obj.value("visibleGeometry").toObject());
         artifact.fullGeometry = jsonRect(obj.value("fullGeometry").toObject());
-        artifact.image = loadRawRgba(obj.value("artifactPath").toString(), obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt());
+        artifact.image = loadRawRgba(obj.value("artifactPath").toString(), obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt(), artifactTopDown(obj));
         if (artifact.fullGeometry.isValid() && !artifact.image.isNull())
             m_windowArtifacts.push_back(std::move(artifact));
     }
