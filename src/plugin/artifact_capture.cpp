@@ -451,11 +451,50 @@ CBox renderedWindowBox(const PHLWINDOW& window, CBox box) {
     return box;
 }
 
+CBox renderedWindowGoalMainSurfaceBox(const PHLWINDOW& window) {
+    if (!window)
+        return {};
+
+    CBox box{window->m_realPosition->goal().x, window->m_realPosition->goal().y, window->m_realSize->goal().x, window->m_realSize->goal().y};
+    return renderedWindowBox(window, box);
+}
+
 std::string pointerId(const void* ptr) {
     std::ostringstream out;
     out << std::hex << reinterpret_cast<std::uintptr_t>(ptr);
     return out.str();
 }
+
+class WindowAnimationGoalOverride {
+  public:
+    explicit WindowAnimationGoalOverride(const PHLWINDOW& window) : m_window(window) {
+        if (!m_window || !m_window->m_realPosition || !m_window->m_realSize)
+            return;
+
+        m_position = m_window->m_realPosition->value();
+        m_size = m_window->m_realSize->value();
+        m_window->m_realPosition->value() = m_window->m_realPosition->goal();
+        m_window->m_realSize->value() = m_window->m_realSize->goal();
+        m_active = true;
+    }
+
+    ~WindowAnimationGoalOverride() {
+        if (!m_active || !m_window || !m_window->m_realPosition || !m_window->m_realSize)
+            return;
+
+        m_window->m_realPosition->value() = m_position;
+        m_window->m_realSize->value() = m_size;
+    }
+
+    WindowAnimationGoalOverride(const WindowAnimationGoalOverride&) = delete;
+    WindowAnimationGoalOverride& operator=(const WindowAnimationGoalOverride&) = delete;
+
+  private:
+    PHLWINDOW m_window;
+    Vector2D  m_position;
+    Vector2D  m_size;
+    bool      m_active = false;
+};
 
 bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& frozenTime, const std::filesystem::path& path, int& width, int& height) {
     if (!monitor || !monitor->m_activeWorkspace || !g_pHyprRenderer || !g_pHyprOpenGL)
@@ -500,6 +539,7 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     if (!window || !monitor || !g_pHyprRenderer || !g_pHyprOpenGL)
         return false;
 
+    WindowAnimationGoalOverride windowGoal(window);
     const CBox fullBox = renderedWindowBox(window, window->getFullWindowBoundingBox());
     CBox cropBox = fullBox.copy().translate(-monitor->m_position).scale(monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale).round();
     width = std::max(1, static_cast<int>(cropBox.w));
@@ -845,7 +885,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
             });
         } else
             info.fullGeometry = full;
-        info.visibleGeometry = toRect(renderedWindowBox(window, window->getWindowMainSurfaceBox()));
+        info.visibleGeometry = toRect(renderedWindowGoalMainSurfaceBox(window));
         session.windows.push_back(std::move(info));
     }
 
