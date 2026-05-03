@@ -32,6 +32,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 
 class InlineSelect final : public QWidget {
@@ -141,6 +142,101 @@ QImage loadRawRgba(const QString& path, int width, int height, bool topDown) {
     QImage image(reinterpret_cast<const uchar*>(bytes.constData()), width, height, width * 4, QImage::Format_RGBA8888);
     QImage copy = image.copy();
     return topDown ? copy : copy.flipped(Qt::Vertical);
+}
+
+QRect projectedImageRect(const QRect& logicalRect, const QRect& fullGeometry, const QSize& imageSize) {
+    if (!logicalRect.isValid() || !fullGeometry.isValid() || imageSize.isEmpty())
+        return {};
+
+    const double scaleX = static_cast<double>(imageSize.width()) / std::max(1, fullGeometry.width());
+    const double scaleY = static_cast<double>(imageSize.height()) / std::max(1, fullGeometry.height());
+    QRect rect(QPoint(static_cast<int>(std::floor((logicalRect.x() - fullGeometry.x()) * scaleX)),
+                      static_cast<int>(std::floor((logicalRect.y() - fullGeometry.y()) * scaleY))),
+               QSize(std::max(1, static_cast<int>(std::ceil(logicalRect.width() * scaleX))),
+                     std::max(1, static_cast<int>(std::ceil(logicalRect.height() * scaleY)))));
+
+    // Some Hyprland fake-render paths draw the window below its nominal crop and
+    // the plugin shifts the readback up. Keep the expected visible size instead
+    // of losing the bottom rows when that makes the projected top negative.
+    if (rect.x() < 0)
+        rect.moveLeft(0);
+    if (rect.y() < 0)
+        rect.moveTop(0);
+    return rect.intersected(QRect(QPoint(0, 0), imageSize));
+}
+
+int transparentPixelsInRow(const QImage& image, const QRect& span, int y) {
+    if (image.format() != QImage::Format_RGBA8888 || y < 0 || y >= image.height())
+        return 0;
+
+    int transparent = 0;
+    const auto* row = image.constScanLine(y);
+    for (int x = span.left(); x <= span.right(); ++x) {
+        const auto* px = row + static_cast<qsizetype>(x) * 4;
+        if (px[3] == 0)
+            ++transparent;
+    }
+    return transparent;
+}
+
+void copyPatchPixel(QImage& target, const QImage& patch, int x, int y) {
+    auto* dst = target.scanLine(y) + static_cast<qsizetype>(x) * 4;
+    const auto* src = patch.constScanLine(y) + static_cast<qsizetype>(x) * 4;
+    dst[0] = src[0];
+    dst[1] = src[1];
+    dst[2] = src[2];
+    dst[3] = 255;
+}
+
+void repairMissingWindowTail(QImage& image, const QRect& fullGeometry, const QRect& visibleGeometry, const QImage& desktopImage, const QRect& desktopGeometry) {
+    if (image.isNull() || !fullGeometry.isValid() || !visibleGeometry.isValid() || desktopImage.isNull() || !desktopGeometry.isValid())
+        return;
+
+    if (image.format() != QImage::Format_RGBA8888)
+        image = image.convertToFormat(QImage::Format_RGBA8888);
+
+    const QRect visibleImageRect = projectedImageRect(visibleGeometry, fullGeometry, image.size());
+    if (!visibleImageRect.isValid() || visibleImageRect.width() < 8 || visibleImageRect.height() < 8)
+        return;
+
+    int tailStart = -1;
+    for (int y = visibleImageRect.bottom(); y >= visibleImageRect.top(); --y) {
+        const int transparent = transparentPixelsInRow(image, visibleImageRect, y);
+        if (transparent * 10 >= visibleImageRect.width() * 9)
+            tailStart = y;
+        else
+            break;
+    }
+    if (tailStart < 0 || visibleImageRect.bottom() - tailStart + 1 < 8)
+        return;
+
+    QImage fullPatch(image.size(), QImage::Format_RGBA8888);
+    fullPatch.fill(Qt::transparent);
+    {
+        QPainter patchPainter(&fullPatch);
+        patchPainter.drawImage(fullPatch.rect(), desktopImage, QRect(fullGeometry.topLeft() - desktopGeometry.topLeft(), fullGeometry.size()));
+    }
+
+    QImage visiblePatch(image.size(), QImage::Format_RGBA8888);
+    visiblePatch.fill(Qt::transparent);
+    {
+        QPainter patchPainter(&visiblePatch);
+        patchPainter.drawImage(visibleImageRect, desktopImage, QRect(visibleGeometry.topLeft() - desktopGeometry.topLeft(), visibleGeometry.size()));
+    }
+
+    const QRect fullTailRect(0, tailStart, image.width(), image.height() - tailStart);
+    for (int y = fullTailRect.top(); y <= fullTailRect.bottom(); ++y) {
+        for (int x = fullTailRect.left(); x <= fullTailRect.right(); ++x) {
+            auto* dst = image.scanLine(y) + static_cast<qsizetype>(x) * 4;
+            if (dst[3] != 0)
+                continue;
+            const QImage& patch = visibleImageRect.contains(x, y) ? visiblePatch : fullPatch;
+            const auto* src = patch.constScanLine(y) + static_cast<qsizetype>(x) * 4;
+            if (src[3] == 0)
+                continue;
+            copyPatchPixel(image, patch, x, y);
+        }
+    }
 }
 
 } // namespace
@@ -576,6 +672,9 @@ QImage CaptureOverlay::renderResultImage() const {
             logicalSource = windowArtifact->visibleGeometry;
         }
 
+        QImage repairedArtifact = windowArtifact->image;
+        repairMissingWindowTail(repairedArtifact, windowArtifact->fullGeometry, windowArtifact->visibleGeometry, m_desktopImage, m_desktopGeometry);
+
         QImage image(artifactSource.size().expandedTo(QSize(1, 1)), QImage::Format_ARGB32_Premultiplied);
         image.fill(Qt::transparent);
 
@@ -592,7 +691,7 @@ QImage CaptureOverlay::renderResultImage() const {
         else if (bg != hyprshot::WindowBackground::Transparent)
             painter.fillRect(image.rect(), QColor(30, 34, 38));
 
-        painter.drawImage(image.rect(), windowArtifact->image, artifactSource);
+        painter.drawImage(image.rect(), repairedArtifact, artifactSource);
         return image;
     }
 
