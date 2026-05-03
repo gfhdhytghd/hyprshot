@@ -44,7 +44,7 @@ std::filesystem::path artifactRoot(const std::string& sessionId) {
     return root;
 }
 
-bool writeRgbaFramebufferRegion(CFramebuffer& framebuffer, const std::filesystem::path& path, int cropX, int cropTopY, int cropWidth, int cropHeight) {
+bool writeRgbaFramebufferRegion(CFramebuffer& framebuffer, const std::filesystem::path& path, int cropX, int cropTopY, int cropWidth, int cropHeight, bool flipY) {
     const int framebufferWidth = static_cast<int>(std::lround(framebuffer.m_size.x));
     const int framebufferHeight = static_cast<int>(std::lround(framebuffer.m_size.y));
     if (framebufferWidth <= 0 || framebufferHeight <= 0 || cropWidth <= 0 || cropHeight <= 0)
@@ -70,7 +70,8 @@ bool writeRgbaFramebufferRegion(CFramebuffer& framebuffer, const std::filesystem
         const int dstX = srcX - cropX;
         const int dstY = srcTopY - cropTopY;
         for (int y = 0; y < srcHeight; ++y) {
-            const auto* src = bottomUp.data() + static_cast<std::size_t>(srcHeight - 1 - y) * srcWidth * 4U;
+            const int srcRow = flipY ? srcHeight - 1 - y : y;
+            const auto* src = bottomUp.data() + static_cast<std::size_t>(srcRow) * srcWidth * 4U;
             auto* dst = topDown.data() + (static_cast<std::size_t>(dstY + y) * cropWidth + dstX) * 4U;
             std::copy(src, src + static_cast<std::size_t>(srcWidth) * 4U, dst);
         }
@@ -87,7 +88,8 @@ bool writeRgbaFramebuffer(CFramebuffer& framebuffer, const std::filesystem::path
                                       0,
                                       0,
                                       static_cast<int>(std::lround(framebuffer.m_size.x)),
-                                      static_cast<int>(std::lround(framebuffer.m_size.y)));
+                                      static_cast<int>(std::lround(framebuffer.m_size.y)),
+                                      true);
 }
 
 CBox renderedWindowBox(const PHLWINDOW& window, CBox box) {
@@ -179,7 +181,7 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
     g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
 
-    return writeRgbaFramebufferRegion(framebuffer, path, static_cast<int>(cropBox.x), static_cast<int>(cropBox.y), width, height);
+    return writeRgbaFramebufferRegion(framebuffer, path, static_cast<int>(cropBox.x), static_cast<int>(cropBox.y), width, height, false);
 }
 
 } // namespace
