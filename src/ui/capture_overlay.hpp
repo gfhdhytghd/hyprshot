@@ -54,6 +54,7 @@ class CaptureOverlay final : public QMainWindow {
     const WindowArtifact* hoveredWindow() const;
     bool windowCaptureAvailable() const;
     void updateStatus();
+    void relayoutToolbar();
     void showThumbnail(const QImage& image, const QString& path);
 
     hyprshot::CaptureDefaults m_defaults;
@@ -69,6 +70,8 @@ class CaptureOverlay final : public QMainWindow {
     QLabel*      m_status = nullptr;
     QImage       m_desktopImage;
     QRect        m_desktopGeometry;
+    int          m_sessionMonitorCount = 0;
+    int          m_sessionWindowCount = 0;
     std::vector<MonitorArtifact> m_monitorArtifacts;
     std::vector<WindowArtifact>  m_windowArtifacts;
 };

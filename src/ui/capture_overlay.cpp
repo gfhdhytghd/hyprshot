@@ -24,6 +24,7 @@
 #include <QProcess>
 #include <QPushButton>
 #include <QScreen>
+#include <QSizePolicy>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QStyleHints>
@@ -143,6 +144,7 @@ InlineSelect::InlineSelect(QWidget* popupParent, QWidget* parent) : QWidget(pare
 
     m_button = new QPushButton(this);
     m_button->setCheckable(true);
+    m_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     layout->addWidget(m_button);
     connect(m_button, &QPushButton::clicked, this, [this] {
         if (isPopupVisible())
@@ -175,6 +177,13 @@ void InlineSelect::addItems(const QStringList& items) {
         connect(button, &QPushButton::clicked, this, [this, item] { choose(item); });
         m_panelLayout->addWidget(button);
     }
+
+    int width = 0;
+    const auto metrics = m_button->fontMetrics();
+    for (const auto& item : m_items)
+        width = std::max(width, metrics.horizontalAdvance(item + QStringLiteral("  ▾")) + 34);
+    m_button->setMinimumWidth(width);
+    m_panel->setMinimumWidth(width);
 
     if (m_current.isEmpty() && !m_items.isEmpty())
         setCurrentText(m_items.first());
@@ -256,7 +265,12 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
         return;
 
     const auto root = doc.object();
-    for (const auto value : root.value("monitors").toArray()) {
+    const auto monitors = root.value("monitors").toArray();
+    const auto windows = root.value("windows").toArray();
+    m_sessionMonitorCount = monitors.size();
+    m_sessionWindowCount = windows.size();
+
+    for (const auto value : monitors) {
         const auto obj = value.toObject();
         MonitorArtifact artifact;
         artifact.name = obj.value("name").toString();
@@ -269,7 +283,7 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
             m_monitorArtifacts.push_back(std::move(artifact));
     }
 
-    for (const auto value : root.value("windows").toArray()) {
+    for (const auto value : windows) {
         const auto obj = value.toObject();
         WindowArtifact artifact;
         artifact.title = obj.value("title").toString();
@@ -330,6 +344,7 @@ void CaptureOverlay::buildToolbar() {
 
     auto* layout = new QHBoxLayout(m_toolbar);
     layout->setContentsMargins(10, 7, 10, 7);
+    layout->setSizeConstraint(QLayout::SetFixedSize);
 
     auto* group = new QButtonGroup(this);
     const auto addMode = [&](const QString& label, hyprshot::CaptureMode mode) {
@@ -363,11 +378,10 @@ void CaptureOverlay::buildToolbar() {
     connect(cancel, &QPushButton::clicked, this, &CaptureOverlay::cancelCapture);
 
     m_status = new QLabel(m_toolbar);
+    m_status->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     layout->addWidget(m_status);
     updateStatus();
-
-    m_toolbar->adjustSize();
-    m_toolbar->move((width() - m_toolbar->width()) / 2, 28);
+    relayoutToolbar();
 }
 
 void CaptureOverlay::setMode(hyprshot::CaptureMode mode) {
@@ -483,16 +497,39 @@ void CaptureOverlay::updateStatus() {
 
     if (m_mode != hyprshot::CaptureMode::Window) {
         m_status->clear();
+        relayoutToolbar();
         return;
     }
 
     if (!windowCaptureAvailable()) {
-        m_status->setText("no frozen windows");
+        if (m_sessionMonitorCount == 0 && m_sessionWindowCount == 0)
+            m_status->setText("plugin reload needed");
+        else if (m_sessionWindowCount > 0)
+            m_status->setText("window artifact failed");
+        else
+            m_status->setText("no visible windows");
+        relayoutToolbar();
         return;
     }
 
     const auto* window = hoveredWindow();
     m_status->setText(window ? QString("%1").arg(window->appClass.isEmpty() ? window->title : window->appClass) : QString("choose window"));
+    relayoutToolbar();
+}
+
+void CaptureOverlay::relayoutToolbar() {
+    if (!m_toolbar)
+        return;
+
+    m_toolbar->setMinimumWidth(0);
+    m_toolbar->setMaximumWidth(QWIDGETSIZE_MAX);
+    m_toolbar->adjustSize();
+    const int maxWidth = std::max(1, width() - 32);
+    if (m_toolbar->width() > maxWidth)
+        m_toolbar->setFixedWidth(maxWidth);
+    else
+        m_toolbar->setFixedWidth(m_toolbar->sizeHint().width());
+    m_toolbar->move(std::max(16, (width() - m_toolbar->width()) / 2), 28);
 }
 
 QImage CaptureOverlay::renderResultImage() const {
