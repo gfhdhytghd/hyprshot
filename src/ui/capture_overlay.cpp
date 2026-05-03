@@ -479,15 +479,15 @@ QRect CaptureOverlay::captureRectForMode() const {
 }
 
 QRect CaptureOverlay::globalToLocalRect(const QRect& rect) const {
-    return QRect(rect.topLeft() - m_desktopGeometry.topLeft(), rect.size());
+    return QRect(mapFromGlobal(rect.topLeft()), rect.size());
 }
 
 QRect CaptureOverlay::localToDesktopSourceRect(const QRect& rect) const {
-    return rect;
+    return QRect(mapToGlobal(rect.topLeft()) - m_desktopGeometry.topLeft(), rect.size());
 }
 
 QPoint CaptureOverlay::cursorLogicalPosition() const {
-    return m_desktopGeometry.topLeft() + mapFromGlobal(QCursor::pos());
+    return mapToGlobal(mapFromGlobal(QCursor::pos()));
 }
 
 QRect CaptureOverlay::windowFrameGeometry(const WindowArtifact& window) const {
