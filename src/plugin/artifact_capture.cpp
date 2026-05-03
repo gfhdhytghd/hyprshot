@@ -44,7 +44,7 @@ std::filesystem::path artifactRoot(const std::string& sessionId) {
     return root;
 }
 
-bool writeRgbaFramebuffer(CFramebuffer& framebuffer, const std::filesystem::path& path) {
+bool writeRgbaFramebuffer(CFramebuffer& framebuffer, const std::filesystem::path& path, bool flipY) {
     const int width = static_cast<int>(std::lround(framebuffer.m_size.x));
     const int height = static_cast<int>(std::lround(framebuffer.m_size.y));
     if (width <= 0 || height <= 0)
@@ -60,10 +60,14 @@ bool writeRgbaFramebuffer(CFramebuffer& framebuffer, const std::filesystem::path
     glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, bottomUp.data());
     glBindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFramebuffer);
 
-    for (int y = 0; y < height; ++y) {
-        const auto* src = bottomUp.data() + static_cast<std::size_t>(height - 1 - y) * width * 4U;
-        auto* dst = topDown.data() + static_cast<std::size_t>(y) * width * 4U;
-        std::copy(src, src + static_cast<std::size_t>(width) * 4U, dst);
+    if (flipY) {
+        for (int y = 0; y < height; ++y) {
+            const auto* src = bottomUp.data() + static_cast<std::size_t>(height - 1 - y) * width * 4U;
+            auto* dst = topDown.data() + static_cast<std::size_t>(y) * width * 4U;
+            std::copy(src, src + static_cast<std::size_t>(width) * 4U, dst);
+        }
+    } else {
+        topDown = std::move(bottomUp);
     }
 
     std::ofstream out(path, std::ios::binary);
@@ -106,7 +110,7 @@ bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& fro
     g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
     g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
 
-    return writeRgbaFramebuffer(framebuffer, path);
+    return writeRgbaFramebuffer(framebuffer, path, true);
 }
 
 bool renderWindowArtifact(const PHLWINDOW& window,
@@ -126,7 +130,7 @@ bool renderWindowArtifact(const PHLWINDOW& window,
 
     CFramebuffer framebuffer;
     const auto drmFormat = monitor->m_output && monitor->m_output->state ? monitor->m_output->state->state().drmFormat : DRM_FORMAT_ABGR8888;
-    if (!framebuffer.alloc(width, height, drmFormat) && !framebuffer.alloc(width, height, DRM_FORMAT_ABGR8888))
+    if (!framebuffer.alloc(width, height, DRM_FORMAT_ABGR8888) && !framebuffer.alloc(width, height, drmFormat))
         return false;
 
     const auto previousRealPos = window->m_realPosition->value();
@@ -144,18 +148,18 @@ bool renderWindowArtifact(const PHLWINDOW& window,
 
     g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 0.0});
 
-    *window->m_realPosition = Vector2D{-fullBox.x, -fullBox.y};
-    *window->m_realSize = previousRealSize;
+    window->m_realPosition->setValueAndWarp(Vector2D{-fullBox.x, -fullBox.y});
+    window->m_realSize->setValueAndWarp(previousRealSize);
     g_pHyprRenderer->renderWindow(window, monitor, frozenTime, decorate, RENDER_PASS_ALL, false, false);
-    *window->m_realPosition = previousRealPos;
-    *window->m_realSize = previousRealSize;
+    window->m_realPosition->setValueAndWarp(previousRealPos);
+    window->m_realSize->setValueAndWarp(previousRealSize);
 
     g_pHyprOpenGL->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
     g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
     g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
 
-    return writeRgbaFramebuffer(framebuffer, path);
+    return writeRgbaFramebuffer(framebuffer, path, false);
 }
 
 } // namespace

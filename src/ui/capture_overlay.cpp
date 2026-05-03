@@ -404,7 +404,7 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
     } else if (m_mode == hyprshot::CaptureMode::Window) {
         const auto* window = hoveredWindow();
         for (const auto& candidate : m_windowArtifacts) {
-            const QRect target = candidate.fullGeometry.translated(-geometry().topLeft());
+            const QRect target = globalToLocalRect(candidate.fullGeometry);
             painter.setPen(QPen(&candidate == window ? QColor(255, 255, 255, 240) : QColor(255, 255, 255, 110), &candidate == window ? 3 : 1));
             painter.drawRoundedRect(target, 8, 8);
         }
@@ -472,14 +472,26 @@ QRect CaptureOverlay::captureRectForMode() const {
         return normalizedSelection();
     if (m_mode == hyprshot::CaptureMode::Window) {
         if (const auto* window = hoveredWindow())
-            return window->fullGeometry.translated(-geometry().topLeft());
+            return globalToLocalRect(window->fullGeometry);
         return {};
     }
     return rect();
 }
 
+QRect CaptureOverlay::globalToLocalRect(const QRect& rect) const {
+    return QRect(mapFromGlobal(rect.topLeft()), rect.size());
+}
+
+QRect CaptureOverlay::localToDesktopSourceRect(const QRect& rect) const {
+    return QRect(mapToGlobal(rect.topLeft()) - m_desktopGeometry.topLeft(), rect.size());
+}
+
+QPoint CaptureOverlay::cursorLogicalPosition() const {
+    return mapToGlobal(mapFromGlobal(QCursor::pos()));
+}
+
 const CaptureOverlay::WindowArtifact* CaptureOverlay::hoveredWindow() const {
-    const QPoint global = QCursor::pos();
+    const QPoint global = cursorLogicalPosition();
     for (auto it = m_windowArtifacts.rbegin(); it != m_windowArtifacts.rend(); ++it) {
         if (it->fullGeometry.contains(global) || it->visibleGeometry.contains(global))
             return &*it;
@@ -557,7 +569,7 @@ QImage CaptureOverlay::renderResultImage() const {
         image.fill(Qt::transparent);
 
         QPainter painter(&image);
-        const QRect desktopSource = logicalSource.translated(-m_desktopGeometry.topLeft());
+        const QRect desktopSource = QRect(logicalSource.topLeft() - m_desktopGeometry.topLeft(), logicalSource.size());
         if (bg == hyprshot::WindowBackground::Real && !m_desktopImage.isNull())
             painter.drawImage(image.rect(), m_desktopImage, desktopSource);
         else if (bg == hyprshot::WindowBackground::White)
@@ -580,7 +592,7 @@ QImage CaptureOverlay::renderResultImage() const {
     image.fill(Qt::transparent);
 
     QPainter painter(&image);
-    const QRect desktopSource = cap.translated(geometry().topLeft() - m_desktopGeometry.topLeft());
+    const QRect desktopSource = localToDesktopSourceRect(cap);
 
     if (m_mode != hyprshot::CaptureMode::Window && !m_desktopImage.isNull()) {
         painter.drawImage(image.rect(), m_desktopImage, desktopSource);
