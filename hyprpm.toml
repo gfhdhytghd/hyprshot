@@ -1,5 +1,5 @@
 [repository]
-name = "hyprshot"
+name = "HyprCapture"
 authors = ["wilf"]
 commit_pins = [
     ["0.54.3", ""]
