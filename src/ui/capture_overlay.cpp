@@ -63,6 +63,7 @@ InlineSelect* g_openSelect = nullptr;
 constexpr int kWindowBackgroundMinAlpha = 32;
 constexpr int kWindowShadowMaxRgb = 32;
 constexpr int kWindowShadowMaxAlpha = 223;
+constexpr int kWindowBackgroundInteriorRadius = 1;
 
 QString qString(const std::string& value) {
     return QString::fromStdString(value);
@@ -216,6 +217,28 @@ bool isWindowContentPixel(const uchar* px) {
     return maxRgb > kWindowShadowMaxRgb || alpha > kWindowShadowMaxAlpha;
 }
 
+bool isWindowContentPixelAt(const QImage& artifact, int x, int y) {
+    if (x < 0 || x >= artifact.width() || y < 0 || y >= artifact.height())
+        return false;
+
+    const auto* px = artifact.constScanLine(y) + static_cast<qsizetype>(x) * 4;
+    return isWindowContentPixel(px);
+}
+
+bool isWindowInteriorPixel(const QImage& artifact, int x, int y) {
+    if (!isWindowContentPixelAt(artifact, x, y))
+        return false;
+
+    for (int dy = -kWindowBackgroundInteriorRadius; dy <= kWindowBackgroundInteriorRadius; ++dy) {
+        for (int dx = -kWindowBackgroundInteriorRadius; dx <= kWindowBackgroundInteriorRadius; ++dx) {
+            if (!isWindowContentPixelAt(artifact, x + dx, y + dy))
+                return false;
+        }
+    }
+
+    return true;
+}
+
 void applyWindowContentAlphaMask(QImage& background, const QImage& artifact, const QRect& artifactSource) {
     if (background.format() != QImage::Format_RGBA8888 || artifact.format() != QImage::Format_RGBA8888 || background.isNull() || artifact.isNull())
         return;
@@ -228,7 +251,6 @@ void applyWindowContentAlphaMask(QImage& background, const QImage& artifact, con
             continue;
         }
 
-        const auto* src = artifact.constScanLine(sy);
         for (int x = 0; x < background.width(); ++x) {
             auto* dstPx = dst + static_cast<qsizetype>(x) * 4;
             const int sx = artifactSource.x() + x;
@@ -240,8 +262,7 @@ void applyWindowContentAlphaMask(QImage& background, const QImage& artifact, con
                 continue;
             }
 
-            const auto* srcPx = src + static_cast<qsizetype>(sx) * 4;
-            if (!isWindowContentPixel(srcPx)) {
+            if (!isWindowInteriorPixel(artifact, sx, sy)) {
                 dstPx[0] = 0;
                 dstPx[1] = 0;
                 dstPx[2] = 0;
