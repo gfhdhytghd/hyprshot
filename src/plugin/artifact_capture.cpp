@@ -216,6 +216,7 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     height = std::max(1, static_cast<int>(cropBox.h));
     const int framebufferWidth = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.x)));
     const int framebufferHeight = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.y)));
+    const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
 
     CFramebuffer framebuffer;
     const auto drmFormat = monitor->m_output && monitor->m_output->state ? monitor->m_output->state->state().drmFormat : DRM_FORMAT_ABGR8888;
@@ -226,23 +227,35 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     const bool previousBlockShader = g_pHyprOpenGL->m_renderData.blockScreenShader;
     const bool previousRenderingSnapshot = g_pHyprRenderer->m_bRenderingSnapshot;
 
-    CRegion fakeDamage{0, 0, framebufferWidth, framebufferHeight};
-    g_pHyprRenderer->makeEGLCurrent();
-    g_pHyprRenderer->m_bBlockSurfaceFeedback = true;
-    if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &framebuffer)) {
+    const auto renderIntoFramebuffer = [&](double monitorYOffset) {
+        const auto originalMonitorPosition = monitor->m_position;
+        if (monitorYOffset != 0.0)
+            monitor->m_position.y = originalMonitorPosition.y + monitorYOffset;
+
+        CRegion fakeDamage{0, 0, framebufferWidth, framebufferHeight};
+        g_pHyprRenderer->makeEGLCurrent();
+        g_pHyprRenderer->m_bBlockSurfaceFeedback = true;
+        if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &framebuffer)) {
+            monitor->m_position = originalMonitorPosition;
+            g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
+            return false;
+        }
+
+        g_pHyprRenderer->m_bRenderingSnapshot = true;
+        g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 0.0});
+        g_pHyprRenderer->renderWindow(window, monitor, frozenTime, decorate, RENDER_PASS_ALL, false, false);
+        g_pHyprRenderer->m_bRenderingSnapshot = previousRenderingSnapshot;
+
+        g_pHyprOpenGL->m_renderData.blockScreenShader = true;
+        g_pHyprRenderer->endRender();
+        g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
         g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
+        monitor->m_position = originalMonitorPosition;
+        return true;
+    };
+
+    if (!renderIntoFramebuffer(0.0))
         return false;
-    }
-
-    g_pHyprRenderer->m_bRenderingSnapshot = true;
-    g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 0.0});
-    g_pHyprRenderer->renderWindow(window, monitor, frozenTime, decorate, RENDER_PASS_ALL, false, false);
-    g_pHyprRenderer->m_bRenderingSnapshot = previousRenderingSnapshot;
-
-    g_pHyprOpenGL->m_renderData.blockScreenShader = true;
-    g_pHyprRenderer->endRender();
-    g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
-    g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
 
     const int cropX = static_cast<int>(cropBox.x);
     const int cropY = static_cast<int>(cropBox.y);
@@ -250,8 +263,16 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     if (readback.pixels.empty())
         return false;
 
-    if (findTopNonZeroRow(readback, offsetY) && offsetY > 0)
-        shiftReadbackUpAndFillTail(framebuffer, cropX, cropY, readback, offsetY);
+    if (findTopNonZeroRow(readback, offsetY) && offsetY > 0) {
+        if (renderIntoFramebuffer(offsetY / scale)) {
+            readback = readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height);
+            int residualOffsetY = 0;
+            if (findTopNonZeroRow(readback, residualOffsetY))
+                offsetY = residualOffsetY;
+        }
+        if (offsetY > 0)
+            shiftReadbackUpAndFillTail(framebuffer, cropX, cropY, readback, offsetY);
+    }
 
     return writeRgbaFile(path, readback.pixels);
 }
@@ -308,7 +329,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, offsetY)) {
             info.artifactPath = path.string();
             const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
-            info.fullGeometry = toRect(CBox{fullBox.x, fullBox.y + offsetY / scale, info.artifactWidth / scale, info.artifactHeight / scale});
+            info.fullGeometry = toRect(CBox{fullBox.x, fullBox.y, info.artifactWidth / scale, info.artifactHeight / scale});
         } else
             info.fullGeometry = full;
         info.visibleGeometry = toRect(renderedWindowBox(window, window->getWindowMainSurfaceBox()));
