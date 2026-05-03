@@ -679,7 +679,12 @@ void CaptureOverlay::buildToolbar() {
         button->setChecked(mode == m_mode);
         group->addButton(button);
         layout->addWidget(button);
-        connect(button, &QPushButton::clicked, this, [this, mode] { setMode(mode); });
+        connect(button, &QPushButton::clicked, this, [this, mode] {
+            const bool wasActiveMode = m_mode == mode;
+            setMode(mode);
+            if (mode == hyprshot::CaptureMode::Fullscreen && wasActiveMode)
+                finishCapture();
+        });
     };
     addMode("Full", hyprshot::CaptureMode::Fullscreen);
     addMode("Region", hyprshot::CaptureMode::Region);
@@ -779,6 +784,11 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
         m_windowBackground->hidePopup();
     if (event->button() != Qt::LeftButton)
         return;
+
+    if (m_mode == hyprshot::CaptureMode::Fullscreen) {
+        finishCapture();
+        return;
+    }
 
     if (m_mode == hyprshot::CaptureMode::Window)
         return;
@@ -1054,8 +1064,13 @@ QImage CaptureOverlay::renderResultImage() const {
 }
 
 void CaptureOverlay::finishCapture() {
+    if (m_finishing)
+        return;
+    m_finishing = true;
+
     const auto image = renderResultImage();
     if (image.isNull()) {
+        m_finishing = false;
         updateStatus();
         return;
     }

@@ -74,6 +74,7 @@ class CaptureOverlay final : public QMainWindow {
     hyprshot::CaptureMode     m_mode;
     bool                      m_quick = false;
     bool                      m_dragging = false;
+    bool                      m_finishing = false;
     QPoint                    m_dragStart;
     QPoint                    m_dragEnd;
 
