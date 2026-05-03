@@ -29,7 +29,7 @@ Use `hyprpm` for the compositor plugin:
 
 ```sh
 hyprpm update
-hyprpm add <repo-url-or-local-path>
+hyprpm add https://github.com/gfhdhytghd/hyprshot
 hyprpm enable hyprshot
 hyprpm reload
 ```
