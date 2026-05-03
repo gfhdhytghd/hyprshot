@@ -263,6 +263,40 @@ bool paintWindowBackground(QImage& background,
     return true;
 }
 
+void reconstructRealWindowBackground(QImage& background, const QImage& artifact, const QRect& artifactSource) {
+    if (background.format() != QImage::Format_RGBA8888 || artifact.format() != QImage::Format_RGBA8888 || background.isNull() || artifact.isNull())
+        return;
+
+    // The desktop snapshot already contains the selected window. Invert the
+    // source-over blend so the window artifact is not composited twice.
+    for (int y = 0; y < background.height(); ++y) {
+        auto* dst = background.scanLine(y);
+        const int sy = artifactSource.y() + y;
+        if (sy < 0 || sy >= artifact.height())
+            continue;
+
+        const auto* src = artifact.constScanLine(sy);
+        for (int x = 0; x < background.width(); ++x) {
+            const int sx = artifactSource.x() + x;
+            if (sx < 0 || sx >= artifact.width())
+                continue;
+
+            auto* dstPx = dst + static_cast<qsizetype>(x) * 4;
+            const auto* srcPx = src + static_cast<qsizetype>(sx) * 4;
+            const int alpha = srcPx[3];
+            if (alpha <= 0 || alpha >= 255)
+                continue;
+
+            const int inverseAlpha = 255 - alpha;
+            for (int channel = 0; channel < 3; ++channel) {
+                const int value = (dstPx[channel] * 255 - srcPx[channel] * alpha + inverseAlpha / 2) / inverseAlpha;
+                dstPx[channel] = static_cast<uchar>(std::clamp(value, 0, 255));
+            }
+            dstPx[3] = 255;
+        }
+    }
+}
+
 bool isWindowContentPixel(const uchar* px) {
     const int alpha = px[3];
     if (alpha < kWindowBackgroundMinAlpha)
@@ -863,6 +897,8 @@ QImage CaptureOverlay::renderResultImage() const {
         if (paintWindowBackground(background, bg, m_desktopImage, desktopSource)) {
             const QImage maskArtifact =
                 repairedArtifact.format() == QImage::Format_RGBA8888 ? repairedArtifact : repairedArtifact.convertToFormat(QImage::Format_RGBA8888);
+            if (bg == hyprshot::WindowBackground::Real)
+                reconstructRealWindowBackground(background, maskArtifact, artifactSource);
             applyWindowContentAlphaMask(background, maskArtifact, artifactSource);
             painter.drawImage(QPoint(0, 0), background);
         }
