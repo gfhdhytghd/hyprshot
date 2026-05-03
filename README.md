@@ -6,7 +6,10 @@
 > `hyprpm` installs the compositor plugin only. Install `hyprshot-ui` separately into a path visible to the Hyprland session, or set `plugin:hyprshot:helper` to an absolute executable path.
 
 > [!WARNING]
-> Hyprland plugins run inside the compositor process. Install plugins only from sources you trust, and treat plugin reloads as live compositor unload/load operations.
+> Hyprland plugins run inside the compositor process. Install plugins only from sources you trust.
+
+> [!WARNING]
+> This software is 99% vibe coded with OpenAI CodeX, but have been manual audited, warn in case you mind it.
 
 ## Features
 
