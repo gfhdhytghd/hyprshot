@@ -60,7 +60,9 @@ class InlineSelect final : public QWidget {
 namespace {
 
 InlineSelect* g_openSelect = nullptr;
-constexpr int kWindowBackgroundAlphaThreshold = 128;
+constexpr int kWindowBackgroundMinAlpha = 32;
+constexpr int kWindowShadowMaxRgb = 32;
+constexpr int kWindowShadowMaxAlpha = 223;
 
 QString qString(const std::string& value) {
     return QString::fromStdString(value);
@@ -205,20 +207,23 @@ bool paintWindowBackground(QImage& background,
     return true;
 }
 
-void applyWindowContentAlphaMask(QImage& background, const QImage& artifact, const QRect& artifactSource, const QRect& contentRect) {
+bool isWindowContentPixel(const uchar* px) {
+    const int alpha = px[3];
+    if (alpha < kWindowBackgroundMinAlpha)
+        return false;
+
+    const int maxRgb = std::max({px[0], px[1], px[2]});
+    return maxRgb > kWindowShadowMaxRgb || alpha > kWindowShadowMaxAlpha;
+}
+
+void applyWindowContentAlphaMask(QImage& background, const QImage& artifact, const QRect& artifactSource) {
     if (background.format() != QImage::Format_RGBA8888 || artifact.format() != QImage::Format_RGBA8888 || background.isNull() || artifact.isNull())
         return;
-
-    const QRect allowedRect = contentRect.isValid() ? contentRect.intersected(artifactSource) : artifactSource;
-    if (!allowedRect.isValid()) {
-        background.fill(Qt::transparent);
-        return;
-    }
 
     for (int y = 0; y < background.height(); ++y) {
         auto* dst = background.scanLine(y);
         const int sy = artifactSource.y() + y;
-        if (sy < 0 || sy >= artifact.height() || sy < allowedRect.top() || sy > allowedRect.bottom()) {
+        if (sy < 0 || sy >= artifact.height()) {
             std::fill(dst, dst + static_cast<qsizetype>(background.width()) * 4, 0);
             continue;
         }
@@ -227,7 +232,7 @@ void applyWindowContentAlphaMask(QImage& background, const QImage& artifact, con
         for (int x = 0; x < background.width(); ++x) {
             auto* dstPx = dst + static_cast<qsizetype>(x) * 4;
             const int sx = artifactSource.x() + x;
-            if (sx < 0 || sx >= artifact.width() || sx < allowedRect.left() || sx > allowedRect.right()) {
+            if (sx < 0 || sx >= artifact.width()) {
                 dstPx[0] = 0;
                 dstPx[1] = 0;
                 dstPx[2] = 0;
@@ -236,7 +241,7 @@ void applyWindowContentAlphaMask(QImage& background, const QImage& artifact, con
             }
 
             const auto* srcPx = src + static_cast<qsizetype>(sx) * 4;
-            if (srcPx[3] < kWindowBackgroundAlphaThreshold) {
+            if (!isWindowContentPixel(srcPx)) {
                 dstPx[0] = 0;
                 dstPx[1] = 0;
                 dstPx[2] = 0;
@@ -759,8 +764,7 @@ QImage CaptureOverlay::renderResultImage() const {
         if (paintWindowBackground(background, bg, m_desktopImage, desktopSource)) {
             const QImage maskArtifact =
                 repairedArtifact.format() == QImage::Format_RGBA8888 ? repairedArtifact : repairedArtifact.convertToFormat(QImage::Format_RGBA8888);
-            const QRect contentRect = projectedImageRect(windowArtifact->visibleGeometry, windowArtifact->fullGeometry, repairedArtifact.size());
-            applyWindowContentAlphaMask(background, maskArtifact, artifactSource, contentRect);
+            applyWindowContentAlphaMask(background, maskArtifact, artifactSource);
             painter.drawImage(QPoint(0, 0), background);
         }
 
