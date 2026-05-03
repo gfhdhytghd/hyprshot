@@ -36,6 +36,9 @@ class CaptureOverlay final : public QMainWindow {
     struct WindowArtifact {
         QRect   fullGeometry;
         QRect   visibleGeometry;
+        double  rounding = 0.0;
+        double  roundingPower = 2.0;
+        double  borderSize = 0.0;
         QImage  image;
         QString title;
         QString appClass;
@@ -55,6 +58,7 @@ class CaptureOverlay final : public QMainWindow {
     QRect localToDesktopSourceRect(const QRect& rect) const;
     QPoint cursorLogicalPosition() const;
     QRect windowFrameGeometry(const WindowArtifact& window) const;
+    double windowFrameRadius(const WindowArtifact& window) const;
     const WindowArtifact* hoveredWindow() const;
     bool windowCaptureAvailable() const;
     void updateStatus();

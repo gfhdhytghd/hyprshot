@@ -33,6 +33,9 @@ struct WindowInfo {
     std::string appClass;
     Rect        visibleGeometry;
     Rect        fullGeometry;
+    double      rounding = 0.0;
+    double      roundingPower = 2.0;
+    double      borderSize = 0.0;
     std::string artifactPath;
     int         artifactWidth = 0;
     int         artifactHeight = 0;

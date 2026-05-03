@@ -21,6 +21,7 @@
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPainter>
+#include <QPainterPath>
 #include <QProcess>
 #include <QPushButton>
 #include <QScreen>
@@ -64,6 +65,7 @@ constexpr int kWindowBackgroundMinAlpha = 32;
 constexpr int kWindowShadowMaxRgb = 32;
 constexpr int kWindowShadowMaxAlpha = 223;
 constexpr int kWindowBackgroundInteriorRadius = 1;
+constexpr double kWindowFrameFallbackRadius = 8.0;
 
 QString qString(const std::string& value) {
     return QString::fromStdString(value);
@@ -180,6 +182,59 @@ QRect artifactRectToLogicalRect(const QRect& artifactRect, const QSize& artifact
     const int x2 = fullGeometry.x() + static_cast<int>(std::ceil((artifactRect.x() + artifactRect.width()) * scaleX));
     const int y2 = fullGeometry.y() + static_cast<int>(std::ceil((artifactRect.y() + artifactRect.height()) * scaleY));
     return QRect(QPoint(x1, y1), QSize(std::max(1, x2 - x1), std::max(1, y2 - y1))).intersected(fullGeometry);
+}
+
+QPointF superellipsePoint(const QPointF& center, double radius, double power, double signX, double signY, double theta) {
+    const double exponent = 2.0 / std::clamp(power, 1.0, 10.0);
+    const double x = std::pow(std::max(0.0, std::cos(theta)), exponent) * radius;
+    const double y = std::pow(std::max(0.0, std::sin(theta)), exponent) * radius;
+    return {center.x() + signX * x, center.y() + signY * y};
+}
+
+void appendSuperellipseCorner(QPainterPath& path,
+                              const QPointF& center,
+                              double radius,
+                              double power,
+                              double signX,
+                              double signY,
+                              double startTheta,
+                              double endTheta) {
+    const int steps = std::clamp(static_cast<int>(std::ceil(radius / 2.0)), 8, 32);
+    for (int i = 1; i <= steps; ++i) {
+        const double t = static_cast<double>(i) / steps;
+        path.lineTo(superellipsePoint(center, radius, power, signX, signY, startTheta + (endTheta - startTheta) * t));
+    }
+}
+
+QPainterPath roundedWindowFramePath(const QRectF& rawRect, double radius, double power) {
+    const QRectF rect = rawRect.normalized();
+    QPainterPath path;
+    if (!rect.isValid())
+        return path;
+
+    radius = std::clamp(radius, 0.0, std::min(rect.width(), rect.height()) / 2.0);
+    if (radius <= 0.0) {
+        path.addRect(rect);
+        return path;
+    }
+
+    constexpr double halfPi = 1.57079632679489661923;
+    const double left = rect.left();
+    const double top = rect.top();
+    const double right = rect.right();
+    const double bottom = rect.bottom();
+
+    path.moveTo(left + radius, top);
+    path.lineTo(right - radius, top);
+    appendSuperellipseCorner(path, {right - radius, top + radius}, radius, power, 1.0, -1.0, halfPi, 0.0);
+    path.lineTo(right, bottom - radius);
+    appendSuperellipseCorner(path, {right - radius, bottom - radius}, radius, power, 1.0, 1.0, 0.0, halfPi);
+    path.lineTo(left + radius, bottom);
+    appendSuperellipseCorner(path, {left + radius, bottom - radius}, radius, power, -1.0, 1.0, halfPi, 0.0);
+    path.lineTo(left, top + radius);
+    appendSuperellipseCorner(path, {left + radius, top + radius}, radius, power, -1.0, -1.0, 0.0, halfPi);
+    path.closeSubpath();
+    return path;
 }
 
 bool paintWindowBackground(QImage& background,
@@ -494,6 +549,9 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
         artifact.appClass = obj.value("class").toString();
         artifact.visibleGeometry = jsonRect(obj.value("visibleGeometry").toObject());
         artifact.fullGeometry = jsonRect(obj.value("fullGeometry").toObject());
+        artifact.rounding = obj.contains("rounding") ? obj.value("rounding").toDouble(0.0) : kWindowFrameFallbackRadius;
+        artifact.roundingPower = obj.value("roundingPower").toDouble(2.0);
+        artifact.borderSize = obj.value("borderSize").toDouble(0.0);
         artifact.image = loadRawRgba(obj.value("artifactPath").toString(), obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt(), artifactTopDown(obj));
         if (artifact.fullGeometry.isValid() && !artifact.image.isNull())
             m_windowArtifacts.push_back(std::move(artifact));
@@ -596,6 +654,7 @@ void CaptureOverlay::setMode(hyprshot::CaptureMode mode) {
 
 void CaptureOverlay::paintEvent(QPaintEvent*) {
     QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
     painter.fillRect(rect(), QColor(0, 0, 0, 80));
 
     if (m_mode == hyprshot::CaptureMode::Region && (m_dragging || !normalizedSelection().isNull())) {
@@ -609,8 +668,13 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
         const auto* window = hoveredWindow();
         for (const auto& candidate : m_windowArtifacts) {
             const QRect target = globalToLocalRect(windowFrameGeometry(candidate));
-            painter.setPen(QPen(&candidate == window ? QColor(255, 255, 255, 240) : QColor(255, 255, 255, 110), &candidate == window ? 3 : 1));
-            painter.drawRoundedRect(target, 8, 8);
+            const int penWidth = &candidate == window ? 3 : 1;
+            QPen pen(&candidate == window ? QColor(255, 255, 255, 240) : QColor(255, 255, 255, 110), penWidth);
+            pen.setJoinStyle(Qt::RoundJoin);
+            painter.setPen(pen);
+            painter.setBrush(Qt::NoBrush);
+            const QRectF alignedTarget = QRectF(target).adjusted(0.5, 0.5, -0.5, -0.5);
+            painter.drawPath(roundedWindowFramePath(alignedTarget, windowFrameRadius(candidate), candidate.roundingPower));
         }
     }
 }
@@ -695,7 +759,21 @@ QPoint CaptureOverlay::cursorLogicalPosition() const {
 }
 
 QRect CaptureOverlay::windowFrameGeometry(const WindowArtifact& window) const {
-    return window.visibleGeometry.isValid() ? window.visibleGeometry : window.fullGeometry;
+    QRect frame = window.visibleGeometry.isValid() ? window.visibleGeometry : window.fullGeometry;
+    const int border = std::max(0, static_cast<int>(std::lround(window.borderSize)));
+    if (border > 0)
+        frame = frame.adjusted(-border, -border, border, border);
+    return frame;
+}
+
+double CaptureOverlay::windowFrameRadius(const WindowArtifact& window) const {
+    if (window.rounding <= 0.0)
+        return 0.0;
+
+    const double power = std::clamp(window.roundingPower, 1.0, 10.0);
+    const double border = std::max(0.0, window.borderSize);
+    const double correction = border * (std::sqrt(2.0) - 1.0) * std::max(2.0 - power, 0.0);
+    return std::max(0.0, window.rounding + border - correction);
 }
 
 const CaptureOverlay::WindowArtifact* CaptureOverlay::hoveredWindow() const {

@@ -42,6 +42,9 @@ int main() {
                                .appClass = "Class",
                                .visibleGeometry = {.x = 10, .y = 10, .width = 100, .height = 100},
                                .fullGeometry = {.x = -40, .y = 10, .width = 200, .height = 100},
+                               .rounding = 12,
+                               .roundingPower = 2.5,
+                               .borderSize = 2,
                                .zIndex = 1,
                                .selectable = true});
     session.windows.back().artifactPath = "/tmp/window.rgba";
@@ -50,6 +53,9 @@ int main() {
     const auto json = encodeSessionJson(session);
     assert(json.find("\"windowBackground\":\"follow-system\"") != std::string::npos);
     assert(json.find("\"fullGeometry\"") != std::string::npos);
+    assert(json.find("\"rounding\":12") != std::string::npos);
+    assert(json.find("\"roundingPower\":2.5") != std::string::npos);
+    assert(json.find("\"borderSize\":2") != std::string::npos);
     assert(json.find("\"artifactPath\":\"/tmp/window.rgba\"") != std::string::npos);
     assert(json.find("\"artifactTopDown\":true") != std::string::npos);
 

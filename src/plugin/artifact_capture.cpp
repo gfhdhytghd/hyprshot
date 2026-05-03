@@ -410,6 +410,10 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         info.title = window->m_title;
         info.appClass = window->m_class;
         info.zIndex = z++;
+        const bool dontRound = window->isEffectiveInternalFSMode(FSMODE_FULLSCREEN);
+        info.rounding = dontRound ? 0.0 : std::max(0.0F, window->rounding());
+        info.roundingPower = dontRound ? 2.0 : std::clamp(static_cast<double>(window->roundingPower()), 1.0, 10.0);
+        info.borderSize = dontRound || window->m_X11DoesntWantBorders ? 0.0 : std::max(0, window->getRealBorderSize());
         const auto path = root / ("window-" + pointerId(window.get()) + ".rgba");
         CBox artifactBox;
         if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, artifactBox)) {
