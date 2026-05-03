@@ -186,6 +186,28 @@ void repairTopTransparentSeam(RgbaReadback& readback) {
     }
 }
 
+void unpremultiplyAlpha(RgbaReadback& readback) {
+    if (readback.pixels.empty())
+        return;
+
+    for (std::size_t i = 0; i + 3 < readback.pixels.size(); i += 4U) {
+        const auto alpha = readback.pixels[i + 3];
+        if (alpha == 0) {
+            readback.pixels[i] = 0;
+            readback.pixels[i + 1] = 0;
+            readback.pixels[i + 2] = 0;
+            continue;
+        }
+        if (alpha == 255)
+            continue;
+
+        for (int channel = 0; channel < 3; ++channel) {
+            const int straight = (static_cast<int>(readback.pixels[i + channel]) * 255 + alpha / 2) / alpha;
+            readback.pixels[i + channel] = static_cast<unsigned char>(std::min(255, straight));
+        }
+    }
+}
+
 bool writeRgbaFramebufferRegion(CFramebuffer& framebuffer, const std::filesystem::path& path, int cropX, int cropTopY, int cropWidth, int cropHeight) {
     auto readback = readRgbaFramebufferRegion(framebuffer, cropX, cropTopY, cropWidth, cropHeight);
     return !readback.pixels.empty() && writeRgbaFile(path, readback.pixels);
@@ -322,6 +344,7 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     }
 
     repairTopTransparentSeam(readback);
+    unpremultiplyAlpha(readback);
 
     return writeRgbaFile(path, readback.pixels);
 }
