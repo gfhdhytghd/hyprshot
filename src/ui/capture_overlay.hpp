@@ -11,6 +11,7 @@
 
 class QButtonGroup;
 class QLabel;
+class QResizeEvent;
 class InlineSelect;
 
 class CaptureOverlay final : public QMainWindow {
@@ -25,6 +26,7 @@ class CaptureOverlay final : public QMainWindow {
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
   private:
     struct MonitorArtifact {
@@ -65,7 +67,7 @@ class CaptureOverlay final : public QMainWindow {
     bool windowCaptureAvailable() const;
     void updateStatus();
     void relayoutToolbar();
-    void showThumbnail(const QImage& image, const QString& path);
+    void showThumbnail(const QImage& image, const QString& path, const QString& restoreClipboardPath);
 
     hyprshot::CaptureDefaults m_defaults;
     hyprshot::CaptureMode     m_mode;

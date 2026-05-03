@@ -54,6 +54,7 @@ int main(int argc, char** argv) {
         {"thumbnail-timeout-ms", "Thumbnail timeout.", "ms", "5000"},
         {"session-json", "Compositor session metadata.", "json", "{}"},
         {"thumbnail-window", "Show a normal thumbnail window for an image path.", "path"},
+        {"restore-clipboard", "Clipboard snapshot to restore when deleting the thumbnail image.", "path"},
         {"quick", "Capture immediately."},
     });
     parser.process(app);
@@ -61,6 +62,7 @@ int main(int argc, char** argv) {
     if (hasArgument(argc, argv, "--thumbnail-window")) {
         ResultThumbnail thumbnail(QPixmap(parser.value("thumbnail-window")),
                                   parser.value("thumbnail-window"),
+                                  parser.value("restore-clipboard"),
                                   parser.value("thumbnail-timeout-ms").toInt());
         thumbnail.show();
         return app.exec();

@@ -9,6 +9,7 @@
 #include <QClipboard>
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFrame>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -18,10 +19,12 @@
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPixmap>
 #include <QProcess>
 #include <QPushButton>
 #include <QScreen>
@@ -29,6 +32,7 @@
 #include <QStandardPaths>
 #include <QStringList>
 #include <QStyleHints>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QTimer>
 
@@ -148,6 +152,67 @@ QImage loadRawRgba(const QString& path, int width, int height, bool topDown) {
     QImage image(reinterpret_cast<const uchar*>(bytes.constData()), width, height, width * 4, QImage::Format_RGBA8888);
     QImage copy = image.copy();
     return topDown ? copy : copy.flipped(Qt::Vertical);
+}
+
+QString hyprshotRuntimeFile(const QString& prefix, const QString& suffix) {
+    const auto runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    QDir dir(runtimeDir.isEmpty() ? QDir::tempPath() : runtimeDir);
+    if (!dir.exists("hyprshot"))
+        dir.mkpath("hyprshot");
+    return dir.filePath(QStringLiteral("hyprshot/%1-%2%3").arg(prefix).arg(QDateTime::currentMSecsSinceEpoch()).arg(suffix));
+}
+
+QString saveClipboardSnapshot() {
+    const auto* clipboard = QGuiApplication::clipboard();
+    const auto* mime = clipboard ? clipboard->mimeData() : nullptr;
+    if (!mime)
+        return {};
+
+    QJsonObject root;
+    root.insert("empty", true);
+    if (mime->hasText()) {
+        root.insert("text", mime->text());
+        root.insert("empty", false);
+    }
+    if (mime->hasHtml()) {
+        root.insert("html", mime->html());
+        root.insert("empty", false);
+    }
+    if (mime->hasUrls()) {
+        QJsonArray urls;
+        for (const auto& url : mime->urls())
+            urls.append(url.toString());
+        root.insert("urls", urls);
+        root.insert("empty", false);
+    }
+    if (mime->hasColor()) {
+        const QColor color = qvariant_cast<QColor>(mime->colorData());
+        if (color.isValid()) {
+            root.insert("color", color.name(QColor::HexArgb));
+            root.insert("empty", false);
+        }
+    }
+    if (mime->hasImage()) {
+        QImage image = qvariant_cast<QImage>(mime->imageData());
+        if (image.isNull()) {
+            const QPixmap pixmap = qvariant_cast<QPixmap>(mime->imageData());
+            image = pixmap.toImage();
+        }
+        if (!image.isNull()) {
+            const QString imagePath = hyprshotRuntimeFile("clipboard-image", ".png");
+            if (image.save(imagePath, "PNG")) {
+                root.insert("image", imagePath);
+                root.insert("empty", false);
+            }
+        }
+    }
+
+    const QString path = hyprshotRuntimeFile("clipboard", ".json");
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return {};
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    return path;
 }
 
 QRect projectedImageRect(const QRect& logicalRect, const QRect& fullGeometry, const QSize& imageSize) {
@@ -795,6 +860,11 @@ void CaptureOverlay::keyPressEvent(QKeyEvent* event) {
     }
 }
 
+void CaptureOverlay::resizeEvent(QResizeEvent* event) {
+    QMainWindow::resizeEvent(event);
+    relayoutToolbar();
+}
+
 QRect CaptureOverlay::normalizedSelection() const {
     return QRect(m_dragStart, m_dragEnd).normalized();
 }
@@ -891,7 +961,8 @@ void CaptureOverlay::relayoutToolbar() {
         m_toolbar->setFixedWidth(maxWidth);
     else
         m_toolbar->setFixedWidth(m_toolbar->sizeHint().width());
-    m_toolbar->move(std::max(16, (width() - m_toolbar->width()) / 2), 28);
+    const int y = std::max(16, height() - m_toolbar->height() - 40);
+    m_toolbar->move(std::max(16, (width() - m_toolbar->width()) / 2), y);
 }
 
 QImage CaptureOverlay::renderDesktopRectAtDisplayResolution(const QRect& globalRect) const {
@@ -1031,6 +1102,7 @@ void CaptureOverlay::finishCapture() {
 
 void CaptureOverlay::saveImage(const QImage& image) {
     QString savedPath;
+    QString restoreClipboardPath;
     if (m_defaults.save) {
         const auto dirPath = hyprshot::expandUserPath(m_defaults.saveDir);
         QDir dir(QString::fromStdString(dirPath.string()));
@@ -1040,30 +1112,30 @@ void CaptureOverlay::saveImage(const QImage& image) {
         image.save(savedPath, "PNG");
     }
 
-    if (m_defaults.clipboard)
+    if (m_defaults.clipboard) {
+        restoreClipboardPath = saveClipboardSnapshot();
         QGuiApplication::clipboard()->setImage(image);
+    }
 
     if (m_defaults.showThumbnail)
-        showThumbnail(image, savedPath);
+        showThumbnail(image, savedPath, restoreClipboardPath);
 
     hide();
     if (!m_defaults.showThumbnail)
         qApp->quit();
 }
 
-void CaptureOverlay::showThumbnail(const QImage& image, const QString& path) {
+void CaptureOverlay::showThumbnail(const QImage& image, const QString& path, const QString& restoreClipboardPath) {
     QString thumbPath = path;
     if (thumbPath.isEmpty()) {
-        const auto runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-        QDir dir(runtimeDir.isEmpty() ? QDir::tempPath() : runtimeDir);
-        if (!dir.exists("hyprshot"))
-            dir.mkpath("hyprshot");
-        thumbPath = dir.filePath(QStringLiteral("hyprshot/thumbnail-%1.png").arg(QDateTime::currentMSecsSinceEpoch()));
+        thumbPath = hyprshotRuntimeFile("thumbnail", ".png");
         image.save(thumbPath, "PNG");
     }
 
-    QProcess::startDetached(QCoreApplication::applicationFilePath(),
-                            {"--thumbnail-window", thumbPath, "--thumbnail-timeout-ms", QString::number(m_defaults.thumbnailTimeoutMs)});
+    QStringList args{"--thumbnail-window", thumbPath, "--thumbnail-timeout-ms", QString::number(m_defaults.thumbnailTimeoutMs)};
+    if (!restoreClipboardPath.isEmpty())
+        args << "--restore-clipboard" << restoreClipboardPath;
+    QProcess::startDetached(QCoreApplication::applicationFilePath(), args);
     qApp->quit();
 }
 
