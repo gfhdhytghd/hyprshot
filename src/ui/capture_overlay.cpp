@@ -793,13 +793,21 @@ void CaptureOverlay::setMode(hyprshot::CaptureMode mode) {
 void CaptureOverlay::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
+    const auto paintDesktop = [&](const QRect& target) {
+        if (m_desktopImage.isNull()) {
+            painter.fillRect(target, QColor(30, 34, 38));
+            return;
+        }
+
+        painter.drawImage(target, m_desktopImage, localToDesktopSourceRect(target));
+    };
+
+    paintDesktop(rect());
     painter.fillRect(rect(), QColor(0, 0, 0, 80));
 
     if (m_mode == hyprshot::CaptureMode::Region && (m_dragging || !normalizedSelection().isNull())) {
         const QRect sel = normalizedSelection();
-        painter.setCompositionMode(QPainter::CompositionMode_Clear);
-        painter.fillRect(sel, Qt::transparent);
-        painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        paintDesktop(sel);
         painter.setPen(QPen(QColor(255, 255, 255, 230), 2));
         painter.drawRect(sel.adjusted(0, 0, -1, -1));
     } else if (m_mode == hyprshot::CaptureMode::Window) {
