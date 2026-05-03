@@ -60,6 +60,7 @@ class InlineSelect final : public QWidget {
 namespace {
 
 InlineSelect* g_openSelect = nullptr;
+constexpr int kWindowBackgroundAlphaThreshold = 128;
 
 QString qString(const std::string& value) {
     return QString::fromStdString(value);
@@ -163,6 +164,88 @@ QRect projectedImageRect(const QRect& logicalRect, const QRect& fullGeometry, co
     if (rect.y() < 0)
         rect.moveTop(0);
     return rect.intersected(QRect(QPoint(0, 0), imageSize));
+}
+
+QRect artifactRectToLogicalRect(const QRect& artifactRect, const QSize& artifactSize, const QRect& fullGeometry) {
+    if (!artifactRect.isValid() || artifactSize.isEmpty() || !fullGeometry.isValid())
+        return {};
+
+    const double scaleX = static_cast<double>(fullGeometry.width()) / std::max(1, artifactSize.width());
+    const double scaleY = static_cast<double>(fullGeometry.height()) / std::max(1, artifactSize.height());
+    const int x1 = fullGeometry.x() + static_cast<int>(std::floor(artifactRect.x() * scaleX));
+    const int y1 = fullGeometry.y() + static_cast<int>(std::floor(artifactRect.y() * scaleY));
+    const int x2 = fullGeometry.x() + static_cast<int>(std::ceil((artifactRect.x() + artifactRect.width()) * scaleX));
+    const int y2 = fullGeometry.y() + static_cast<int>(std::ceil((artifactRect.y() + artifactRect.height()) * scaleY));
+    return QRect(QPoint(x1, y1), QSize(std::max(1, x2 - x1), std::max(1, y2 - y1))).intersected(fullGeometry);
+}
+
+bool paintWindowBackground(QImage& background,
+                           hyprshot::WindowBackground bg,
+                           const QImage& desktopImage,
+                           const QRect& desktopSource) {
+    if (background.isNull() || bg == hyprshot::WindowBackground::Transparent)
+        return false;
+
+    QPainter backgroundPainter(&background);
+    if (bg == hyprshot::WindowBackground::Real) {
+        if (desktopImage.isNull() || !desktopSource.isValid())
+            return false;
+        backgroundPainter.drawImage(background.rect(), desktopImage, desktopSource);
+        return true;
+    }
+
+    if (bg == hyprshot::WindowBackground::White)
+        backgroundPainter.fillRect(background.rect(), Qt::white);
+    else if (bg == hyprshot::WindowBackground::Black)
+        backgroundPainter.fillRect(background.rect(), Qt::black);
+    else if (bg == hyprshot::WindowBackground::FollowSystem)
+        backgroundPainter.fillRect(background.rect(), followSystemColor());
+    else
+        backgroundPainter.fillRect(background.rect(), QColor(30, 34, 38));
+    return true;
+}
+
+void applyWindowContentAlphaMask(QImage& background, const QImage& artifact, const QRect& artifactSource, const QRect& contentRect) {
+    if (background.format() != QImage::Format_RGBA8888 || artifact.format() != QImage::Format_RGBA8888 || background.isNull() || artifact.isNull())
+        return;
+
+    const QRect allowedRect = contentRect.isValid() ? contentRect.intersected(artifactSource) : artifactSource;
+    if (!allowedRect.isValid()) {
+        background.fill(Qt::transparent);
+        return;
+    }
+
+    for (int y = 0; y < background.height(); ++y) {
+        auto* dst = background.scanLine(y);
+        const int sy = artifactSource.y() + y;
+        if (sy < 0 || sy >= artifact.height() || sy < allowedRect.top() || sy > allowedRect.bottom()) {
+            std::fill(dst, dst + static_cast<qsizetype>(background.width()) * 4, 0);
+            continue;
+        }
+
+        const auto* src = artifact.constScanLine(sy);
+        for (int x = 0; x < background.width(); ++x) {
+            auto* dstPx = dst + static_cast<qsizetype>(x) * 4;
+            const int sx = artifactSource.x() + x;
+            if (sx < 0 || sx >= artifact.width() || sx < allowedRect.left() || sx > allowedRect.right()) {
+                dstPx[0] = 0;
+                dstPx[1] = 0;
+                dstPx[2] = 0;
+                dstPx[3] = 0;
+                continue;
+            }
+
+            const auto* srcPx = src + static_cast<qsizetype>(sx) * 4;
+            if (srcPx[3] < kWindowBackgroundAlphaThreshold) {
+                dstPx[0] = 0;
+                dstPx[1] = 0;
+                dstPx[2] = 0;
+                dstPx[3] = 0;
+            } else {
+                dstPx[3] = 255;
+            }
+        }
+    }
 }
 
 int transparentPixelsInRow(const QImage& image, const QRect& span, int y) {
@@ -651,7 +734,6 @@ QImage CaptureOverlay::renderResultImage() const {
             return {};
 
         QRect artifactSource = windowArtifact->image.rect();
-        QRect logicalSource = windowArtifact->fullGeometry;
         const bool cropDecorations = m_defaults.windowBorder == hyprshot::DecorationPolicy::Remove || m_defaults.windowShadow == hyprshot::DecorationPolicy::Remove;
         if (cropDecorations && windowArtifact->visibleGeometry.isValid() && windowArtifact->fullGeometry.contains(windowArtifact->visibleGeometry)) {
             const double scaleX = static_cast<double>(windowArtifact->image.width()) / std::max(1, windowArtifact->fullGeometry.width());
@@ -661,7 +743,6 @@ QImage CaptureOverlay::renderResultImage() const {
                                    QSize(std::max(1, static_cast<int>(std::ceil(windowArtifact->visibleGeometry.width() * scaleX))),
                                          std::max(1, static_cast<int>(std::ceil(windowArtifact->visibleGeometry.height() * scaleY)))))
                                  .intersected(windowArtifact->image.rect());
-            logicalSource = windowArtifact->visibleGeometry;
         }
 
         QImage repairedArtifact = windowArtifact->image;
@@ -671,17 +752,17 @@ QImage CaptureOverlay::renderResultImage() const {
         image.fill(Qt::transparent);
 
         QPainter painter(&image);
+        QImage background(image.size(), QImage::Format_RGBA8888);
+        background.fill(Qt::transparent);
+        const QRect logicalSource = artifactRectToLogicalRect(artifactSource, repairedArtifact.size(), windowArtifact->fullGeometry);
         const QRect desktopSource = QRect(logicalSource.topLeft() - m_desktopGeometry.topLeft(), logicalSource.size());
-        if (bg == hyprshot::WindowBackground::Real && !m_desktopImage.isNull())
-            painter.drawImage(image.rect(), m_desktopImage, desktopSource);
-        else if (bg == hyprshot::WindowBackground::White)
-            painter.fillRect(image.rect(), Qt::white);
-        else if (bg == hyprshot::WindowBackground::Black)
-            painter.fillRect(image.rect(), Qt::black);
-        else if (bg == hyprshot::WindowBackground::FollowSystem)
-            painter.fillRect(image.rect(), followSystemColor());
-        else if (bg != hyprshot::WindowBackground::Transparent)
-            painter.fillRect(image.rect(), QColor(30, 34, 38));
+        if (paintWindowBackground(background, bg, m_desktopImage, desktopSource)) {
+            const QImage maskArtifact =
+                repairedArtifact.format() == QImage::Format_RGBA8888 ? repairedArtifact : repairedArtifact.convertToFormat(QImage::Format_RGBA8888);
+            const QRect contentRect = projectedImageRect(windowArtifact->visibleGeometry, windowArtifact->fullGeometry, repairedArtifact.size());
+            applyWindowContentAlphaMask(background, maskArtifact, artifactSource, contentRect);
+            painter.drawImage(QPoint(0, 0), background);
+        }
 
         painter.drawImage(image.rect(), repairedArtifact, artifactSource);
         return image;

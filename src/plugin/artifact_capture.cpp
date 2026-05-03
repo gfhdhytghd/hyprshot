@@ -329,7 +329,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, offsetY)) {
             info.artifactPath = path.string();
             const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
-            info.fullGeometry = toRect(CBox{fullBox.x, fullBox.y, info.artifactWidth / scale, info.artifactHeight / scale});
+            info.fullGeometry = toRect(CBox{fullBox.x, fullBox.y + offsetY / scale, info.artifactWidth / scale, info.artifactHeight / scale});
         } else
             info.fullGeometry = full;
         info.visibleGeometry = toRect(renderedWindowBox(window, window->getWindowMainSurfaceBox()));
