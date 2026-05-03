@@ -5,6 +5,7 @@
 #define private public
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/desktop/view/WLSurface.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/pass/PassElement.hpp>
@@ -214,6 +215,48 @@ class RealBackgroundCapturePass final : public IPassElement {
 
   private:
     RealBackgroundCaptureState* m_state = nullptr;
+};
+
+class FullSurfaceVisibleRegionOverride {
+  public:
+    explicit FullSurfaceVisibleRegionOverride(const PHLWINDOW& window) {
+        if (!window || !window->wlSurface() || !window->wlSurface()->resource())
+            return;
+
+        window->wlSurface()->resource()->breadthfirst(
+            [this](SP<CWLSurfaceResource> resource, const Vector2D&, void*) {
+                auto surface = Desktop::View::CWLSurface::fromResource(resource);
+                if (!surface)
+                    return;
+
+                m_records.push_back({.surface = surface, .visibleRegion = surface->m_visibleRegion});
+
+                const int width = std::max(1, static_cast<int>(std::lround(resource->m_current.bufferSize.x > 0 ? resource->m_current.bufferSize.x :
+                                                                                                                 resource->m_current.size.x)));
+                const int height = std::max(1, static_cast<int>(std::lround(resource->m_current.bufferSize.y > 0 ? resource->m_current.bufferSize.y :
+                                                                                                                   resource->m_current.size.y)));
+                surface->m_visibleRegion = CRegion{0, 0, width, height};
+            },
+            nullptr);
+    }
+
+    ~FullSurfaceVisibleRegionOverride() {
+        for (auto& record : m_records) {
+            if (record.surface)
+                record.surface->m_visibleRegion = record.visibleRegion;
+        }
+    }
+
+    FullSurfaceVisibleRegionOverride(const FullSurfaceVisibleRegionOverride&) = delete;
+    FullSurfaceVisibleRegionOverride& operator=(const FullSurfaceVisibleRegionOverride&) = delete;
+
+  private:
+    struct Record {
+        SP<Desktop::View::CWLSurface> surface;
+        CRegion                      visibleRegion;
+    };
+
+    std::vector<Record> m_records;
 };
 
 struct RealBackgroundRenderHookContext {
@@ -484,6 +527,7 @@ bool renderWindowArtifact(const PHLWINDOW& window,
         }
 
         g_pHyprRenderer->m_bRenderingSnapshot = true;
+        FullSurfaceVisibleRegionOverride fullVisibleRegion(window);
         g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 0.0});
         g_pHyprRenderer->renderWindow(window, monitor, frozenTime, decorate, RENDER_PASS_ALL, false, false);
         g_pHyprRenderer->m_bRenderingSnapshot = previousRenderingSnapshot;
