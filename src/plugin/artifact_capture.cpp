@@ -62,6 +62,11 @@ bool nonZeroPixel(const std::vector<unsigned char>& pixels, int width, int x, in
     return pixels[i] != 0 || pixels[i + 1] != 0 || pixels[i + 2] != 0 || pixels[i + 3] != 0;
 }
 
+unsigned char alphaAt(const RgbaReadback& readback, int x, int y) {
+    const auto i = (static_cast<std::size_t>(y) * readback.width + x) * 4U + 3U;
+    return readback.pixels[i];
+}
+
 bool findTopNonZeroRow(const RgbaReadback& readback, int& offsetY) {
     offsetY = 0;
     if (readback.width <= 0 || readback.height <= 0 || readback.pixels.empty())
@@ -137,6 +142,48 @@ void shiftReadbackUpAndFillTail(CFramebuffer& framebuffer, int cropX, int cropTo
     }
 
     readback.pixels = std::move(shifted);
+}
+
+void repairTopTransparentSeam(RgbaReadback& readback) {
+    if (readback.width <= 0 || readback.height <= 2 || readback.pixels.empty())
+        return;
+
+    constexpr unsigned char MAX_SEAM_ALPHA = 4;
+    constexpr unsigned char MIN_WINDOW_ALPHA = 128;
+
+    const int minRepairColumns = std::max(16, readback.width / 3);
+    const int minRepairSpan = std::max(16, readback.width / 2);
+    const int maxScanY = std::min(readback.height - 1, 96);
+
+    for (int y = 1; y < maxScanY; ++y) {
+        int first = -1;
+        int last = -1;
+        int repairColumns = 0;
+
+        for (int x = 0; x < readback.width; ++x) {
+            if (alphaAt(readback, x, y) > MAX_SEAM_ALPHA || alphaAt(readback, x, y - 1) < MIN_WINDOW_ALPHA || alphaAt(readback, x, y + 1) < MIN_WINDOW_ALPHA)
+                continue;
+
+            if (first < 0)
+                first = x;
+            last = x;
+            ++repairColumns;
+        }
+
+        if (repairColumns < minRepairColumns || first < 0 || last - first + 1 < minRepairSpan)
+            continue;
+
+        for (int x = first; x <= last; ++x) {
+            if (alphaAt(readback, x, y) > MAX_SEAM_ALPHA || alphaAt(readback, x, y - 1) < MIN_WINDOW_ALPHA || alphaAt(readback, x, y + 1) < MIN_WINDOW_ALPHA)
+                continue;
+
+            const auto src = (static_cast<std::size_t>(y + 1) * readback.width + x) * 4U;
+            const auto dst = (static_cast<std::size_t>(y) * readback.width + x) * 4U;
+            std::copy(readback.pixels.data() + src, readback.pixels.data() + src + 4U, readback.pixels.data() + dst);
+        }
+
+        return;
+    }
 }
 
 bool writeRgbaFramebufferRegion(CFramebuffer& framebuffer, const std::filesystem::path& path, int cropX, int cropTopY, int cropWidth, int cropHeight) {
@@ -273,6 +320,8 @@ bool renderWindowArtifact(const PHLWINDOW& window,
         if (offsetY > 0)
             shiftReadbackUpAndFillTail(framebuffer, cropX, cropY, readback, offsetY);
     }
+
+    repairTopTransparentSeam(readback);
 
     return writeRgbaFile(path, readback.pixels);
 }
