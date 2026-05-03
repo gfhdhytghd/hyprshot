@@ -7,6 +7,7 @@
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
+#include <hyprland/src/render/pass/PassElement.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #undef private
 
@@ -23,6 +24,8 @@
 #include <utility>
 #include <vector>
 
+extern HANDLE g_pluginHandle;
+
 namespace hyprshot {
 namespace {
 
@@ -37,6 +40,25 @@ struct PixelBounds {
     int y = 0;
     int width = 0;
     int height = 0;
+};
+
+struct RealBackgroundCaptureState {
+    PHLWINDOW    window;
+    int          cropX = 0;
+    int          cropY = 0;
+    int          width = 0;
+    int          height = 0;
+    bool         queued = false;
+    bool         captured = false;
+    RgbaReadback readback;
+};
+
+struct PendingRealBackgroundCapture {
+    PHLWINDOW             window;
+    PHLMONITOR            monitor;
+    CBox                  artifactBox;
+    std::filesystem::path path;
+    std::size_t           windowIndex = 0;
 };
 
 constexpr int WINDOW_ARTIFACT_CROP_PADDING = 128;
@@ -154,6 +176,76 @@ RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int
     }
 
     return readback;
+}
+
+class RealBackgroundCapturePass final : public IPassElement {
+  public:
+    explicit RealBackgroundCapturePass(RealBackgroundCaptureState* state) : m_state(state) {}
+
+    void draw(const CRegion&) override {
+        if (!m_state || m_state->captured || !g_pHyprOpenGL || !g_pHyprOpenGL->m_renderData.currentFB)
+            return;
+
+        m_state->readback = readRgbaFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, m_state->cropX, m_state->cropY, m_state->width, m_state->height);
+        m_state->captured = !m_state->readback.pixels.empty();
+    }
+
+    bool needsLiveBlur() override {
+        return false;
+    }
+
+    bool needsPrecomputeBlur() override {
+        return false;
+    }
+
+    const char* passName() override {
+        return "HyprshotRealBackgroundCapturePass";
+    }
+
+    bool undiscardable() override {
+        return true;
+    }
+
+    bool disableSimplification() override {
+        return true;
+    }
+
+  private:
+    RealBackgroundCaptureState* m_state = nullptr;
+};
+
+struct RealBackgroundRenderHookContext {
+    PHLMONITOR                              monitor;
+    std::vector<RealBackgroundCaptureState>* states = nullptr;
+};
+
+using RenderWindowFn = void (*)(void*, PHLWINDOW, PHLMONITOR, const Time::steady_tp&, bool, eRenderPassMode, bool, bool);
+
+RealBackgroundRenderHookContext* g_realBackgroundRenderHookContext = nullptr;
+RenderWindowFn                   g_renderWindowOriginal = nullptr;
+
+void hkRenderWindow(void* rendererThisptr,
+                    PHLWINDOW window,
+                    PHLMONITOR monitor,
+                    const Time::steady_tp& time,
+                    bool decorate,
+                    eRenderPassMode mode,
+                    bool ignorePosition,
+                    bool standalone) {
+    if (g_realBackgroundRenderHookContext && g_realBackgroundRenderHookContext->states && monitor && g_realBackgroundRenderHookContext->monitor &&
+        monitor.get() == g_realBackgroundRenderHookContext->monitor.get() && g_pHyprRenderer) {
+        for (auto& state : *g_realBackgroundRenderHookContext->states) {
+            if (state.queued || state.captured || !state.window || !window || state.window.get() != window.get())
+                continue;
+
+            state.queued = true;
+            g_pHyprRenderer->m_renderPass.add(makeUnique<RealBackgroundCapturePass>(&state));
+            break;
+        }
+    }
+
+    if (g_renderWindowOriginal)
+        g_renderWindowOriginal(rendererThisptr, window, monitor, time, decorate, mode, ignorePosition, standalone);
 }
 
 void repairTopTransparentSeam(RgbaReadback& readback) {
@@ -363,6 +455,121 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     return writeRgbaFile(path, readback.pixels);
 }
 
+void* findRenderWindowFunction() {
+    const auto matches = HyprlandAPI::findFunctionsByName(g_pluginHandle, "renderWindow");
+    const auto it = std::find_if(matches.begin(), matches.end(), [](const SFunctionMatch& match) {
+        return match.demangled.find("CHyprRenderer::renderWindow(") != std::string::npos;
+    });
+
+    if (it != matches.end())
+        return it->address;
+    return matches.empty() ? nullptr : matches.front().address;
+}
+
+void renderRealBackgroundArtifactsForMonitor(const PHLMONITOR& monitor,
+                                             const Time::steady_tp& frozenTime,
+                                             const std::vector<PendingRealBackgroundCapture*>& requests,
+                                             CaptureSession& session) {
+    if (!monitor || !monitor->m_activeWorkspace || requests.empty() || !g_pHyprRenderer || !g_pHyprOpenGL)
+        return;
+
+    const int framebufferWidth = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.x)));
+    const int framebufferHeight = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.y)));
+    const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
+
+    std::vector<RealBackgroundCaptureState> states;
+    states.reserve(requests.size());
+    for (const auto* request : requests) {
+        if (!request || !request->window)
+            continue;
+
+        CBox cropBox = request->artifactBox.copy().translate(-monitor->m_position).scale(scale).round();
+        RealBackgroundCaptureState state;
+        state.window = request->window;
+        state.cropX = static_cast<int>(cropBox.x);
+        state.cropY = static_cast<int>(cropBox.y);
+        state.width = std::max(1, static_cast<int>(cropBox.w));
+        state.height = std::max(1, static_cast<int>(cropBox.h));
+        states.push_back(std::move(state));
+    }
+    if (states.empty())
+        return;
+
+    CFramebuffer framebuffer;
+    const auto drmFormat = monitor->m_output && monitor->m_output->state ? monitor->m_output->state->state().drmFormat : DRM_FORMAT_ABGR8888;
+    if (!framebuffer.alloc(framebufferWidth, framebufferHeight, DRM_FORMAT_ABGR8888) && !framebuffer.alloc(framebufferWidth, framebufferHeight, drmFormat))
+        return;
+
+    void* renderWindowSource = findRenderWindowFunction();
+    if (!renderWindowSource)
+        return;
+
+    CFunctionHook* renderWindowHook = HyprlandAPI::createFunctionHook(g_pluginHandle, renderWindowSource, reinterpret_cast<void*>(&hkRenderWindow));
+    if (!renderWindowHook)
+        return;
+
+    if (!renderWindowHook->hook()) {
+        HyprlandAPI::removeFunctionHook(g_pluginHandle, renderWindowHook);
+        return;
+    }
+
+    g_renderWindowOriginal = reinterpret_cast<RenderWindowFn>(renderWindowHook->m_original);
+    if (!g_renderWindowOriginal) {
+        renderWindowHook->unhook();
+        HyprlandAPI::removeFunctionHook(g_pluginHandle, renderWindowHook);
+        return;
+    }
+
+    RealBackgroundRenderHookContext hookContext{.monitor = monitor, .states = &states};
+    g_realBackgroundRenderHookContext = &hookContext;
+    const auto cleanupHook = [&]() {
+        g_realBackgroundRenderHookContext = nullptr;
+        g_renderWindowOriginal = nullptr;
+        renderWindowHook->unhook();
+        HyprlandAPI::removeFunctionHook(g_pluginHandle, renderWindowHook);
+    };
+
+    const bool previousBlockFeedback = g_pHyprRenderer->m_bBlockSurfaceFeedback;
+    const bool previousBlockShader = g_pHyprOpenGL->m_renderData.blockScreenShader;
+    CRegion fakeDamage{0, 0, framebufferWidth, framebufferHeight};
+
+    g_pHyprRenderer->makeEGLCurrent();
+    g_pHyprRenderer->m_bBlockSurfaceFeedback = true;
+    if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &framebuffer)) {
+        g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
+        cleanupHook();
+        return;
+    }
+
+    g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 1.0});
+    g_pHyprRenderer->renderWorkspace(monitor, monitor->m_activeWorkspace, frozenTime, CBox{0, 0, static_cast<double>(framebufferWidth), static_cast<double>(framebufferHeight)});
+    g_pHyprOpenGL->m_renderData.blockScreenShader = true;
+    g_pHyprRenderer->endRender();
+    cleanupHook();
+    g_pHyprRenderer->m_renderPass.clear();
+    g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
+    g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
+
+    for (std::size_t i = 0; i < states.size(); ++i) {
+        auto& state = states[i];
+        if (!state.captured || state.readback.pixels.empty() || i >= requests.size())
+            continue;
+
+        auto* request = requests[i];
+        if (!request || request->windowIndex >= session.windows.size())
+            continue;
+
+        if (!writeRgbaFile(request->path, state.readback.pixels))
+            continue;
+
+        auto& info = session.windows[request->windowIndex];
+        info.realBackgroundPath = request->path.string();
+        info.realBackgroundWidth = state.readback.width;
+        info.realBackgroundHeight = state.readback.height;
+        info.realBackgroundTopDown = true;
+    }
+}
+
 } // namespace
 
 CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
@@ -389,6 +596,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
     }
 
     int z = 0;
+    std::vector<PendingRealBackgroundCapture> pendingRealBackgrounds;
     for (const auto& window : g_pCompositor->m_windows) {
         if (!window || !window->m_isMapped || window->isHidden() || !window->m_workspace || !window->m_workspace->isVisible())
             continue;
@@ -416,13 +624,33 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         info.borderSize = dontRound || window->m_X11DoesntWantBorders ? 0.0 : std::max(0, window->getRealBorderSize());
         const auto path = root / ("window-" + pointerId(window.get()) + ".rgba");
         CBox artifactBox;
+        const std::size_t windowIndex = session.windows.size();
         if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, artifactBox)) {
             info.artifactPath = path.string();
             info.fullGeometry = toRect(artifactBox);
+            pendingRealBackgrounds.push_back({
+                .window = window,
+                .monitor = monitor,
+                .artifactBox = artifactBox,
+                .path = root / ("window-real-" + pointerId(window.get()) + ".rgba"),
+                .windowIndex = windowIndex,
+            });
         } else
             info.fullGeometry = full;
         info.visibleGeometry = toRect(renderedWindowBox(window, window->getWindowMainSurfaceBox()));
         session.windows.push_back(std::move(info));
+    }
+
+    for (const auto& monitor : g_pCompositor->m_monitors) {
+        if (!monitor)
+            continue;
+
+        std::vector<PendingRealBackgroundCapture*> monitorRequests;
+        for (auto& request : pendingRealBackgrounds) {
+            if (request.monitor && request.monitor.get() == monitor.get())
+                monitorRequests.push_back(&request);
+        }
+        renderRealBackgroundArtifactsForMonitor(monitor, frozenTime, monitorRequests, session);
     }
 
     return session;

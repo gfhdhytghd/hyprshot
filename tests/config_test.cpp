@@ -50,6 +50,9 @@ int main() {
     session.windows.back().artifactPath = "/tmp/window.rgba";
     session.windows.back().artifactWidth = 200;
     session.windows.back().artifactHeight = 100;
+    session.windows.back().realBackgroundPath = "/tmp/window-real.rgba";
+    session.windows.back().realBackgroundWidth = 200;
+    session.windows.back().realBackgroundHeight = 100;
     const auto json = encodeSessionJson(session);
     assert(json.find("\"windowBackground\":\"follow-system\"") != std::string::npos);
     assert(json.find("\"fullGeometry\"") != std::string::npos);
@@ -58,6 +61,8 @@ int main() {
     assert(json.find("\"borderSize\":2") != std::string::npos);
     assert(json.find("\"artifactPath\":\"/tmp/window.rgba\"") != std::string::npos);
     assert(json.find("\"artifactTopDown\":true") != std::string::npos);
+    assert(json.find("\"realBackgroundPath\":\"/tmp/window-real.rgba\"") != std::string::npos);
+    assert(json.find("\"realBackgroundWidth\":200") != std::string::npos);
 
     std::cout << "hyprshot config tests passed\n";
     return 0;

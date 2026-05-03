@@ -40,6 +40,10 @@ struct WindowInfo {
     int         artifactWidth = 0;
     int         artifactHeight = 0;
     bool        artifactTopDown = true;
+    std::string realBackgroundPath;
+    int         realBackgroundWidth = 0;
+    int         realBackgroundHeight = 0;
+    bool        realBackgroundTopDown = true;
     int         zIndex = 0;
     bool        selectable = true;
 };

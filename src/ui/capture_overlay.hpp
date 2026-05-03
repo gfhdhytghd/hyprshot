@@ -40,6 +40,7 @@ class CaptureOverlay final : public QMainWindow {
         double  roundingPower = 2.0;
         double  borderSize = 0.0;
         QImage  image;
+        QImage  realBackground;
         QString title;
         QString appClass;
     };

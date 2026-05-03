@@ -78,7 +78,9 @@ std::string encodeSessionJson(const CaptureSession& session) {
         appendRect(out, win.fullGeometry);
         out << ",\"rounding\":" << win.rounding << ",\"roundingPower\":" << win.roundingPower << ",\"borderSize\":" << win.borderSize;
         out << ",\"artifactPath\":" << quote(win.artifactPath) << ",\"artifactWidth\":" << win.artifactWidth << ",\"artifactHeight\":" << win.artifactHeight
-            << ",\"artifactTopDown\":" << (win.artifactTopDown ? "true" : "false")
+            << ",\"artifactTopDown\":" << (win.artifactTopDown ? "true" : "false") << ",\"realBackgroundPath\":" << quote(win.realBackgroundPath)
+            << ",\"realBackgroundWidth\":" << win.realBackgroundWidth << ",\"realBackgroundHeight\":" << win.realBackgroundHeight
+            << ",\"realBackgroundTopDown\":" << (win.realBackgroundTopDown ? "true" : "false")
             << ",\"zIndex\":" << win.zIndex << ",\"selectable\":" << (win.selectable ? "true" : "false") << "}";
     }
     out << "]}";

@@ -587,6 +587,11 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
         artifact.roundingPower = obj.value("roundingPower").toDouble(2.0);
         artifact.borderSize = obj.value("borderSize").toDouble(0.0);
         artifact.image = loadRawRgba(obj.value("artifactPath").toString(), obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt(), artifactTopDown(obj));
+        artifact.realBackground =
+            loadRawRgba(obj.value("realBackgroundPath").toString(),
+                        obj.value("realBackgroundWidth").toInt(),
+                        obj.value("realBackgroundHeight").toInt(),
+                        obj.contains("realBackgroundTopDown") ? obj.value("realBackgroundTopDown").toBool(true) : artifactTopDown(obj));
         if (artifact.fullGeometry.isValid() && !artifact.image.isNull())
             m_windowArtifacts.push_back(std::move(artifact));
     }
@@ -894,11 +899,18 @@ QImage CaptureOverlay::renderResultImage() const {
         background.fill(Qt::transparent);
         const QRect logicalSource = artifactRectToLogicalRect(artifactSource, repairedArtifact.size(), windowArtifact->fullGeometry);
         const QRect desktopSource = QRect(logicalSource.topLeft() - m_desktopGeometry.topLeft(), logicalSource.size());
-        if (paintWindowBackground(background, bg, m_desktopImage, desktopSource)) {
-            const QImage maskArtifact =
-                repairedArtifact.format() == QImage::Format_RGBA8888 ? repairedArtifact : repairedArtifact.convertToFormat(QImage::Format_RGBA8888);
+        const QImage maskArtifact = repairedArtifact.format() == QImage::Format_RGBA8888 ? repairedArtifact : repairedArtifact.convertToFormat(QImage::Format_RGBA8888);
+        bool         paintedBackground = false;
+        if (bg == hyprshot::WindowBackground::Real && !windowArtifact->realBackground.isNull()) {
+            QPainter backgroundPainter(&background);
+            backgroundPainter.drawImage(background.rect(), windowArtifact->realBackground, artifactSource);
+            paintedBackground = true;
+        } else if (paintWindowBackground(background, bg, m_desktopImage, desktopSource)) {
             if (bg == hyprshot::WindowBackground::Real)
                 reconstructRealWindowBackground(background, maskArtifact, artifactSource);
+            paintedBackground = true;
+        }
+        if (paintedBackground) {
             applyWindowContentAlphaMask(background, maskArtifact, artifactSource);
             painter.drawImage(QPoint(0, 0), background);
         }
