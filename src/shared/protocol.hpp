@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace hyprshot {
+namespace hyprcapture {
 
 struct Rect {
     double x = 0.0;
@@ -59,4 +59,4 @@ std::string makeSessionId();
 std::string encodeSessionJson(const CaptureSession& session);
 std::optional<CaptureSession> decodeSessionJson(const std::string& json);
 
-} // namespace hyprshot
+} // namespace hyprcapture

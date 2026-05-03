@@ -4,7 +4,7 @@
 
 #include <string>
 
-namespace hyprshot {
+namespace hyprcapture {
 
 struct LaunchRequest {
     CaptureDefaults defaults;
@@ -19,4 +19,4 @@ struct LaunchResult {
 
 LaunchResult launchHelper(const LaunchRequest& request);
 
-} // namespace hyprshot
+} // namespace hyprcapture

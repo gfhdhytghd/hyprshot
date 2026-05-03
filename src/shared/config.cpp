@@ -7,7 +7,7 @@
 #include <iomanip>
 #include <sstream>
 
-namespace hyprshot {
+namespace hyprcapture {
 namespace {
 
 std::string normalized(std::string_view value) {
@@ -147,4 +147,4 @@ std::string makeTimestampedFilename(std::string_view filenameTemplate) {
     return filename.empty() ? "Screenshot.png" : filename;
 }
 
-} // namespace hyprshot
+} // namespace hyprcapture

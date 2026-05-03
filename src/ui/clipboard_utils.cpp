@@ -17,7 +17,7 @@
 #include <QStandardPaths>
 #include <QUrl>
 
-namespace hyprshot::ui {
+namespace hyprcapture::ui {
 namespace {
 
 QString wlCopyProgram() {
@@ -109,7 +109,7 @@ QString runtimeFile(const QString& prefix, const QString& suffix) {
         QDir candidate(root);
         if (!candidate.exists())
             continue;
-        if ((candidate.exists("hyprshot") || candidate.mkpath("hyprshot")) && candidate.cd("hyprshot")) {
+        if ((candidate.exists("hyprcapture") || candidate.mkpath("hyprcapture")) && candidate.cd("hyprcapture")) {
             dir = candidate;
             found = true;
             break;
@@ -273,4 +273,4 @@ void restoreClipboardSnapshot(const QString& path) {
     removeSnapshotFiles(obj, path);
 }
 
-} // namespace hyprshot::ui
+} // namespace hyprcapture::ui

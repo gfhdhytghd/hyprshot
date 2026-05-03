@@ -6,7 +6,7 @@
 #include <iostream>
 
 int main() {
-    using namespace hyprshot;
+    using namespace hyprcapture;
 
     assert(parseCaptureMode("full") == CaptureMode::Fullscreen);
     assert(parseCaptureMode("selection") == CaptureMode::Region);
@@ -64,6 +64,6 @@ int main() {
     assert(json.find("\"realBackgroundPath\":\"/tmp/window-real.rgba\"") != std::string::npos);
     assert(json.find("\"realBackgroundWidth\":200") != std::string::npos);
 
-    std::cout << "hyprshot config tests passed\n";
+    std::cout << "hyprcapture config tests passed\n";
     return 0;
 }

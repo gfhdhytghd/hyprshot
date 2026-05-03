@@ -18,7 +18,7 @@ class CaptureOverlay final : public QMainWindow {
     Q_OBJECT
 
   public:
-    explicit CaptureOverlay(hyprshot::CaptureDefaults defaults, bool quick, QString sessionJson, QWidget* parent = nullptr);
+    explicit CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, QString sessionJson, QWidget* parent = nullptr);
 
   protected:
     void paintEvent(QPaintEvent* event) override;
@@ -50,7 +50,7 @@ class CaptureOverlay final : public QMainWindow {
     void buildToolbar();
     void parseSessionJson(const QString& json);
     void captureScreensBeforeOverlay();
-    void setMode(hyprshot::CaptureMode mode);
+    void setMode(hyprcapture::CaptureMode mode);
     void updateToolbarControlsForMode();
     void finishCapture();
     void cancelCapture();
@@ -70,8 +70,8 @@ class CaptureOverlay final : public QMainWindow {
     void relayoutToolbar();
     void showThumbnail(const QImage& image, const QString& path, const QString& restoreClipboardPath);
 
-    hyprshot::CaptureDefaults m_defaults;
-    hyprshot::CaptureMode     m_mode;
+    hyprcapture::CaptureDefaults m_defaults;
+    hyprcapture::CaptureMode     m_mode;
     bool                      m_quick = false;
     bool                      m_dragging = false;
     bool                      m_finishing = false;

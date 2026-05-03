@@ -14,7 +14,7 @@
 
 extern char** environ;
 
-namespace hyprshot {
+namespace hyprcapture {
 namespace {
 
 std::string boolArg(bool value) {
@@ -26,10 +26,10 @@ std::vector<std::string> helperCandidates(const std::string& configured) {
     if (!configured.empty())
         candidates.push_back(configured);
 
-    if (const char* helperEnv = std::getenv("HYPRSHOT_HELPER"); helperEnv && *helperEnv)
+    if (const char* helperEnv = std::getenv("HYPRCAPTURE_HELPER"); helperEnv && *helperEnv)
         candidates.push_back(helperEnv);
 
-    candidates.push_back("hyprshot-ui");
+    candidates.push_back("hyprcapture-ui");
 
     std::vector<std::string> unique;
     for (auto& candidate : candidates) {
@@ -46,7 +46,7 @@ std::string firstRunnableHelper(const std::string& configured) {
         if (std::filesystem::exists(candidate))
             return candidate;
     }
-    return configured.empty() ? "hyprshot-ui" : configured;
+    return configured.empty() ? "hyprcapture-ui" : configured;
 }
 
 } // namespace
@@ -107,4 +107,4 @@ LaunchResult launchHelper(const LaunchRequest& request) {
     return {.success = true};
 }
 
-} // namespace hyprshot
+} // namespace hyprcapture

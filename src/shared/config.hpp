@@ -5,7 +5,7 @@
 #include <string>
 #include <string_view>
 
-namespace hyprshot {
+namespace hyprcapture {
 
 enum class CaptureMode { Fullscreen, Region, Window };
 enum class FullscreenScope { All, Current, PerMonitor };
@@ -26,7 +26,7 @@ struct CaptureDefaults {
     bool             includeCursor = false;
     std::string      saveDir = "~/Pictures/Screenshots";
     std::string      filenameTemplate = "Screenshot-%Y-%m-%d-%H%M%S.png";
-    std::string      helper = "hyprshot-ui";
+    std::string      helper = "hyprcapture-ui";
     std::int64_t     thumbnailTimeoutMs = 5000;
 };
 
@@ -45,4 +45,4 @@ std::string toString(DecorationPolicy value);
 std::filesystem::path expandUserPath(std::string_view path);
 std::string makeTimestampedFilename(std::string_view filenameTemplate);
 
-} // namespace hyprshot
+} // namespace hyprcapture

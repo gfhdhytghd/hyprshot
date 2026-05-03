@@ -1,9 +1,9 @@
-# hyprshot
+# HyprCapture
 
-`hyprshot` is a Hyprland-only screenshot tool split into a compositor plugin and a Qt layer-shell helper. The plugin captures frozen compositor artifacts and launches the helper; the helper provides the selection overlay, output rendering, clipboard integration, and result thumbnail.
+HyprCapture is a Hyprland-only screenshot tool split into a compositor plugin and a Qt layer-shell helper. The plugin captures frozen compositor artifacts and launches the helper; the helper provides the selection overlay, output rendering, clipboard integration, and result thumbnail.
 
 > [!IMPORTANT]
-> `hyprpm` installs the compositor plugin only. Install `hyprshot-ui` separately into a path visible to the Hyprland session, or set `plugin:hyprshot:helper` to an absolute executable path.
+> `hyprpm` installs the compositor plugin only. Install `hyprcapture-ui` separately into a path visible to the Hyprland session, or set `plugin:hyprcapture:helper` to an absolute executable path.
 
 > [!WARNING]
 > Hyprland plugins run inside the compositor process. Install plugins only from sources you trust.
@@ -32,8 +32,8 @@ Use `hyprpm` for the compositor plugin:
 
 ```sh
 hyprpm update
-hyprpm add https://github.com/gfhdhytghd/hyprshot
-hyprpm enable hyprshot
+hyprpm add https://github.com/gfhdhytghd/HyprCapture
+hyprpm enable hyprcapture
 hyprpm reload
 ```
 
@@ -61,16 +61,16 @@ Build and install the helper:
 
 ```sh
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
-cmake --build build-release --target hyprshot-ui
-install -Dm755 build-release/hyprshot-ui "$HOME/.local/bin/hyprshot-ui"
+cmake --build build-release --target hyprcapture-ui
+install -Dm755 build-release/hyprcapture-ui "$HOME/.local/bin/hyprcapture-ui"
 ```
 
 Make sure `~/.local/bin` is in the environment that launches Hyprland. If not, configure an absolute helper path:
 
 ```conf
 plugin {
-    hyprshot {
-        helper = /home/you/.local/bin/hyprshot-ui
+    hyprcapture {
+        helper = /home/you/.local/bin/hyprcapture-ui
     }
 }
 ```
@@ -78,12 +78,12 @@ plugin {
 For development without installing, point `helper` at the build-tree executable or launch Hyprland with:
 
 ```sh
-HYPRSHOT_HELPER=/path/to/hyprshot-ui Hyprland
+HYPRCAPTURE_HELPER=/path/to/hyprcapture-ui Hyprland
 ```
 
 ### Manual build and reload
 
-For local development, the plugin output is `build-cmake/libhyprshot.so`.
+For local development, the plugin output is `build-cmake/libhyprcapture.so`.
 
 ```sh
 cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Debug
@@ -94,9 +94,9 @@ ctest --test-dir build-cmake --output-on-failure
 Safe reload shape:
 
 ```sh
-hyprctl plugin unload "$(pwd)/build-cmake/libhyprshot.so"
-hyprctl plugin unload "$(pwd)/build-hyprpm/libhyprshot.so"
-hyprctl plugin load "$(pwd)/build-cmake/libhyprshot.so"
+hyprctl plugin unload "$(pwd)/build-cmake/libhyprcapture.so"
+hyprctl plugin unload "$(pwd)/build-hyprpm/libhyprcapture.so"
+hyprctl plugin load "$(pwd)/build-cmake/libhyprcapture.so"
 hyprctl plugin list
 ```
 
@@ -104,27 +104,27 @@ hyprctl plugin list
 
 Build outputs:
 
-- Plugin: `build-cmake/libhyprshot.so`
-- Helper: `build-cmake/hyprshot-ui`
-- Config test: `build-cmake/hyprshot-config-test`
+- Plugin: `build-cmake/libhyprcapture.so`
+- Helper: `build-cmake/hyprcapture-ui`
+- Config test: `build-cmake/hyprcapture-config-test`
 
 ## Usage
 
 ### Dispatchers
 
 ```conf
-bind = SUPER SHIFT, S, hyprshot:open
-bind = SUPER SHIFT, W, hyprshot:open,window
-bind = SUPER SHIFT, F, hyprshot:quick,fullscreen
+bind = SUPER SHIFT, S, hyprcapture:open
+bind = SUPER SHIFT, W, hyprcapture:open,window
+bind = SUPER SHIFT, F, hyprcapture:quick,fullscreen
 ```
 
 | Dispatcher | Description |
 | --- | --- |
-| `hyprshot:open` | Open the overlay using `default_mode`. |
-| `hyprshot:open,<mode>` | Open the overlay in `region`, `fullscreen`, or `window` mode. |
-| `hyprshot:quick` | Capture immediately using `default_mode`. |
-| `hyprshot:quick,<mode>` | Capture immediately in `region`, `fullscreen`, or `window` mode. |
-| `hyprshot:cancel` | Reserved dispatcher; currently returns success without changing an active helper. |
+| `hyprcapture:open` | Open the overlay using `default_mode`. |
+| `hyprcapture:open,<mode>` | Open the overlay in `region`, `fullscreen`, or `window` mode. |
+| `hyprcapture:quick` | Capture immediately using `default_mode`. |
+| `hyprcapture:quick,<mode>` | Capture immediately in `region`, `fullscreen`, or `window` mode. |
+| `hyprcapture:cancel` | Reserved dispatcher; currently returns success without changing an active helper. |
 
 ### Overlay
 
@@ -146,13 +146,13 @@ The thumbnail appears after capture when `show_thumbnail = 1`.
 
 ## Configuration
 
-All user-facing settings live under `plugin:hyprshot`.
+All user-facing settings live under `plugin:hyprcapture`.
 
 Example:
 
 ```conf
 plugin {
-    hyprshot {
+    hyprcapture {
         default_mode = region
         fullscreen_scope = all
         region_scope = global
@@ -166,7 +166,7 @@ plugin {
         filename_template = Screenshot-%Y-%m-%d-%H%M%S.png
         include_cursor = 0
         thumbnail_timeout_ms = 5000
-        helper = hyprshot-ui
+        helper = hyprcapture-ui
     }
 }
 ```
@@ -175,7 +175,7 @@ plugin {
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `default_mode` | string | `region` | Default mode for `hyprshot:open` and `hyprshot:quick`. Supports `region`, `fullscreen`, and `window`. |
+| `default_mode` | string | `region` | Default mode for `hyprcapture:open` and `hyprcapture:quick`. Supports `region`, `fullscreen`, and `window`. |
 | `fullscreen_scope` | string | `all` | Fullscreen capture scope. Supports `all`, `current`, and `per-monitor`. |
 | `region_scope` | string | `global` | Region selection scope. Supports `global` and `current-monitor`. |
 | `window_background` | string | `follow-system` | Background behind transparent window pixels. Supports `follow-system`, `white`, `black`, `real`, and `transparent`. |
@@ -193,7 +193,7 @@ plugin {
 | `save_dir` | string | `~/Pictures/Screenshots` | Output directory. `~` is expanded against `HOME`. |
 | `filename_template` | string | `Screenshot-%Y-%m-%d-%H%M%S.png` | `strftime` template for saved screenshot filenames. |
 | `thumbnail_timeout_ms` | int | `5000` | Thumbnail auto-close timeout in milliseconds. Use `0` to keep it open until user action. |
-| `helper` | string | `hyprshot-ui` | Helper executable path or command name. `HYPRSHOT_HELPER` is also tried as a fallback. |
+| `helper` | string | `hyprcapture-ui` | Helper executable path or command name. `HYPRCAPTURE_HELPER` is also tried as a fallback. |
 
 ## Development
 
@@ -201,12 +201,12 @@ Useful commands:
 
 ```sh
 cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-cmake --target hyprshot hyprshot-ui hyprshot-config-test
+cmake --build build-cmake --target hyprcapture hyprcapture-ui hyprcapture-config-test
 ctest --test-dir build-cmake --output-on-failure
-./build-cmake/hyprshot-ui --help
+./build-cmake/hyprcapture-ui --help
 ```
 
-Temporary compositor artifacts and thumbnail/clipboard scratch files are written under `/dev/shm/hyprshot` when available, with `/tmp/hyprshot` as fallback. They are intentionally not placed under `/run/user/$UID`.
+Temporary compositor artifacts and thumbnail/clipboard scratch files are written under `/dev/shm/hyprcapture` when available, with `/tmp/hyprcapture` as fallback. They are intentionally not placed under `/run/user/$UID`.
 
 ## Notes
 

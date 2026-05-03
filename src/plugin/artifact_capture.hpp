@@ -7,8 +7,8 @@
 
 extern HANDLE g_pluginHandle;
 
-namespace hyprshot {
+namespace hyprcapture {
 
 CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults);
 
-} // namespace hyprshot
+} // namespace hyprcapture

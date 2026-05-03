@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
 #endif
 
     QApplication app(argc, argv);
-    QApplication::setApplicationName("hyprshot-ui");
+    QApplication::setApplicationName("hyprcapture-ui");
 
     QCommandLineParser parser;
     parser.addHelpOption();
@@ -68,13 +68,13 @@ int main(int argc, char** argv) {
         return app.exec();
     }
 
-    hyprshot::CaptureDefaults defaults;
-    defaults.mode = hyprshot::parseCaptureMode(parser.value("mode").toStdString(), defaults.mode);
-    defaults.fullscreenScope = hyprshot::parseFullscreenScope(parser.value("fullscreen-scope").toStdString(), defaults.fullscreenScope);
-    defaults.regionScope = hyprshot::parseRegionScope(parser.value("region-scope").toStdString(), defaults.regionScope);
-    defaults.windowBackground = hyprshot::parseWindowBackground(parser.value("window-background").toStdString(), defaults.windowBackground);
-    defaults.windowBorder = hyprshot::parseDecorationPolicy(parser.value("window-border").toStdString(), defaults.windowBorder);
-    defaults.windowShadow = hyprshot::parseDecorationPolicy(parser.value("window-shadow").toStdString(), defaults.windowShadow);
+    hyprcapture::CaptureDefaults defaults;
+    defaults.mode = hyprcapture::parseCaptureMode(parser.value("mode").toStdString(), defaults.mode);
+    defaults.fullscreenScope = hyprcapture::parseFullscreenScope(parser.value("fullscreen-scope").toStdString(), defaults.fullscreenScope);
+    defaults.regionScope = hyprcapture::parseRegionScope(parser.value("region-scope").toStdString(), defaults.regionScope);
+    defaults.windowBackground = hyprcapture::parseWindowBackground(parser.value("window-background").toStdString(), defaults.windowBackground);
+    defaults.windowBorder = hyprcapture::parseDecorationPolicy(parser.value("window-border").toStdString(), defaults.windowBorder);
+    defaults.windowShadow = hyprcapture::parseDecorationPolicy(parser.value("window-shadow").toStdString(), defaults.windowShadow);
     defaults.save = flagValue(parser, "save", defaults.save);
     defaults.clipboard = flagValue(parser, "clipboard", defaults.clipboard);
     defaults.showThumbnail = flagValue(parser, "thumbnail", defaults.showThumbnail);

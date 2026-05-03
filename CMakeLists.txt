@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.19)
-project(hyprshot VERSION "0.1.0")
+project(HyprCapture VERSION "0.1.0")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,7 +27,7 @@ pkg_check_modules(HYPR_DEPS REQUIRED hyprland)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 find_package(LayerShellQt REQUIRED)
 
-add_library(hyprshot SHARED
+add_library(hyprcapture SHARED
   src/plugin/main.cpp
   src/plugin/artifact_capture.cpp
   src/plugin/session_launcher.cpp
@@ -35,11 +35,11 @@ add_library(hyprshot SHARED
   src/shared/protocol.cpp
 )
 
-target_include_directories(hyprshot PRIVATE src ${HYPR_DEPS_INCLUDE_DIRS})
-target_link_directories(hyprshot PRIVATE ${HYPR_DEPS_LIBRARY_DIRS})
-target_link_libraries(hyprshot PRIVATE ${HYPR_DEPS_LIBRARIES})
+target_include_directories(hyprcapture PRIVATE src ${HYPR_DEPS_INCLUDE_DIRS})
+target_link_directories(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARY_DIRS})
+target_link_libraries(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARIES})
 
-add_executable(hyprshot-ui
+add_executable(hyprcapture-ui
   src/ui/main.cpp
   src/ui/clipboard_utils.cpp
   src/ui/capture_overlay.cpp
@@ -48,18 +48,18 @@ add_executable(hyprshot-ui
   src/shared/protocol.cpp
 )
 
-target_include_directories(hyprshot-ui PRIVATE src)
-target_link_libraries(hyprshot-ui PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets LayerShellQt::Interface)
+target_include_directories(hyprcapture-ui PRIVATE src)
+target_link_libraries(hyprcapture-ui PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets LayerShellQt::Interface)
 
 if(BUILD_TESTING)
-  add_executable(hyprshot-config-test
+  add_executable(hyprcapture-config-test
     tests/config_test.cpp
     src/shared/config.cpp
     src/shared/protocol.cpp
   )
-  target_include_directories(hyprshot-config-test PRIVATE src)
-  add_test(NAME hyprshot-config-test COMMAND hyprshot-config-test)
+  target_include_directories(hyprcapture-config-test PRIVATE src)
+  add_test(NAME hyprcapture-config-test COMMAND hyprcapture-config-test)
 endif()
 
-install(TARGETS hyprshot LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(TARGETS hyprshot-ui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS hyprcapture LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(TARGETS hyprcapture-ui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

@@ -155,7 +155,7 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     addAction("Copy image", [this] {
         const auto currentPixmap = m_imageLabel->pixmap();
         if (!currentPixmap.isNull())
-            hyprshot::ui::copyPixmapToClipboard(currentPixmap);
+            hyprcapture::ui::copyPixmapToClipboard(currentPixmap);
     });
     addAction("Show in folder", [this] {
         if (!m_path.isEmpty())
@@ -188,7 +188,7 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     adjustSize();
     winId();
     if (auto* layerWindow = LayerShellQt::Window::get(windowHandle())) {
-        layerWindow->setScope("hyprshot-thumbnail");
+        layerWindow->setScope("hyprcapture-thumbnail");
         layerWindow->setLayer(LayerShellQt::Window::LayerOverlay);
         layerWindow->setAnchors(LayerShellQt::Window::Anchors{LayerShellQt::Window::AnchorRight} | LayerShellQt::Window::AnchorBottom);
         layerWindow->setMargins(QMargins(0, 0, 0, 0));
@@ -355,7 +355,7 @@ void ResultThumbnail::deleteAndClose() {
 }
 
 void ResultThumbnail::restoreClipboard() const {
-    hyprshot::ui::restoreClipboardSnapshot(m_restoreClipboardPath);
+    hyprcapture::ui::restoreClipboardSnapshot(m_restoreClipboardPath);
 }
 
 void ResultThumbnail::startFileDrag() {

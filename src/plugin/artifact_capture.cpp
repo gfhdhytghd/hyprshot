@@ -28,7 +28,7 @@
 
 extern HANDLE g_pluginHandle;
 
-namespace hyprshot {
+namespace hyprcapture {
 namespace {
 
 struct RgbaReadback {
@@ -82,13 +82,13 @@ bool intersects(const Rect& a, const Rect& b) {
 std::filesystem::path artifactRoot(const std::string& sessionId) {
     for (const auto& base : {std::filesystem::path{"/dev/shm"}, std::filesystem::path{"/tmp"}}) {
         std::error_code ec;
-        auto root = base / "hyprshot" / sessionId;
+        auto root = base / "hyprcapture" / sessionId;
         std::filesystem::create_directories(root, ec);
         if (!ec)
             return root;
     }
 
-    auto root = std::filesystem::temp_directory_path() / "hyprshot" / sessionId;
+    auto root = std::filesystem::temp_directory_path() / "hyprcapture" / sessionId;
     std::filesystem::create_directories(root);
     return root;
 }
@@ -920,4 +920,4 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
     return session;
 }
 
-} // namespace hyprshot
+} // namespace hyprcapture

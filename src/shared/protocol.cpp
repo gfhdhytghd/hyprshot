@@ -5,7 +5,7 @@
 #include <random>
 #include <sstream>
 
-namespace hyprshot {
+namespace hyprcapture {
 namespace {
 
 std::string quote(std::string_view value) {
@@ -96,4 +96,4 @@ std::optional<CaptureSession> decodeSessionJson(const std::string& json) {
     return session;
 }
 
-} // namespace hyprshot
+} // namespace hyprcapture

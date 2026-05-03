@@ -263,25 +263,25 @@ QPainterPath roundedWindowFramePath(const QRectF& rawRect, double radius, double
 }
 
 bool paintWindowBackground(QImage& background,
-                           hyprshot::WindowBackground bg,
+                           hyprcapture::WindowBackground bg,
                            const QImage& desktopImage,
                            const QRect& desktopSource) {
-    if (background.isNull() || bg == hyprshot::WindowBackground::Transparent)
+    if (background.isNull() || bg == hyprcapture::WindowBackground::Transparent)
         return false;
 
     QPainter backgroundPainter(&background);
-    if (bg == hyprshot::WindowBackground::Real) {
+    if (bg == hyprcapture::WindowBackground::Real) {
         if (desktopImage.isNull() || !desktopSource.isValid())
             return false;
         backgroundPainter.drawImage(background.rect(), desktopImage, desktopSource);
         return true;
     }
 
-    if (bg == hyprshot::WindowBackground::White)
+    if (bg == hyprcapture::WindowBackground::White)
         backgroundPainter.fillRect(background.rect(), Qt::white);
-    else if (bg == hyprshot::WindowBackground::Black)
+    else if (bg == hyprcapture::WindowBackground::Black)
         backgroundPainter.fillRect(background.rect(), Qt::black);
-    else if (bg == hyprshot::WindowBackground::FollowSystem)
+    else if (bg == hyprcapture::WindowBackground::FollowSystem)
         backgroundPainter.fillRect(background.rect(), followSystemColor());
     else
         backgroundPainter.fillRect(background.rect(), QColor(30, 34, 38));
@@ -550,7 +550,7 @@ void InlineSelect::choose(const QString& text) {
     hidePopup();
 }
 
-CaptureOverlay::CaptureOverlay(hyprshot::CaptureDefaults defaults, bool quick, QString sessionJson, QWidget* parent)
+CaptureOverlay::CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, QString sessionJson, QWidget* parent)
     : QMainWindow(parent), m_defaults(std::move(defaults)), m_mode(m_defaults.mode), m_quick(quick) {
     setWindowFlags(Qt::FramelessWindowHint | Qt::Tool);
     setAttribute(Qt::WA_TranslucentBackground);
@@ -564,7 +564,7 @@ CaptureOverlay::CaptureOverlay(hyprshot::CaptureDefaults defaults, bool quick, Q
     buildToolbar();
     winId();
     if (auto* layerWindow = LayerShellQt::Window::get(windowHandle())) {
-        layerWindow->setScope("hyprshot-ui");
+        layerWindow->setScope("hyprcapture-ui");
         layerWindow->setLayer(LayerShellQt::Window::LayerOverlay);
         layerWindow->setAnchors(LayerShellQt::Window::Anchors{LayerShellQt::Window::AnchorTop} | LayerShellQt::Window::AnchorBottom |
                                 LayerShellQt::Window::AnchorLeft | LayerShellQt::Window::AnchorRight);
@@ -673,7 +673,7 @@ void CaptureOverlay::buildToolbar() {
     layout->setSizeConstraint(QLayout::SetFixedSize);
 
     auto* group = new QButtonGroup(this);
-    const auto addMode = [&](const QString& label, hyprshot::CaptureMode mode) {
+    const auto addMode = [&](const QString& label, hyprcapture::CaptureMode mode) {
         auto* button = new QPushButton(label, m_toolbar);
         button->setCheckable(true);
         button->setChecked(mode == m_mode);
@@ -682,22 +682,22 @@ void CaptureOverlay::buildToolbar() {
         connect(button, &QPushButton::clicked, this, [this, mode] {
             const bool wasActiveMode = m_mode == mode;
             setMode(mode);
-            if (mode == hyprshot::CaptureMode::Fullscreen && wasActiveMode)
+            if (mode == hyprcapture::CaptureMode::Fullscreen && wasActiveMode)
                 finishCapture();
         });
     };
-    addMode("Full", hyprshot::CaptureMode::Fullscreen);
-    addMode("Region", hyprshot::CaptureMode::Region);
-    addMode("Window", hyprshot::CaptureMode::Window);
+    addMode("Full", hyprcapture::CaptureMode::Fullscreen);
+    addMode("Region", hyprcapture::CaptureMode::Region);
+    addMode("Window", hyprcapture::CaptureMode::Window);
 
     m_fullscreenScope = new InlineSelect(this, m_toolbar);
     m_fullscreenScope->addItems(QStringList{"all", "current", "per-monitor"});
-    m_fullscreenScope->setCurrentText(qString(hyprshot::toString(m_defaults.fullscreenScope)));
+    m_fullscreenScope->setCurrentText(qString(hyprcapture::toString(m_defaults.fullscreenScope)));
     layout->addWidget(m_fullscreenScope);
 
     m_windowBackground = new InlineSelect(this, m_toolbar);
     m_windowBackground->addItems(QStringList{"follow-system", "white", "black", "real", "transparent"});
-    m_windowBackground->setCurrentText(qString(hyprshot::toString(m_defaults.windowBackground)));
+    m_windowBackground->setCurrentText(qString(hyprcapture::toString(m_defaults.windowBackground)));
     layout->addWidget(m_windowBackground);
 
     auto* cancel = new QPushButton("Cancel", m_toolbar);
@@ -712,7 +712,7 @@ void CaptureOverlay::buildToolbar() {
     relayoutToolbar();
 }
 
-void CaptureOverlay::setMode(hyprshot::CaptureMode mode) {
+void CaptureOverlay::setMode(hyprcapture::CaptureMode mode) {
     if (m_fullscreenScope)
         m_fullscreenScope->hidePopup();
     if (m_windowBackground)
@@ -726,15 +726,15 @@ void CaptureOverlay::setMode(hyprshot::CaptureMode mode) {
 
 void CaptureOverlay::updateToolbarControlsForMode() {
     if (m_fullscreenScope) {
-        if (m_mode != hyprshot::CaptureMode::Fullscreen)
+        if (m_mode != hyprcapture::CaptureMode::Fullscreen)
             m_fullscreenScope->hidePopup();
-        m_fullscreenScope->setVisible(m_mode == hyprshot::CaptureMode::Fullscreen);
+        m_fullscreenScope->setVisible(m_mode == hyprcapture::CaptureMode::Fullscreen);
     }
 
     if (m_windowBackground) {
-        if (m_mode != hyprshot::CaptureMode::Window)
+        if (m_mode != hyprcapture::CaptureMode::Window)
             m_windowBackground->hidePopup();
-        m_windowBackground->setVisible(m_mode == hyprshot::CaptureMode::Window);
+        m_windowBackground->setVisible(m_mode == hyprcapture::CaptureMode::Window);
     }
 
     relayoutToolbar();
@@ -755,12 +755,12 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
     paintDesktop(rect());
     painter.fillRect(rect(), QColor(0, 0, 0, 80));
 
-    if (m_mode == hyprshot::CaptureMode::Region && (m_dragging || !normalizedSelection().isNull())) {
+    if (m_mode == hyprcapture::CaptureMode::Region && (m_dragging || !normalizedSelection().isNull())) {
         const QRect sel = normalizedSelection();
         paintDesktop(sel);
         painter.setPen(QPen(QColor(255, 255, 255, 230), 2));
         painter.drawRect(sel.adjusted(0, 0, -1, -1));
-    } else if (m_mode == hyprshot::CaptureMode::Window) {
+    } else if (m_mode == hyprcapture::CaptureMode::Window) {
         const auto* window = hoveredWindow();
         for (const auto& candidate : m_windowArtifacts) {
             const QRect target = globalToLocalRect(windowFrameGeometry(candidate));
@@ -785,12 +785,12 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton)
         return;
 
-    if (m_mode == hyprshot::CaptureMode::Fullscreen) {
+    if (m_mode == hyprcapture::CaptureMode::Fullscreen) {
         finishCapture();
         return;
     }
 
-    if (m_mode == hyprshot::CaptureMode::Window)
+    if (m_mode == hyprcapture::CaptureMode::Window)
         return;
 
     m_dragging = true;
@@ -800,7 +800,7 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
 }
 
 void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
-    if (m_mode == hyprshot::CaptureMode::Window) {
+    if (m_mode == hyprcapture::CaptureMode::Window) {
         updateStatus();
         update();
         return;
@@ -814,13 +814,13 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
 void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton)
         return;
-    if (m_mode == hyprshot::CaptureMode::Window) {
+    if (m_mode == hyprcapture::CaptureMode::Window) {
         finishCapture();
         return;
     }
     m_dragging = false;
     m_dragEnd = event->pos();
-    if (m_mode != hyprshot::CaptureMode::Region || normalizedSelection().width() > 4)
+    if (m_mode != hyprcapture::CaptureMode::Region || normalizedSelection().width() > 4)
         finishCapture();
 }
 
@@ -842,9 +842,9 @@ QRect CaptureOverlay::normalizedSelection() const {
 }
 
 QRect CaptureOverlay::captureRectForMode() const {
-    if (m_mode == hyprshot::CaptureMode::Region && normalizedSelection().isValid())
+    if (m_mode == hyprcapture::CaptureMode::Region && normalizedSelection().isValid())
         return normalizedSelection();
-    if (m_mode == hyprshot::CaptureMode::Window) {
+    if (m_mode == hyprcapture::CaptureMode::Window) {
         if (const auto* window = hoveredWindow())
             return globalToLocalRect(windowFrameGeometry(*window));
         return {};
@@ -899,7 +899,7 @@ void CaptureOverlay::updateStatus() {
     if (!m_status)
         return;
 
-    if (m_mode != hyprshot::CaptureMode::Window) {
+    if (m_mode != hyprcapture::CaptureMode::Window) {
         m_status->clear();
         relayoutToolbar();
         return;
@@ -978,14 +978,14 @@ QImage CaptureOverlay::renderDesktopRectAtDisplayResolution(const QRect& globalR
 }
 
 QImage CaptureOverlay::renderResultImage() const {
-    const auto bg = hyprshot::parseWindowBackground(m_windowBackground->currentText().toStdString(), m_defaults.windowBackground);
-    if (m_mode == hyprshot::CaptureMode::Window) {
+    const auto bg = hyprcapture::parseWindowBackground(m_windowBackground->currentText().toStdString(), m_defaults.windowBackground);
+    if (m_mode == hyprcapture::CaptureMode::Window) {
         const auto* windowArtifact = hoveredWindow();
         if (!windowArtifact || windowArtifact->image.isNull())
             return {};
 
         QRect artifactSource = windowArtifact->image.rect();
-        const bool cropDecorations = m_defaults.windowBorder == hyprshot::DecorationPolicy::Remove || m_defaults.windowShadow == hyprshot::DecorationPolicy::Remove;
+        const bool cropDecorations = m_defaults.windowBorder == hyprcapture::DecorationPolicy::Remove || m_defaults.windowShadow == hyprcapture::DecorationPolicy::Remove;
         if (cropDecorations && windowArtifact->visibleGeometry.isValid() && windowArtifact->fullGeometry.contains(windowArtifact->visibleGeometry)) {
             const double scaleX = static_cast<double>(windowArtifact->image.width()) / std::max(1, windowArtifact->fullGeometry.width());
             const double scaleY = static_cast<double>(windowArtifact->image.height()) / std::max(1, windowArtifact->fullGeometry.height());
@@ -1009,12 +1009,12 @@ QImage CaptureOverlay::renderResultImage() const {
         const QRect desktopSource = QRect(logicalSource.topLeft() - m_desktopGeometry.topLeft(), logicalSource.size());
         const QImage maskArtifact = repairedArtifact.format() == QImage::Format_RGBA8888 ? repairedArtifact : repairedArtifact.convertToFormat(QImage::Format_RGBA8888);
         bool         paintedBackground = false;
-        if (bg == hyprshot::WindowBackground::Real && !windowArtifact->realBackground.isNull()) {
+        if (bg == hyprcapture::WindowBackground::Real && !windowArtifact->realBackground.isNull()) {
             QPainter backgroundPainter(&background);
             backgroundPainter.drawImage(background.rect(), windowArtifact->realBackground, artifactSource);
             paintedBackground = true;
         } else if (paintWindowBackground(background, bg, m_desktopImage, desktopSource)) {
-            if (bg == hyprshot::WindowBackground::Real)
+            if (bg == hyprcapture::WindowBackground::Real)
                 reconstructRealWindowBackground(background, maskArtifact, artifactSource);
             paintedBackground = true;
         }
@@ -1043,16 +1043,16 @@ QImage CaptureOverlay::renderResultImage() const {
     QPainter painter(&image);
     const QRect desktopSource = localToDesktopSourceRect(cap);
 
-    if (m_mode != hyprshot::CaptureMode::Window && !m_desktopImage.isNull()) {
+    if (m_mode != hyprcapture::CaptureMode::Window && !m_desktopImage.isNull()) {
         painter.drawImage(image.rect(), m_desktopImage, desktopSource);
-    } else if (m_mode == hyprshot::CaptureMode::Window && bg == hyprshot::WindowBackground::Real && !m_desktopImage.isNull()) {
+    } else if (m_mode == hyprcapture::CaptureMode::Window && bg == hyprcapture::WindowBackground::Real && !m_desktopImage.isNull()) {
         painter.drawImage(image.rect(), m_desktopImage, desktopSource);
-    } else if (m_mode == hyprshot::CaptureMode::Window && bg != hyprshot::WindowBackground::Transparent) {
-        if (bg == hyprshot::WindowBackground::White)
+    } else if (m_mode == hyprcapture::CaptureMode::Window && bg != hyprcapture::WindowBackground::Transparent) {
+        if (bg == hyprcapture::WindowBackground::White)
             painter.fillRect(image.rect(), Qt::white);
-        else if (bg == hyprshot::WindowBackground::Black)
+        else if (bg == hyprcapture::WindowBackground::Black)
             painter.fillRect(image.rect(), Qt::black);
-        else if (bg == hyprshot::WindowBackground::FollowSystem)
+        else if (bg == hyprcapture::WindowBackground::FollowSystem)
             painter.fillRect(image.rect(), followSystemColor());
         else
             painter.fillRect(image.rect(), QColor(30, 34, 38));
@@ -1081,17 +1081,17 @@ void CaptureOverlay::saveImage(const QImage& image) {
     QString savedPath;
     QString restoreClipboardPath;
     if (m_defaults.save) {
-        const auto dirPath = hyprshot::expandUserPath(m_defaults.saveDir);
+        const auto dirPath = hyprcapture::expandUserPath(m_defaults.saveDir);
         QDir dir(QString::fromStdString(dirPath.string()));
         if (!dir.exists())
             dir.mkpath(".");
-        savedPath = dir.filePath(QString::fromStdString(hyprshot::makeTimestampedFilename(m_defaults.filenameTemplate)));
+        savedPath = dir.filePath(QString::fromStdString(hyprcapture::makeTimestampedFilename(m_defaults.filenameTemplate)));
         image.save(savedPath, "PNG");
     }
 
     if (m_defaults.clipboard) {
-        restoreClipboardPath = hyprshot::ui::saveClipboardSnapshot();
-        hyprshot::ui::copyImageToClipboard(image);
+        restoreClipboardPath = hyprcapture::ui::saveClipboardSnapshot();
+        hyprcapture::ui::copyImageToClipboard(image);
     }
 
     if (m_defaults.showThumbnail)
@@ -1105,7 +1105,7 @@ void CaptureOverlay::saveImage(const QImage& image) {
 void CaptureOverlay::showThumbnail(const QImage& image, const QString& path, const QString& restoreClipboardPath) {
     QString thumbPath = path;
     if (thumbPath.isEmpty()) {
-        thumbPath = hyprshot::ui::runtimeFile("thumbnail", ".png");
+        thumbPath = hyprcapture::ui::runtimeFile("thumbnail", ".png");
         image.save(thumbPath, "PNG");
     }
 
