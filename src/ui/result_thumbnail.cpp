@@ -100,7 +100,7 @@ QPointF wheelGestureDelta(QWheelEvent* event) {
         delta = QPointF(event->angleDelta()) / 8.0;
     if (event->inverted())
         delta = -delta;
-    return {delta.x(), -delta.y()};
+    return delta;
 }
 
 } // namespace
