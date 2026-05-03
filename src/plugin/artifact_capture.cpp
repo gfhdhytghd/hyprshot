@@ -696,6 +696,47 @@ void renderRealBackgroundArtifactsForMonitor(const PHLMONITOR& monitor,
     }
 }
 
+bool shouldCaptureWindow(const PHLWINDOW& window) {
+    if (!window || !window->m_isMapped || window->isHidden() || !window->m_workspace)
+        return false;
+
+    if (g_pHyprRenderer)
+        return g_pHyprRenderer->shouldRenderWindow(window);
+
+    return window->m_pinned || window->m_workspace->isVisible();
+}
+
+std::vector<PHLWINDOW> windowsInRenderOrder() {
+    std::vector<PHLWINDOW> ordered;
+    if (!g_pCompositor)
+        return ordered;
+
+    ordered.reserve(g_pCompositor->m_windows.size());
+    const auto appendPass = [&](bool special, bool floating) {
+        for (const auto& window : g_pCompositor->m_windows) {
+            if (!shouldCaptureWindow(window) || (window->m_pinned && window->m_isFloating) || window->onSpecialWorkspace() != special ||
+                window->m_isFloating != floating)
+                continue;
+
+            ordered.push_back(window);
+        }
+    };
+
+    appendPass(false, false);
+    appendPass(false, true);
+    appendPass(true, false);
+    appendPass(true, true);
+
+    for (const auto& window : g_pCompositor->m_windows) {
+        if (!shouldCaptureWindow(window) || !window->m_pinned || !window->m_isFloating)
+            continue;
+
+        ordered.push_back(window);
+    }
+
+    return ordered;
+}
+
 } // namespace
 
 CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
@@ -723,10 +764,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
 
     int z = 0;
     std::vector<PendingRealBackgroundCapture> pendingRealBackgrounds;
-    for (const auto& window : g_pCompositor->m_windows) {
-        if (!window || !window->m_isMapped || window->isHidden() || !window->m_workspace || !window->m_workspace->isVisible())
-            continue;
-
+    for (const auto& window : windowsInRenderOrder()) {
         const CBox fullBox = renderedWindowBox(window, window->getFullWindowBoundingBox());
         const Rect full = toRect(fullBox);
         auto monitor = window->m_monitor.lock();
