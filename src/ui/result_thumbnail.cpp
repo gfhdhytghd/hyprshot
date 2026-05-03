@@ -5,18 +5,20 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QContextMenuEvent>
+#include <QDrag>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QLabel>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPalette>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QPushButton>
 #include <QStyleHints>
+#include <QUrl>
 #include <QVBoxLayout>
 
-#include <algorithm>
 #include <utility>
 
 ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, int timeoutMs, QWidget* parent) : QWidget(parent), m_path(std::move(path)) {
@@ -98,31 +100,21 @@ void ResultThumbnail::mousePressEvent(QMouseEvent* event) {
         return;
 
     m_dragMoved = false;
+    m_draggingFile = false;
     m_pressGlobal = event->globalPosition().toPoint();
-    m_dragStart = event->globalPosition().toPoint() - frameGeometry().topLeft();
-    if (auto* layerWindow = LayerShellQt::Window::get(windowHandle()))
-        m_dragMargins = layerWindow->margins();
-    else
-        m_dragMargins = {};
 }
 
 void ResultThumbnail::mouseMoveEvent(QMouseEvent* event) {
-    if (!(event->buttons() & Qt::LeftButton))
+    if (!(event->buttons() & Qt::LeftButton) || m_draggingFile)
         return;
 
     const QPoint current = event->globalPosition().toPoint();
     const QPoint delta = current - m_pressGlobal;
-    if (delta.manhattanLength() > QGuiApplication::styleHints()->startDragDistance())
-        m_dragMoved = true;
+    if (delta.manhattanLength() <= QGuiApplication::styleHints()->startDragDistance())
+        return;
 
-    if (auto* layerWindow = LayerShellQt::Window::get(windowHandle())) {
-        layerWindow->setMargins(QMargins(0,
-                                         0,
-                                         std::max(0, m_dragMargins.right() - delta.x()),
-                                         std::max(0, m_dragMargins.bottom() - delta.y())));
-    } else {
-        move(event->globalPosition().toPoint() - m_dragStart);
-    }
+    m_dragMoved = true;
+    startFileDrag();
 }
 
 void ResultThumbnail::mouseReleaseEvent(QMouseEvent* event) {
@@ -155,6 +147,31 @@ void ResultThumbnail::applyLayerSize() {
     adjustSize();
     if (auto* layerWindow = LayerShellQt::Window::get(windowHandle()))
         layerWindow->setDesiredSize(size());
+}
+
+void ResultThumbnail::startFileDrag() {
+    if (m_path.isEmpty())
+        return;
+
+    m_draggingFile = true;
+    m_closeTimer.stop();
+
+    auto* drag = new QDrag(this);
+    auto* mimeData = new QMimeData;
+    mimeData->setUrls({QUrl::fromLocalFile(m_path)});
+
+    const auto currentPixmap = m_imageLabel->pixmap();
+    if (!currentPixmap.isNull()) {
+        mimeData->setImageData(currentPixmap.toImage());
+        drag->setPixmap(currentPixmap.scaled(180, 120, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        drag->setHotSpot(QPoint(drag->pixmap().width() / 2, drag->pixmap().height() / 2));
+    }
+
+    drag->setMimeData(mimeData);
+    const auto action = drag->exec(Qt::CopyAction, Qt::CopyAction);
+    m_draggingFile = false;
+    if (action != Qt::IgnoreAction)
+        close();
 }
 
 void ResultThumbnail::enterEvent(QEnterEvent*) {

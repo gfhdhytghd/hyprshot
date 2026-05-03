@@ -186,7 +186,7 @@ void InlineSelect::addItems(const QStringList& items) {
 
 void InlineSelect::setCurrentText(const QString& text) {
     m_current = text;
-    m_button->setText(text);
+    m_button->setText(text + QStringLiteral("  ▾"));
     for (auto* button : m_panel->findChildren<QPushButton*>())
         button->setChecked(button->text() == text);
 }

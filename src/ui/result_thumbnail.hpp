@@ -1,6 +1,5 @@
 #pragma once
 
-#include <QMargins>
 #include <QPoint>
 #include <QTimer>
 #include <QWidget>
@@ -27,13 +26,13 @@ class ResultThumbnail final : public QWidget {
     bool openPath(const QString& path);
     void toggleMenu();
     void applyLayerSize();
+    void startFileDrag();
 
     QString m_path;
     QLabel* m_imageLabel = nullptr;
     QWidget* m_menuPanel = nullptr;
     QPoint  m_pressGlobal;
-    QPoint  m_dragStart;
-    QMargins m_dragMargins;
     bool    m_dragMoved = false;
+    bool    m_draggingFile = false;
     QTimer  m_closeTimer;
 };
