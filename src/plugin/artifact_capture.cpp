@@ -62,29 +62,21 @@ bool nonZeroPixel(const std::vector<unsigned char>& pixels, int width, int x, in
     return pixels[i] != 0 || pixels[i + 1] != 0 || pixels[i + 2] != 0 || pixels[i + 3] != 0;
 }
 
-bool findFirstNonZeroPixel(const RgbaReadback& readback, int& offsetX, int& offsetY) {
-    offsetX = 0;
+bool findTopNonZeroRow(const RgbaReadback& readback, int& offsetY) {
     offsetY = 0;
     if (readback.width <= 0 || readback.height <= 0 || readback.pixels.empty())
         return false;
 
-    int minX = readback.width;
-    int minY = readback.height;
     for (int y = 0; y < readback.height; ++y) {
         for (int x = 0; x < readback.width; ++x) {
-            if (!nonZeroPixel(readback.pixels, readback.width, x, y))
-                continue;
-            minX = std::min(minX, x);
-            minY = std::min(minY, y);
+            if (nonZeroPixel(readback.pixels, readback.width, x, y)) {
+                offsetY = y;
+                return true;
+            }
         }
     }
 
-    if (minX >= readback.width || minY >= readback.height)
-        return false;
-
-    offsetX = minX;
-    offsetY = minY;
-    return true;
+    return false;
 }
 
 RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int cropTopY, int cropWidth, int cropHeight) {
@@ -123,6 +115,28 @@ RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int
     }
 
     return readback;
+}
+
+void shiftReadbackUpAndFillTail(CFramebuffer& framebuffer, int cropX, int cropTopY, RgbaReadback& readback, int offsetY) {
+    if (offsetY <= 0 || offsetY >= readback.height || readback.pixels.empty())
+        return;
+
+    std::vector<unsigned char> shifted(readback.pixels.size(), 0);
+    const std::size_t rowBytes = static_cast<std::size_t>(readback.width) * 4U;
+    for (int y = 0; y < readback.height - offsetY; ++y) {
+        const auto* src = readback.pixels.data() + static_cast<std::size_t>(y + offsetY) * rowBytes;
+        auto*       dst = shifted.data() + static_cast<std::size_t>(y) * rowBytes;
+        std::copy(src, src + rowBytes, dst);
+    }
+
+    auto tail = readRgbaFramebufferRegion(framebuffer, cropX, cropTopY + readback.height, readback.width, offsetY);
+    if (!tail.pixels.empty() && tail.width == readback.width && tail.height == offsetY) {
+        const auto* src = tail.pixels.data();
+        auto*       dst = shifted.data() + static_cast<std::size_t>(readback.height - offsetY) * rowBytes;
+        std::copy(src, src + static_cast<std::size_t>(offsetY) * rowBytes, dst);
+    }
+
+    readback.pixels = std::move(shifted);
 }
 
 bool writeRgbaFramebufferRegion(CFramebuffer& framebuffer, const std::filesystem::path& path, int cropX, int cropTopY, int cropWidth, int cropHeight) {
@@ -191,11 +205,9 @@ bool renderWindowArtifact(const PHLWINDOW& window,
                           const std::filesystem::path& path,
                           int& width,
                           int& height,
-                          int& offsetX,
                           int& offsetY) {
     if (!window || !monitor || !g_pHyprRenderer || !g_pHyprOpenGL)
         return false;
-    offsetX = 0;
     offsetY = 0;
 
     const CBox fullBox = renderedWindowBox(window, window->getFullWindowBoundingBox());
@@ -238,11 +250,8 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     if (readback.pixels.empty())
         return false;
 
-    if (findFirstNonZeroPixel(readback, offsetX, offsetY) && (offsetX != 0 || offsetY != 0)) {
-        auto shifted = readRgbaFramebufferRegion(framebuffer, cropX + offsetX, cropY + offsetY, width, height);
-        if (!shifted.pixels.empty())
-            readback = std::move(shifted);
-    }
+    if (findTopNonZeroRow(readback, offsetY) && offsetY > 0)
+        shiftReadbackUpAndFillTail(framebuffer, cropX, cropY, readback, offsetY);
 
     return writeRgbaFile(path, readback.pixels);
 }
@@ -295,13 +304,11 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         info.appClass = window->m_class;
         info.zIndex = z++;
         const auto path = root / ("window-" + pointerId(window.get()) + ".rgba");
-        int offsetX = 0;
         int offsetY = 0;
-        if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, offsetX, offsetY)) {
+        if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, offsetY)) {
             info.artifactPath = path.string();
             const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
-            info.fullGeometry =
-                toRect(CBox{fullBox.x + offsetX / scale, fullBox.y + offsetY / scale, info.artifactWidth / scale, info.artifactHeight / scale});
+            info.fullGeometry = toRect(CBox{fullBox.x, fullBox.y + offsetY / scale, info.artifactWidth / scale, info.artifactHeight / scale});
         } else
             info.fullGeometry = full;
         info.visibleGeometry = toRect(renderedWindowBox(window, window->getWindowMainSurfaceBox()));
