@@ -53,6 +53,7 @@ class CaptureOverlay final : public QMainWindow {
     void cancelCapture();
     void saveImage(const QImage& image);
     QImage renderResultImage() const;
+    QImage renderDesktopRectAtDisplayResolution(const QRect& globalRect) const;
     QRect normalizedSelection() const;
     QRect captureRectForMode() const;
     QRect globalToLocalRect(const QRect& rect) const;

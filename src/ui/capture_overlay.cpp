@@ -184,6 +184,31 @@ QRect artifactRectToLogicalRect(const QRect& artifactRect, const QSize& artifact
     return QRect(QPoint(x1, y1), QSize(std::max(1, x2 - x1), std::max(1, y2 - y1))).intersected(fullGeometry);
 }
 
+QRect logicalRectToImageRect(const QRect& logicalRect, const QRect& logicalGeometry, const QSize& imageSize) {
+    const QRect clipped = logicalRect.intersected(logicalGeometry);
+    if (!clipped.isValid() || !logicalGeometry.isValid() || imageSize.isEmpty())
+        return {};
+
+    const double scaleX = static_cast<double>(imageSize.width()) / std::max(1, logicalGeometry.width());
+    const double scaleY = static_cast<double>(imageSize.height()) / std::max(1, logicalGeometry.height());
+    const int x1 = static_cast<int>(std::floor((clipped.x() - logicalGeometry.x()) * scaleX));
+    const int y1 = static_cast<int>(std::floor((clipped.y() - logicalGeometry.y()) * scaleY));
+    const int x2 = static_cast<int>(std::ceil((clipped.x() + clipped.width() - logicalGeometry.x()) * scaleX));
+    const int y2 = static_cast<int>(std::ceil((clipped.y() + clipped.height() - logicalGeometry.y()) * scaleY));
+    return QRect(QPoint(x1, y1), QSize(std::max(1, x2 - x1), std::max(1, y2 - y1))).intersected(QRect(QPoint(0, 0), imageSize));
+}
+
+QRect logicalRectToOutputRect(const QRect& logicalRect, const QRect& outputLogicalGeometry, double scaleX, double scaleY) {
+    if (!logicalRect.isValid() || !outputLogicalGeometry.isValid() || scaleX <= 0.0 || scaleY <= 0.0)
+        return {};
+
+    const int x1 = static_cast<int>(std::floor((logicalRect.x() - outputLogicalGeometry.x()) * scaleX));
+    const int y1 = static_cast<int>(std::floor((logicalRect.y() - outputLogicalGeometry.y()) * scaleY));
+    const int x2 = static_cast<int>(std::ceil((logicalRect.x() + logicalRect.width() - outputLogicalGeometry.x()) * scaleX));
+    const int y2 = static_cast<int>(std::ceil((logicalRect.y() + logicalRect.height() - outputLogicalGeometry.y()) * scaleY));
+    return QRect(QPoint(x1, y1), QSize(std::max(1, x2 - x1), std::max(1, y2 - y1)));
+}
+
 QPointF superellipsePoint(const QPointF& center, double radius, double power, double signX, double signY, double theta) {
     const double exponent = 2.0 / std::clamp(power, 1.0, 10.0);
     const double x = std::pow(std::max(0.0, std::cos(theta)), exponent) * radius;
@@ -869,6 +894,46 @@ void CaptureOverlay::relayoutToolbar() {
     m_toolbar->move(std::max(16, (width() - m_toolbar->width()) / 2), 28);
 }
 
+QImage CaptureOverlay::renderDesktopRectAtDisplayResolution(const QRect& globalRect) const {
+    if (!globalRect.isValid() || m_monitorArtifacts.empty())
+        return {};
+
+    double scaleX = 0.0;
+    double scaleY = 0.0;
+    for (const auto& artifact : m_monitorArtifacts) {
+        if (artifact.image.isNull() || !artifact.logicalGeometry.isValid() || !artifact.logicalGeometry.intersects(globalRect))
+            continue;
+
+        scaleX = std::max(scaleX, static_cast<double>(artifact.image.width()) / std::max(1, artifact.logicalGeometry.width()));
+        scaleY = std::max(scaleY, static_cast<double>(artifact.image.height()) / std::max(1, artifact.logicalGeometry.height()));
+    }
+    if (scaleX <= 0.0 || scaleY <= 0.0)
+        return {};
+
+    const QSize outputSize(std::max(1, static_cast<int>(std::ceil(globalRect.width() * scaleX))),
+                           std::max(1, static_cast<int>(std::ceil(globalRect.height() * scaleY))));
+    QImage image(outputSize, QImage::Format_ARGB32_Premultiplied);
+    image.fill(QColor(30, 34, 38));
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+    for (const auto& artifact : m_monitorArtifacts) {
+        if (artifact.image.isNull() || !artifact.logicalGeometry.isValid())
+            continue;
+
+        const QRect logicalPart = globalRect.intersected(artifact.logicalGeometry);
+        if (!logicalPart.isValid())
+            continue;
+
+        const QRect source = logicalRectToImageRect(logicalPart, artifact.logicalGeometry, artifact.image.size());
+        const QRect target = logicalRectToOutputRect(logicalPart, globalRect, scaleX, scaleY).intersected(image.rect());
+        if (source.isValid() && target.isValid())
+            painter.drawImage(target, artifact.image, source);
+    }
+
+    return image;
+}
+
 QImage CaptureOverlay::renderResultImage() const {
     const auto bg = hyprshot::parseWindowBackground(m_windowBackground->currentText().toStdString(), m_defaults.windowBackground);
     if (m_mode == hyprshot::CaptureMode::Window) {
@@ -922,6 +987,13 @@ QImage CaptureOverlay::renderResultImage() const {
     const QRect cap = captureRectForMode();
     if (!cap.isValid())
         return {};
+
+    if (!m_monitorArtifacts.empty()) {
+        const QImage highResolution = renderDesktopRectAtDisplayResolution(QRect(mapToGlobal(cap.topLeft()), cap.size()));
+        if (!highResolution.isNull())
+            return highResolution;
+    }
+
     QImage image(cap.size().expandedTo(QSize(1, 1)), QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
 
