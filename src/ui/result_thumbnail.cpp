@@ -1,18 +1,16 @@
 #include "ui/result_thumbnail.hpp"
 
+#include "ui/clipboard_utils.hpp"
+
 #include <LayerShellQt/Window>
 
 #include <QApplication>
-#include <QClipboard>
 #include <QContextMenuEvent>
 #include <QDrag>
 #include <QEasingCurve>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QLabel>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -149,7 +147,7 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     addAction("Copy image", [this] {
         const auto currentPixmap = m_imageLabel->pixmap();
         if (!currentPixmap.isNull())
-            QGuiApplication::clipboard()->setPixmap(currentPixmap);
+            hyprshot::ui::copyPixmapToClipboard(currentPixmap);
     });
     addAction("Show in folder", [this] {
         if (!m_path.isEmpty())
@@ -349,49 +347,7 @@ void ResultThumbnail::deleteAndClose() {
 }
 
 void ResultThumbnail::restoreClipboard() const {
-    if (m_restoreClipboardPath.isEmpty())
-        return;
-
-    QFile file(m_restoreClipboardPath);
-    if (!file.open(QIODevice::ReadOnly))
-        return;
-
-    const auto doc = QJsonDocument::fromJson(file.readAll());
-    if (!doc.isObject())
-        return;
-
-    const auto obj = doc.object();
-    auto* clipboard = QGuiApplication::clipboard();
-    if (!clipboard)
-        return;
-
-    if (obj.value("empty").toBool(false)) {
-        clipboard->clear();
-        return;
-    }
-
-    auto* mime = new QMimeData;
-    if (obj.contains("text"))
-        mime->setText(obj.value("text").toString());
-    if (obj.contains("html"))
-        mime->setHtml(obj.value("html").toString());
-    if (obj.contains("urls")) {
-        QList<QUrl> urls;
-        for (const auto value : obj.value("urls").toArray())
-            urls.push_back(QUrl(value.toString()));
-        mime->setUrls(urls);
-    }
-    if (obj.contains("color")) {
-        const QColor color(obj.value("color").toString());
-        if (color.isValid())
-            mime->setColorData(color);
-    }
-    if (obj.contains("image")) {
-        QImage image(obj.value("image").toString());
-        if (!image.isNull())
-            mime->setImageData(image);
-    }
-    clipboard->setMimeData(mime);
+    hyprshot::ui::restoreClipboardSnapshot(m_restoreClipboardPath);
 }
 
 void ResultThumbnail::startFileDrag() {

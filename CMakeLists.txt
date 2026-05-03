@@ -41,6 +41,7 @@ target_link_libraries(hyprshot PRIVATE ${HYPR_DEPS_LIBRARIES})
 
 add_executable(hyprshot-ui
   src/ui/main.cpp
+  src/ui/clipboard_utils.cpp
   src/ui/capture_overlay.cpp
   src/ui/result_thumbnail.cpp
   src/shared/config.cpp

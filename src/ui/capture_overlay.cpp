@@ -1,13 +1,12 @@
 #include "ui/capture_overlay.hpp"
 
+#include "ui/clipboard_utils.hpp"
 #include "ui/result_thumbnail.hpp"
 
 #include <LayerShellQt/Window>
 
 #include <QApplication>
 #include <QButtonGroup>
-#include <QClipboard>
-#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFrame>
@@ -19,7 +18,6 @@
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QLabel>
-#include <QMimeData>
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPainter>
@@ -31,7 +29,6 @@
 #include <QSizePolicy>
 #include <QStringList>
 #include <QStyleHints>
-#include <QUrl>
 #include <QVBoxLayout>
 #include <QTimer>
 
@@ -151,77 +148,6 @@ QImage loadRawRgba(const QString& path, int width, int height, bool topDown) {
     QImage image(reinterpret_cast<const uchar*>(bytes.constData()), width, height, width * 4, QImage::Format_RGBA8888);
     QImage copy = image.copy();
     return topDown ? copy : copy.flipped(Qt::Vertical);
-}
-
-QString hyprshotRuntimeFile(const QString& prefix, const QString& suffix) {
-    QDir dir;
-    bool found = false;
-    for (const QString& root : {QStringLiteral("/dev/shm"), QDir::tempPath()}) {
-        QDir candidate(root);
-        if (!candidate.exists())
-            continue;
-        if ((candidate.exists("hyprshot") || candidate.mkpath("hyprshot")) && candidate.cd("hyprshot")) {
-            dir = candidate;
-            found = true;
-            break;
-        }
-    }
-    if (!found)
-        dir = QDir::tempPath();
-    return dir.filePath(QStringLiteral("%1-%2%3").arg(prefix).arg(QDateTime::currentMSecsSinceEpoch()).arg(suffix));
-}
-
-QString saveClipboardSnapshot() {
-    const auto* clipboard = QGuiApplication::clipboard();
-    const auto* mime = clipboard ? clipboard->mimeData() : nullptr;
-    if (!mime)
-        return {};
-
-    QJsonObject root;
-    root.insert("empty", true);
-    if (mime->hasText()) {
-        root.insert("text", mime->text());
-        root.insert("empty", false);
-    }
-    if (mime->hasHtml()) {
-        root.insert("html", mime->html());
-        root.insert("empty", false);
-    }
-    if (mime->hasUrls()) {
-        QJsonArray urls;
-        for (const auto& url : mime->urls())
-            urls.append(url.toString());
-        root.insert("urls", urls);
-        root.insert("empty", false);
-    }
-    if (mime->hasColor()) {
-        const QColor color = qvariant_cast<QColor>(mime->colorData());
-        if (color.isValid()) {
-            root.insert("color", color.name(QColor::HexArgb));
-            root.insert("empty", false);
-        }
-    }
-    if (mime->hasImage()) {
-        QImage image = qvariant_cast<QImage>(mime->imageData());
-        if (image.isNull()) {
-            const QPixmap pixmap = qvariant_cast<QPixmap>(mime->imageData());
-            image = pixmap.toImage();
-        }
-        if (!image.isNull()) {
-            const QString imagePath = hyprshotRuntimeFile("clipboard-image", ".png");
-            if (image.save(imagePath, "PNG")) {
-                root.insert("image", imagePath);
-                root.insert("empty", false);
-            }
-        }
-    }
-
-    const QString path = hyprshotRuntimeFile("clipboard", ".json");
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return {};
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
-    return path;
 }
 
 QRect projectedImageRect(const QRect& logicalRect, const QRect& fullGeometry, const QSize& imageSize) {
@@ -1149,8 +1075,8 @@ void CaptureOverlay::saveImage(const QImage& image) {
     }
 
     if (m_defaults.clipboard) {
-        restoreClipboardPath = saveClipboardSnapshot();
-        QGuiApplication::clipboard()->setImage(image);
+        restoreClipboardPath = hyprshot::ui::saveClipboardSnapshot();
+        hyprshot::ui::copyImageToClipboard(image);
     }
 
     if (m_defaults.showThumbnail)
@@ -1164,7 +1090,7 @@ void CaptureOverlay::saveImage(const QImage& image) {
 void CaptureOverlay::showThumbnail(const QImage& image, const QString& path, const QString& restoreClipboardPath) {
     QString thumbPath = path;
     if (thumbPath.isEmpty()) {
-        thumbPath = hyprshotRuntimeFile("thumbnail", ".png");
+        thumbPath = hyprshot::ui::runtimeFile("thumbnail", ".png");
         image.save(thumbPath, "PNG");
     }
 
