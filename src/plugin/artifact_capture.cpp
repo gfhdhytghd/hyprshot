@@ -25,8 +25,6 @@
 namespace hyprshot {
 namespace {
 
-using RenderWindowFn = void (*)(CHyprRenderer*, PHLWINDOW, PHLMONITOR, const Time::steady_tp&, bool, eRenderPassMode, bool, bool);
-
 Rect toRect(const CBox& box) {
     return {.x = box.x, .y = box.y, .width = box.w, .height = box.h};
 }
@@ -79,18 +77,6 @@ std::string pointerId(const void* ptr) {
     return out.str();
 }
 
-RenderWindowFn renderWindowFunction() {
-    static RenderWindowFn fn = nullptr;
-    static bool resolved = false;
-    if (!resolved) {
-        resolved = true;
-        const auto matches = HyprlandAPI::findFunctionsByName(g_pluginHandle, "CHyprRenderer::renderWindow");
-        if (!matches.empty())
-            fn = reinterpret_cast<RenderWindowFn>(matches[0].address);
-    }
-    return fn;
-}
-
 bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& frozenTime, const std::filesystem::path& path, int& width, int& height) {
     if (!monitor || !monitor->m_activeWorkspace || !g_pHyprRenderer || !g_pHyprOpenGL)
         return false;
@@ -133,17 +119,14 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     if (!window || !monitor || !g_pHyprRenderer || !g_pHyprOpenGL)
         return false;
 
-    const auto renderWindow = renderWindowFunction();
-    if (!renderWindow)
-        return false;
-
     const CBox fullBox = window->getFullWindowBoundingBox();
     const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
     width = std::max(1, static_cast<int>(std::ceil(fullBox.w * scale)));
     height = std::max(1, static_cast<int>(std::ceil(fullBox.h * scale)));
 
     CFramebuffer framebuffer;
-    if (!framebuffer.alloc(width, height, DRM_FORMAT_ABGR8888))
+    const auto drmFormat = monitor->m_output && monitor->m_output->state ? monitor->m_output->state->state().drmFormat : DRM_FORMAT_ABGR8888;
+    if (!framebuffer.alloc(width, height, drmFormat) && !framebuffer.alloc(width, height, DRM_FORMAT_ABGR8888))
         return false;
 
     const auto previousRealPos = window->m_realPosition->value();
@@ -163,7 +146,7 @@ bool renderWindowArtifact(const PHLWINDOW& window,
 
     *window->m_realPosition = Vector2D{-fullBox.x, -fullBox.y};
     *window->m_realSize = previousRealSize;
-    renderWindow(g_pHyprRenderer.get(), window, monitor, frozenTime, decorate, RENDER_PASS_ALL, false, false);
+    g_pHyprRenderer->renderWindow(window, monitor, frozenTime, decorate, RENDER_PASS_ALL, false, false);
     *window->m_realPosition = previousRealPos;
     *window->m_realSize = previousRealSize;
 
