@@ -473,9 +473,17 @@ class WindowAnimationGoalOverride {
 
         m_position = m_window->m_realPosition->value();
         m_size = m_window->m_realSize->value();
-        m_window->m_realPosition->value() = m_window->m_realPosition->goal();
-        m_window->m_realSize->value() = m_window->m_realSize->goal();
         m_active = true;
+        setPositionOffset({});
+    }
+
+    void setPositionOffset(const Vector2D& offset) {
+        if (!m_active || !m_window || !m_window->m_realPosition || !m_window->m_realSize)
+            return;
+
+        m_window->m_realPosition->value() = m_window->m_realPosition->goal() + offset;
+        m_window->m_realSize->value() = m_window->m_realSize->goal();
+        m_window->updateWindowDecos();
     }
 
     ~WindowAnimationGoalOverride() {
@@ -484,6 +492,7 @@ class WindowAnimationGoalOverride {
 
         m_window->m_realPosition->value() = m_position;
         m_window->m_realSize->value() = m_size;
+        m_window->updateWindowDecos();
     }
 
     WindowAnimationGoalOverride(const WindowAnimationGoalOverride&) = delete;
@@ -541,12 +550,17 @@ bool renderWindowArtifact(const PHLWINDOW& window,
 
     WindowAnimationGoalOverride windowGoal(window);
     const CBox fullBox = renderedWindowBox(window, window->getFullWindowBoundingBox());
-    CBox cropBox = fullBox.copy().translate(-monitor->m_position).scale(monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale).round();
-    width = std::max(1, static_cast<int>(cropBox.w));
-    height = std::max(1, static_cast<int>(cropBox.h));
+    CBox sourceCropBox = fullBox.copy().translate(-monitor->m_position).scale(monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale).round();
+    width = std::max(1, static_cast<int>(sourceCropBox.w));
+    height = std::max(1, static_cast<int>(sourceCropBox.h));
     const int framebufferWidth = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.x)));
     const int framebufferHeight = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.y)));
     const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
+    const int targetCropX = width < framebufferWidth ? std::clamp(WINDOW_ARTIFACT_CROP_PADDING, 0, framebufferWidth - width) : 0;
+    const int targetCropY = height < framebufferHeight ? std::clamp(WINDOW_ARTIFACT_CROP_PADDING, 0, framebufferHeight - height) : 0;
+    const Vector2D renderOffset = monitor->m_position + Vector2D{targetCropX / scale, targetCropY / scale} - fullBox.pos();
+    windowGoal.setPositionOffset(renderOffset);
+    CBox renderCropBox = fullBox.copy().translate(renderOffset).translate(-monitor->m_position).scale(scale).round();
 
     CFramebuffer framebuffer;
     const auto drmFormat = monitor->m_output && monitor->m_output->state ? monitor->m_output->state->state().drmFormat : DRM_FORMAT_ABGR8888;
@@ -582,8 +596,8 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     if (!renderIntoFramebuffer())
         return false;
 
-    const int cropX = static_cast<int>(cropBox.x);
-    const int cropY = static_cast<int>(cropBox.y);
+    const int cropX = static_cast<int>(renderCropBox.x);
+    const int cropY = static_cast<int>(renderCropBox.y);
     const int expandedCropX = cropX - WINDOW_ARTIFACT_CROP_PADDING;
     const int expandedCropY = cropY - WINDOW_ARTIFACT_CROP_PADDING;
     auto      readback = readRgbaFramebufferRegion(framebuffer,
@@ -606,7 +620,7 @@ bool renderWindowArtifact(const PHLWINDOW& window,
 
     width = readback.width;
     height = readback.height;
-    artifactBox = CBox{monitor->m_position.x + actualCropX / scale, monitor->m_position.y + actualCropY / scale, width / scale, height / scale};
+    artifactBox = CBox{fullBox.x + (actualCropX - cropX) / scale, fullBox.y + (actualCropY - cropY) / scale, width / scale, height / scale};
 
     repairTopTransparentSeam(readback);
     unpremultiplyAlpha(readback);
