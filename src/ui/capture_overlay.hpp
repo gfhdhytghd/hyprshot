@@ -54,6 +54,7 @@ class CaptureOverlay final : public QMainWindow {
     QRect globalToLocalRect(const QRect& rect) const;
     QRect localToDesktopSourceRect(const QRect& rect) const;
     QPoint cursorLogicalPosition() const;
+    QRect windowFrameGeometry(const WindowArtifact& window) const;
     const WindowArtifact* hoveredWindow() const;
     bool windowCaptureAvailable() const;
     void updateStatus();

@@ -404,7 +404,7 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
     } else if (m_mode == hyprshot::CaptureMode::Window) {
         const auto* window = hoveredWindow();
         for (const auto& candidate : m_windowArtifacts) {
-            const QRect target = globalToLocalRect(candidate.fullGeometry);
+            const QRect target = globalToLocalRect(windowFrameGeometry(candidate));
             painter.setPen(QPen(&candidate == window ? QColor(255, 255, 255, 240) : QColor(255, 255, 255, 110), &candidate == window ? 3 : 1));
             painter.drawRoundedRect(target, 8, 8);
         }
@@ -472,7 +472,7 @@ QRect CaptureOverlay::captureRectForMode() const {
         return normalizedSelection();
     if (m_mode == hyprshot::CaptureMode::Window) {
         if (const auto* window = hoveredWindow())
-            return globalToLocalRect(window->fullGeometry);
+            return globalToLocalRect(windowFrameGeometry(*window));
         return {};
     }
     return rect();
@@ -490,10 +490,14 @@ QPoint CaptureOverlay::cursorLogicalPosition() const {
     return mapToGlobal(mapFromGlobal(QCursor::pos()));
 }
 
+QRect CaptureOverlay::windowFrameGeometry(const WindowArtifact& window) const {
+    return window.visibleGeometry.isValid() ? window.visibleGeometry : window.fullGeometry;
+}
+
 const CaptureOverlay::WindowArtifact* CaptureOverlay::hoveredWindow() const {
     const QPoint global = cursorLogicalPosition();
     for (auto it = m_windowArtifacts.rbegin(); it != m_windowArtifacts.rend(); ++it) {
-        if (it->fullGeometry.contains(global) || it->visibleGeometry.contains(global))
+        if (windowFrameGeometry(*it).contains(global))
             return &*it;
     }
     return nullptr;

@@ -44,35 +44,57 @@ std::filesystem::path artifactRoot(const std::string& sessionId) {
     return root;
 }
 
-bool writeRgbaFramebuffer(CFramebuffer& framebuffer, const std::filesystem::path& path, bool flipY) {
-    const int width = static_cast<int>(std::lround(framebuffer.m_size.x));
-    const int height = static_cast<int>(std::lround(framebuffer.m_size.y));
-    if (width <= 0 || height <= 0)
+bool writeRgbaFramebufferRegion(CFramebuffer& framebuffer, const std::filesystem::path& path, int cropX, int cropTopY, int cropWidth, int cropHeight) {
+    const int framebufferWidth = static_cast<int>(std::lround(framebuffer.m_size.x));
+    const int framebufferHeight = static_cast<int>(std::lround(framebuffer.m_size.y));
+    if (framebufferWidth <= 0 || framebufferHeight <= 0 || cropWidth <= 0 || cropHeight <= 0)
         return false;
 
-    std::vector<unsigned char> bottomUp(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U);
-    std::vector<unsigned char> topDown(bottomUp.size());
+    std::vector<unsigned char> topDown(static_cast<std::size_t>(cropWidth) * static_cast<std::size_t>(cropHeight) * 4U, 0);
+    const int srcX = std::clamp(cropX, 0, framebufferWidth);
+    const int srcTopY = std::clamp(cropTopY, 0, framebufferHeight);
+    const int srcRight = std::clamp(cropX + cropWidth, 0, framebufferWidth);
+    const int srcBottom = std::clamp(cropTopY + cropHeight, 0, framebufferHeight);
+    const int srcWidth = srcRight - srcX;
+    const int srcHeight = srcBottom - srcTopY;
 
-    GLint previousReadFramebuffer = 0;
-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer.getFBID());
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, bottomUp.data());
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFramebuffer);
+    if (srcWidth > 0 && srcHeight > 0) {
+        std::vector<unsigned char> bottomUp(static_cast<std::size_t>(srcWidth) * static_cast<std::size_t>(srcHeight) * 4U);
+        GLint previousReadFramebuffer = 0;
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer.getFBID());
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(srcX, framebufferHeight - srcTopY - srcHeight, srcWidth, srcHeight, GL_RGBA, GL_UNSIGNED_BYTE, bottomUp.data());
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFramebuffer);
 
-    if (flipY) {
-        for (int y = 0; y < height; ++y) {
-            const auto* src = bottomUp.data() + static_cast<std::size_t>(height - 1 - y) * width * 4U;
-            auto* dst = topDown.data() + static_cast<std::size_t>(y) * width * 4U;
-            std::copy(src, src + static_cast<std::size_t>(width) * 4U, dst);
+        const int dstX = srcX - cropX;
+        const int dstY = srcTopY - cropTopY;
+        for (int y = 0; y < srcHeight; ++y) {
+            const auto* src = bottomUp.data() + static_cast<std::size_t>(srcHeight - 1 - y) * srcWidth * 4U;
+            auto* dst = topDown.data() + (static_cast<std::size_t>(dstY + y) * cropWidth + dstX) * 4U;
+            std::copy(src, src + static_cast<std::size_t>(srcWidth) * 4U, dst);
         }
-    } else {
-        topDown = std::move(bottomUp);
     }
 
     std::ofstream out(path, std::ios::binary);
     out.write(reinterpret_cast<const char*>(topDown.data()), static_cast<std::streamsize>(topDown.size()));
     return out.good();
+}
+
+bool writeRgbaFramebuffer(CFramebuffer& framebuffer, const std::filesystem::path& path) {
+    return writeRgbaFramebufferRegion(framebuffer,
+                                      path,
+                                      0,
+                                      0,
+                                      static_cast<int>(std::lround(framebuffer.m_size.x)),
+                                      static_cast<int>(std::lround(framebuffer.m_size.y)));
+}
+
+CBox renderedWindowBox(const PHLWINDOW& window, CBox box) {
+    if (window->m_workspace && !window->m_pinned)
+        box.translate(window->m_workspace->m_renderOffset->value());
+    box.translate(window->m_floatingOffset);
+    return box;
 }
 
 std::string pointerId(const void* ptr) {
@@ -110,7 +132,7 @@ bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& fro
     g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
     g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
 
-    return writeRgbaFramebuffer(framebuffer, path, true);
+    return writeRgbaFramebuffer(framebuffer, path);
 }
 
 bool renderWindowArtifact(const PHLWINDOW& window,
@@ -123,22 +145,23 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     if (!window || !monitor || !g_pHyprRenderer || !g_pHyprOpenGL)
         return false;
 
-    const CBox fullBox = window->getFullWindowBoundingBox();
-    const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
-    width = std::max(1, static_cast<int>(std::ceil(fullBox.w * scale)));
-    height = std::max(1, static_cast<int>(std::ceil(fullBox.h * scale)));
+    const CBox fullBox = renderedWindowBox(window, window->getFullWindowBoundingBox());
+    CBox cropBox = fullBox.copy().translate(-monitor->m_position).scale(monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale).round();
+    width = std::max(1, static_cast<int>(cropBox.w));
+    height = std::max(1, static_cast<int>(cropBox.h));
+    const int framebufferWidth = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.x)));
+    const int framebufferHeight = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.y)));
 
     CFramebuffer framebuffer;
     const auto drmFormat = monitor->m_output && monitor->m_output->state ? monitor->m_output->state->state().drmFormat : DRM_FORMAT_ABGR8888;
-    if (!framebuffer.alloc(width, height, DRM_FORMAT_ABGR8888) && !framebuffer.alloc(width, height, drmFormat))
+    if (!framebuffer.alloc(framebufferWidth, framebufferHeight, DRM_FORMAT_ABGR8888) && !framebuffer.alloc(framebufferWidth, framebufferHeight, drmFormat))
         return false;
 
-    const auto previousRealPos = window->m_realPosition->value();
-    const auto previousRealSize = window->m_realSize->value();
     const bool previousBlockFeedback = g_pHyprRenderer->m_bBlockSurfaceFeedback;
     const bool previousBlockShader = g_pHyprOpenGL->m_renderData.blockScreenShader;
+    const bool previousRenderingSnapshot = g_pHyprRenderer->m_bRenderingSnapshot;
 
-    CRegion fakeDamage{0, 0, width, height};
+    CRegion fakeDamage{0, 0, framebufferWidth, framebufferHeight};
     g_pHyprRenderer->makeEGLCurrent();
     g_pHyprRenderer->m_bBlockSurfaceFeedback = true;
     if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &framebuffer)) {
@@ -146,20 +169,17 @@ bool renderWindowArtifact(const PHLWINDOW& window,
         return false;
     }
 
+    g_pHyprRenderer->m_bRenderingSnapshot = true;
     g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 0.0});
-
-    window->m_realPosition->setValueAndWarp(Vector2D{-fullBox.x, -fullBox.y});
-    window->m_realSize->setValueAndWarp(previousRealSize);
     g_pHyprRenderer->renderWindow(window, monitor, frozenTime, decorate, RENDER_PASS_ALL, false, false);
-    window->m_realPosition->setValueAndWarp(previousRealPos);
-    window->m_realSize->setValueAndWarp(previousRealSize);
+    g_pHyprRenderer->m_bRenderingSnapshot = previousRenderingSnapshot;
 
     g_pHyprOpenGL->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
     g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
     g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
 
-    return writeRgbaFramebuffer(framebuffer, path, false);
+    return writeRgbaFramebufferRegion(framebuffer, path, static_cast<int>(cropBox.x), static_cast<int>(cropBox.y), width, height);
 }
 
 } // namespace
@@ -192,7 +212,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         if (!window || !window->m_isMapped || window->isHidden() || !window->m_workspace || !window->m_workspace->isVisible())
             continue;
 
-        const CBox fullBox = window->getFullWindowBoundingBox();
+        const CBox fullBox = renderedWindowBox(window, window->getFullWindowBoundingBox());
         const Rect full = toRect(fullBox);
         auto monitor = window->m_monitor.lock();
         if (!monitor)
@@ -208,7 +228,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         info.address = "0x" + pointerId(window.get());
         info.title = window->m_title;
         info.appClass = window->m_class;
-        info.visibleGeometry = toRect(window->getWindowMainSurfaceBox());
+        info.visibleGeometry = toRect(renderedWindowBox(window, window->getWindowMainSurfaceBox()));
         info.fullGeometry = full;
         info.zIndex = z++;
         const auto path = root / ("window-" + pointerId(window.get()) + ".rgba");
