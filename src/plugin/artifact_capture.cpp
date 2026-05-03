@@ -32,6 +32,15 @@ struct RgbaReadback {
     int                        height = 0;
 };
 
+struct PixelBounds {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
+constexpr int WINDOW_ARTIFACT_CROP_PADDING = 128;
+
 Rect toRect(const CBox& box) {
     return {.x = box.x, .y = box.y, .width = box.w, .height = box.h};
 }
@@ -57,31 +66,56 @@ bool writeRgbaFile(const std::filesystem::path& path, const std::vector<unsigned
     return out.good();
 }
 
-bool nonZeroPixel(const std::vector<unsigned char>& pixels, int width, int x, int y) {
-    const auto i = (static_cast<std::size_t>(y) * width + x) * 4U;
-    return pixels[i] != 0 || pixels[i + 1] != 0 || pixels[i + 2] != 0 || pixels[i + 3] != 0;
-}
-
 unsigned char alphaAt(const RgbaReadback& readback, int x, int y) {
     const auto i = (static_cast<std::size_t>(y) * readback.width + x) * 4U + 3U;
     return readback.pixels[i];
 }
 
-bool findTopNonZeroRow(const RgbaReadback& readback, int& offsetY) {
-    offsetY = 0;
+bool findAlphaBounds(const RgbaReadback& readback, PixelBounds& bounds) {
     if (readback.width <= 0 || readback.height <= 0 || readback.pixels.empty())
         return false;
 
+    int minX = readback.width;
+    int minY = readback.height;
+    int maxX = -1;
+    int maxY = -1;
+
     for (int y = 0; y < readback.height; ++y) {
         for (int x = 0; x < readback.width; ++x) {
-            if (nonZeroPixel(readback.pixels, readback.width, x, y)) {
-                offsetY = y;
-                return true;
-            }
+            if (alphaAt(readback, x, y) == 0)
+                continue;
+
+            minX = std::min(minX, x);
+            minY = std::min(minY, y);
+            maxX = std::max(maxX, x);
+            maxY = std::max(maxY, y);
         }
     }
 
-    return false;
+    if (maxX < minX || maxY < minY)
+        return false;
+
+    bounds = {.x = minX, .y = minY, .width = maxX - minX + 1, .height = maxY - minY + 1};
+    return true;
+}
+
+RgbaReadback cropReadback(const RgbaReadback& readback, const PixelBounds& bounds) {
+    if (bounds.width <= 0 || bounds.height <= 0 || readback.pixels.empty())
+        return {};
+
+    RgbaReadback cropped;
+    cropped.width = bounds.width;
+    cropped.height = bounds.height;
+    cropped.pixels.assign(static_cast<std::size_t>(bounds.width) * static_cast<std::size_t>(bounds.height) * 4U, 0);
+
+    const std::size_t rowBytes = static_cast<std::size_t>(bounds.width) * 4U;
+    for (int y = 0; y < bounds.height; ++y) {
+        const auto* src = readback.pixels.data() + (static_cast<std::size_t>(bounds.y + y) * readback.width + bounds.x) * 4U;
+        auto*       dst = cropped.pixels.data() + static_cast<std::size_t>(y) * rowBytes;
+        std::copy(src, src + rowBytes, dst);
+    }
+
+    return cropped;
 }
 
 RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int cropTopY, int cropWidth, int cropHeight) {
@@ -120,28 +154,6 @@ RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int
     }
 
     return readback;
-}
-
-void shiftReadbackUpAndFillTail(CFramebuffer& framebuffer, int cropX, int cropTopY, RgbaReadback& readback, int offsetY) {
-    if (offsetY <= 0 || offsetY >= readback.height || readback.pixels.empty())
-        return;
-
-    std::vector<unsigned char> shifted(readback.pixels.size(), 0);
-    const std::size_t rowBytes = static_cast<std::size_t>(readback.width) * 4U;
-    for (int y = 0; y < readback.height - offsetY; ++y) {
-        const auto* src = readback.pixels.data() + static_cast<std::size_t>(y + offsetY) * rowBytes;
-        auto*       dst = shifted.data() + static_cast<std::size_t>(y) * rowBytes;
-        std::copy(src, src + rowBytes, dst);
-    }
-
-    auto tail = readRgbaFramebufferRegion(framebuffer, cropX, cropTopY + readback.height, readback.width, offsetY);
-    if (!tail.pixels.empty() && tail.width == readback.width && tail.height == offsetY) {
-        const auto* src = tail.pixels.data();
-        auto*       dst = shifted.data() + static_cast<std::size_t>(readback.height - offsetY) * rowBytes;
-        std::copy(src, src + static_cast<std::size_t>(offsetY) * rowBytes, dst);
-    }
-
-    readback.pixels = std::move(shifted);
 }
 
 void repairTopTransparentSeam(RgbaReadback& readback) {
@@ -274,10 +286,9 @@ bool renderWindowArtifact(const PHLWINDOW& window,
                           const std::filesystem::path& path,
                           int& width,
                           int& height,
-                          int& offsetY) {
+                          CBox& artifactBox) {
     if (!window || !monitor || !g_pHyprRenderer || !g_pHyprOpenGL)
         return false;
-    offsetY = 0;
 
     const CBox fullBox = renderedWindowBox(window, window->getFullWindowBoundingBox());
     CBox cropBox = fullBox.copy().translate(-monitor->m_position).scale(monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale).round();
@@ -296,16 +307,11 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     const bool previousBlockShader = g_pHyprOpenGL->m_renderData.blockScreenShader;
     const bool previousRenderingSnapshot = g_pHyprRenderer->m_bRenderingSnapshot;
 
-    const auto renderIntoFramebuffer = [&](double monitorYOffset) {
-        const auto originalMonitorPosition = monitor->m_position;
-        if (monitorYOffset != 0.0)
-            monitor->m_position.y = originalMonitorPosition.y + monitorYOffset;
-
+    const auto renderIntoFramebuffer = [&]() {
         CRegion fakeDamage{0, 0, framebufferWidth, framebufferHeight};
         g_pHyprRenderer->makeEGLCurrent();
         g_pHyprRenderer->m_bBlockSurfaceFeedback = true;
         if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &framebuffer)) {
-            monitor->m_position = originalMonitorPosition;
             g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
             return false;
         }
@@ -319,29 +325,37 @@ bool renderWindowArtifact(const PHLWINDOW& window,
         g_pHyprRenderer->endRender();
         g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
         g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
-        monitor->m_position = originalMonitorPosition;
         return true;
     };
 
-    if (!renderIntoFramebuffer(0.0))
+    if (!renderIntoFramebuffer())
         return false;
 
     const int cropX = static_cast<int>(cropBox.x);
     const int cropY = static_cast<int>(cropBox.y);
-    auto      readback = readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height);
+    const int expandedCropX = cropX - WINDOW_ARTIFACT_CROP_PADDING;
+    const int expandedCropY = cropY - WINDOW_ARTIFACT_CROP_PADDING;
+    auto      readback = readRgbaFramebufferRegion(framebuffer,
+                                                   expandedCropX,
+                                                   expandedCropY,
+                                                   width + WINDOW_ARTIFACT_CROP_PADDING * 2,
+                                                   height + WINDOW_ARTIFACT_CROP_PADDING * 2);
     if (readback.pixels.empty())
         return false;
 
-    if (findTopNonZeroRow(readback, offsetY) && offsetY > 0) {
-        if (renderIntoFramebuffer(offsetY / scale)) {
-            readback = readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height);
-            int residualOffsetY = 0;
-            if (findTopNonZeroRow(readback, residualOffsetY))
-                offsetY = residualOffsetY;
-        }
-        if (offsetY > 0)
-            shiftReadbackUpAndFillTail(framebuffer, cropX, cropY, readback, offsetY);
-    }
+    int actualCropX = cropX;
+    int actualCropY = cropY;
+    PixelBounds bounds;
+    if (findAlphaBounds(readback, bounds)) {
+        readback = cropReadback(readback, bounds);
+        actualCropX = expandedCropX + bounds.x;
+        actualCropY = expandedCropY + bounds.y;
+    } else
+        readback = readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height);
+
+    width = readback.width;
+    height = readback.height;
+    artifactBox = CBox{monitor->m_position.x + actualCropX / scale, monitor->m_position.y + actualCropY / scale, width / scale, height / scale};
 
     repairTopTransparentSeam(readback);
     unpremultiplyAlpha(readback);
@@ -397,11 +411,10 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         info.appClass = window->m_class;
         info.zIndex = z++;
         const auto path = root / ("window-" + pointerId(window.get()) + ".rgba");
-        int offsetY = 0;
-        if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, offsetY)) {
+        CBox artifactBox;
+        if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, artifactBox)) {
             info.artifactPath = path.string();
-            const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
-            info.fullGeometry = toRect(CBox{fullBox.x, fullBox.y, info.artifactWidth / scale, info.artifactHeight / scale});
+            info.fullGeometry = toRect(artifactBox);
         } else
             info.fullGeometry = full;
         info.visibleGeometry = toRect(renderedWindowBox(window, window->getWindowMainSurfaceBox()));
