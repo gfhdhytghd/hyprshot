@@ -769,10 +769,6 @@ void CaptureOverlay::buildToolbar() {
     m_windowBackground->setCurrentText(qString(hyprshot::toString(m_defaults.windowBackground)));
     layout->addWidget(m_windowBackground);
 
-    auto* capture = new QPushButton("Capture", m_toolbar);
-    layout->addWidget(capture);
-    connect(capture, &QPushButton::clicked, this, &CaptureOverlay::finishCapture);
-
     auto* cancel = new QPushButton("Cancel", m_toolbar);
     layout->addWidget(cancel);
     connect(cancel, &QPushButton::clicked, this, &CaptureOverlay::cancelCapture);
@@ -780,14 +776,37 @@ void CaptureOverlay::buildToolbar() {
     m_status = new QLabel(m_toolbar);
     m_status->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     layout->addWidget(m_status);
+    updateToolbarControlsForMode();
     updateStatus();
     relayoutToolbar();
 }
 
 void CaptureOverlay::setMode(hyprshot::CaptureMode mode) {
+    if (m_fullscreenScope)
+        m_fullscreenScope->hidePopup();
+    if (m_windowBackground)
+        m_windowBackground->hidePopup();
+
     m_mode = mode;
+    updateToolbarControlsForMode();
     updateStatus();
     update();
+}
+
+void CaptureOverlay::updateToolbarControlsForMode() {
+    if (m_fullscreenScope) {
+        if (m_mode != hyprshot::CaptureMode::Fullscreen)
+            m_fullscreenScope->hidePopup();
+        m_fullscreenScope->setVisible(m_mode == hyprshot::CaptureMode::Fullscreen);
+    }
+
+    if (m_windowBackground) {
+        if (m_mode != hyprshot::CaptureMode::Window)
+            m_windowBackground->hidePopup();
+        m_windowBackground->setVisible(m_mode == hyprshot::CaptureMode::Window);
+    }
+
+    relayoutToolbar();
 }
 
 void CaptureOverlay::paintEvent(QPaintEvent*) {

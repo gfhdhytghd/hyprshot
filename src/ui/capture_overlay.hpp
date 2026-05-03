@@ -51,6 +51,7 @@ class CaptureOverlay final : public QMainWindow {
     void parseSessionJson(const QString& json);
     void captureScreensBeforeOverlay();
     void setMode(hyprshot::CaptureMode mode);
+    void updateToolbarControlsForMode();
     void finishCapture();
     void cancelCapture();
     void saveImage(const QImage& image);
