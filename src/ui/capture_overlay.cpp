@@ -250,10 +250,10 @@ CaptureOverlay::CaptureOverlay(hyprshot::CaptureDefaults defaults, bool quick, Q
         layerWindow->setLayer(LayerShellQt::Window::LayerOverlay);
         layerWindow->setAnchors(LayerShellQt::Window::Anchors{LayerShellQt::Window::AnchorTop} | LayerShellQt::Window::AnchorBottom |
                                 LayerShellQt::Window::AnchorLeft | LayerShellQt::Window::AnchorRight);
-        layerWindow->setExclusiveZone(0);
+        layerWindow->setExclusiveZone(-1);
         layerWindow->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityOnDemand);
         layerWindow->setActivateOnShow(true);
-        layerWindow->setDesiredSize(size());
+        layerWindow->setDesiredSize(QSize(0, 0));
     }
     if (m_quick)
         QTimer::singleShot(0, this, &CaptureOverlay::finishCapture);
