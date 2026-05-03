@@ -35,6 +35,7 @@ namespace {
 
 constexpr int kThumbnailMaxWidth = 180;
 constexpr int kThumbnailMaxHeight = 120;
+constexpr int kThumbnailScreenMargin = 24;
 constexpr double kSwipeCloseThreshold = 120.0;
 constexpr double kSwipeDeleteThreshold = 90.0;
 
@@ -119,14 +120,15 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     const QColor fg = palette.color(QPalette::WindowText);
     const QColor highlight = palette.color(QPalette::Highlight);
     setStyleSheet(QStringLiteral(
-                      "#thumbnail { background: rgba(%1,%2,%3,220); border: 1px solid rgba(%4,%5,%6,95); border-radius: 8px; }"
+                      "#thumbnail { background: transparent; border: none; }"
+                      "#thumbnailImage { background: rgba(%1,%2,%3,220); border: 1px solid rgba(%4,%5,%6,95); border-radius: 8px; }"
                       "#thumbnailMenu { background: rgba(%1,%2,%3,242); border: 1px solid rgba(%4,%5,%6,90); border-radius: 7px; }"
                       "#thumbnailMenu QPushButton { color: rgba(%4,%5,%6,255); background: transparent; padding: 7px 10px; border: none; border-radius: 5px; text-align: left; }"
                       "#thumbnailMenu QPushButton:hover { background: rgba(%7,%8,%9,75); }")
                       .arg(bg.red()).arg(bg.green()).arg(bg.blue()).arg(fg.red()).arg(fg.green()).arg(fg.blue()).arg(highlight.red()).arg(highlight.green()).arg(highlight.blue()));
 
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(6);
 
     m_menuPanel = new QWidget(this);
@@ -156,25 +158,26 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     addAction("Delete", [this] { deleteAndClose(); });
     addAction("Close", [this] { close(); });
     m_menuPanel->hide();
-    layout->addWidget(m_menuPanel);
+    layout->addWidget(m_menuPanel, 0, Qt::AlignRight);
 
     const QPixmap scaledPixmap = pixmap.scaled(kThumbnailMaxWidth, kThumbnailMaxHeight, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     m_card = new QWidget(this);
     m_card->setObjectName("thumbnailImageCard");
-    m_card->setFixedSize(scaledPixmap.size().expandedTo(QSize(1, 1)));
-    m_card->setAttribute(Qt::WA_StyledBackground);
+    m_card->setFixedSize((scaledPixmap.size() + QSize(kThumbnailScreenMargin, kThumbnailScreenMargin)).expandedTo(QSize(1, 1)));
 
     m_swipeBackdrop = new SwipeBackdrop(m_card);
-    m_swipeBackdrop->setGeometry(QRect(QPoint(0, 0), m_card->size()));
+    m_swipeBackdrop->setGeometry(QRect(QPoint(0, 0), scaledPixmap.size()));
     m_swipeBackdrop->lower();
 
     m_imageLabel = new QLabel(m_card);
+    m_imageLabel->setObjectName("thumbnailImage");
+    m_imageLabel->setAttribute(Qt::WA_StyledBackground);
     m_imageLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
     m_imageLabel->setPixmap(scaledPixmap);
     m_imageLabel->setGeometry(QRect(QPoint(0, 0), scaledPixmap.size()));
     m_imageOrigin = m_imageLabel->pos();
     m_imageLabel->raise();
-    layout->addWidget(m_card);
+    layout->addWidget(m_card, 0, Qt::AlignRight);
 
     adjustSize();
     winId();
@@ -182,7 +185,7 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
         layerWindow->setScope("hyprshot-thumbnail");
         layerWindow->setLayer(LayerShellQt::Window::LayerOverlay);
         layerWindow->setAnchors(LayerShellQt::Window::Anchors{LayerShellQt::Window::AnchorRight} | LayerShellQt::Window::AnchorBottom);
-        layerWindow->setMargins(QMargins(0, 0, 24, 24));
+        layerWindow->setMargins(QMargins(0, 0, 0, 0));
         layerWindow->setExclusiveZone(0);
         layerWindow->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityNone);
         layerWindow->setActivateOnShow(false);
@@ -242,6 +245,8 @@ void ResultThumbnail::wheelEvent(QWheelEvent* event) {
     m_closeTimer.stop();
     m_swipeResetTimer.stop();
     m_swipeOffset += delta;
+    const int imageWidth = m_imageLabel ? m_imageLabel->width() : m_card->width();
+    const int imageHeight = m_imageLabel ? m_imageLabel->height() : m_card->height();
 
     if (std::abs(m_swipeOffset.x()) >= std::abs(m_swipeOffset.y())) {
         m_swipeOffset.setX(std::clamp(m_swipeOffset.x(), 0.0, static_cast<double>(m_card->width() + 80)));
@@ -253,9 +258,9 @@ void ResultThumbnail::wheelEvent(QWheelEvent* event) {
     updateSwipeVisual();
     event->accept();
 
-    if (m_swipeOffset.x() >= std::min(kSwipeCloseThreshold, m_card->width() * 0.55))
+    if (m_swipeOffset.x() >= std::min(kSwipeCloseThreshold, imageWidth * 0.55))
         animateSwipeOut(SwipeAction::Close);
-    else if (m_swipeOffset.y() >= std::min(kSwipeDeleteThreshold, m_card->height() * 0.55))
+    else if (m_swipeOffset.y() >= std::min(kSwipeDeleteThreshold, imageHeight * 0.55))
         animateSwipeOut(SwipeAction::Delete);
     else
         m_swipeResetTimer.start(180);
@@ -290,7 +295,7 @@ void ResultThumbnail::updateSwipeVisual() {
         return;
 
     m_imageLabel->move(m_imageOrigin + QPoint(static_cast<int>(std::round(m_swipeOffset.x())), static_cast<int>(std::round(m_swipeOffset.y()))));
-    m_swipeBackdrop->setDeleteProgress(m_swipeOffset.y() / std::min(kSwipeDeleteThreshold, m_card->height() * 0.55));
+    m_swipeBackdrop->setDeleteProgress(m_swipeOffset.y() / std::min(kSwipeDeleteThreshold, m_imageLabel->height() * 0.55));
 }
 
 void ResultThumbnail::resetSwipe() {
