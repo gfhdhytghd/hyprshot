@@ -210,13 +210,6 @@ void repairMissingWindowTail(QImage& image, const QRect& fullGeometry, const QRe
     if (tailStart < 0 || visibleImageRect.bottom() - tailStart + 1 < 8)
         return;
 
-    QImage fullPatch(image.size(), QImage::Format_RGBA8888);
-    fullPatch.fill(Qt::transparent);
-    {
-        QPainter patchPainter(&fullPatch);
-        patchPainter.drawImage(fullPatch.rect(), desktopImage, QRect(fullGeometry.topLeft() - desktopGeometry.topLeft(), fullGeometry.size()));
-    }
-
     QImage visiblePatch(image.size(), QImage::Format_RGBA8888);
     visiblePatch.fill(Qt::transparent);
     {
@@ -224,17 +217,16 @@ void repairMissingWindowTail(QImage& image, const QRect& fullGeometry, const QRe
         patchPainter.drawImage(visibleImageRect, desktopImage, QRect(visibleGeometry.topLeft() - desktopGeometry.topLeft(), visibleGeometry.size()));
     }
 
-    const QRect fullTailRect(0, tailStart, image.width(), image.height() - tailStart);
-    for (int y = fullTailRect.top(); y <= fullTailRect.bottom(); ++y) {
-        for (int x = fullTailRect.left(); x <= fullTailRect.right(); ++x) {
+    const QRect visibleTailRect(visibleImageRect.left(), tailStart, visibleImageRect.width(), visibleImageRect.bottom() - tailStart + 1);
+    for (int y = visibleTailRect.top(); y <= visibleTailRect.bottom(); ++y) {
+        for (int x = visibleTailRect.left(); x <= visibleTailRect.right(); ++x) {
             auto* dst = image.scanLine(y) + static_cast<qsizetype>(x) * 4;
             if (dst[3] != 0)
                 continue;
-            const QImage& patch = visibleImageRect.contains(x, y) ? visiblePatch : fullPatch;
-            const auto* src = patch.constScanLine(y) + static_cast<qsizetype>(x) * 4;
+            const auto* src = visiblePatch.constScanLine(y) + static_cast<qsizetype>(x) * 4;
             if (src[3] == 0)
                 continue;
-            copyPatchPixel(image, patch, x, y);
+            copyPatchPixel(image, visiblePatch, x, y);
         }
     }
 }
