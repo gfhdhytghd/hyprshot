@@ -29,7 +29,6 @@
 #include <QPushButton>
 #include <QScreen>
 #include <QSizePolicy>
-#include <QStandardPaths>
 #include <QStringList>
 #include <QStyleHints>
 #include <QUrl>
@@ -155,11 +154,21 @@ QImage loadRawRgba(const QString& path, int width, int height, bool topDown) {
 }
 
 QString hyprshotRuntimeFile(const QString& prefix, const QString& suffix) {
-    const auto runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-    QDir dir(runtimeDir.isEmpty() ? QDir::tempPath() : runtimeDir);
-    if (!dir.exists("hyprshot"))
-        dir.mkpath("hyprshot");
-    return dir.filePath(QStringLiteral("hyprshot/%1-%2%3").arg(prefix).arg(QDateTime::currentMSecsSinceEpoch()).arg(suffix));
+    QDir dir;
+    bool found = false;
+    for (const QString& root : {QStringLiteral("/dev/shm"), QDir::tempPath()}) {
+        QDir candidate(root);
+        if (!candidate.exists())
+            continue;
+        if ((candidate.exists("hyprshot") || candidate.mkpath("hyprshot")) && candidate.cd("hyprshot")) {
+            dir = candidate;
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+        dir = QDir::tempPath();
+    return dir.filePath(QStringLiteral("%1-%2%3").arg(prefix).arg(QDateTime::currentMSecsSinceEpoch()).arg(suffix));
 }
 
 QString saveClipboardSnapshot() {

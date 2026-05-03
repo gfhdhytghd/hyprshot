@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -79,8 +80,15 @@ bool intersects(const Rect& a, const Rect& b) {
 }
 
 std::filesystem::path artifactRoot(const std::string& sessionId) {
-    const char* runtime = std::getenv("XDG_RUNTIME_DIR");
-    auto root = std::filesystem::path(runtime && *runtime ? runtime : "/tmp") / "hyprshot" / sessionId;
+    for (const auto& base : {std::filesystem::path{"/dev/shm"}, std::filesystem::path{"/tmp"}}) {
+        std::error_code ec;
+        auto root = base / "hyprshot" / sessionId;
+        std::filesystem::create_directories(root, ec);
+        if (!ec)
+            return root;
+    }
+
+    auto root = std::filesystem::temp_directory_path() / "hyprshot" / sessionId;
     std::filesystem::create_directories(root);
     return root;
 }
