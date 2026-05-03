@@ -556,8 +556,8 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     const int framebufferWidth = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.x)));
     const int framebufferHeight = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.y)));
     const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
-    const int targetCropX = width < framebufferWidth ? std::clamp(WINDOW_ARTIFACT_CROP_PADDING, 0, framebufferWidth - width) : 0;
-    const int targetCropY = height < framebufferHeight ? std::clamp(WINDOW_ARTIFACT_CROP_PADDING, 0, framebufferHeight - height) : 0;
+    const int targetCropX = width < framebufferWidth ? (framebufferWidth - width) / 2 : 0;
+    const int targetCropY = height < framebufferHeight ? (framebufferHeight - height) / 2 : 0;
     const Vector2D renderOffset = monitor->m_position + Vector2D{targetCropX / scale, targetCropY / scale} - fullBox.pos();
     windowGoal.setPositionOffset(renderOffset);
     CBox renderCropBox = fullBox.copy().translate(renderOffset).translate(-monitor->m_position).scale(scale).round();
@@ -598,13 +598,7 @@ bool renderWindowArtifact(const PHLWINDOW& window,
 
     const int cropX = static_cast<int>(renderCropBox.x);
     const int cropY = static_cast<int>(renderCropBox.y);
-    const int expandedCropX = cropX - WINDOW_ARTIFACT_CROP_PADDING;
-    const int expandedCropY = cropY - WINDOW_ARTIFACT_CROP_PADDING;
-    auto      readback = readRgbaFramebufferRegion(framebuffer,
-                                                   expandedCropX,
-                                                   expandedCropY,
-                                                   width + WINDOW_ARTIFACT_CROP_PADDING * 2,
-                                                   height + WINDOW_ARTIFACT_CROP_PADDING * 2);
+    auto      readback = readRgbaFramebufferRegion(framebuffer, 0, 0, framebufferWidth, framebufferHeight);
     if (readback.pixels.empty())
         return false;
 
@@ -613,8 +607,8 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     PixelBounds bounds;
     if (findAlphaBounds(readback, bounds)) {
         readback = cropReadback(readback, bounds);
-        actualCropX = expandedCropX + bounds.x;
-        actualCropY = expandedCropY + bounds.y;
+        actualCropX = bounds.x;
+        actualCropY = bounds.y;
     } else
         readback = readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height);
 
