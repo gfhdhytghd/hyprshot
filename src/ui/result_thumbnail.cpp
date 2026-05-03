@@ -135,9 +135,17 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     auto* menuLayout = new QVBoxLayout(m_menuPanel);
     menuLayout->setContentsMargins(6, 6, 6, 6);
     menuLayout->setSpacing(2);
-    const auto addAction = [&](const QString& text, auto&& callback) {
+    const auto addAction = [&](const QString& text, auto callback) {
         auto* buttonWidget = new QPushButton(text, m_menuPanel);
-        connect(buttonWidget, &QPushButton::clicked, this, std::forward<decltype(callback)>(callback));
+        connect(buttonWidget, &QPushButton::clicked, this, [this, callback = std::move(callback)]() mutable {
+            if (m_menuPanel && m_menuPanel->isVisible()) {
+                m_menuPanel->hide();
+                applyLayerSize();
+                if (m_closeTimer.interval() > 0)
+                    m_closeTimer.start();
+            }
+            callback();
+        });
         menuLayout->addWidget(buttonWidget);
     };
     addAction("Open", [this] {
