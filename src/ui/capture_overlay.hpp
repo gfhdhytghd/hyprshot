@@ -10,7 +10,6 @@
 #include <vector>
 
 class QButtonGroup;
-class QCheckBox;
 class QLabel;
 class InlineSelect;
 
@@ -53,6 +52,8 @@ class CaptureOverlay final : public QMainWindow {
     QRect normalizedSelection() const;
     QRect captureRectForMode() const;
     const WindowArtifact* hoveredWindow() const;
+    bool windowCaptureAvailable() const;
+    void updateStatus();
     void showThumbnail(const QImage& image, const QString& path);
 
     hyprshot::CaptureDefaults m_defaults;
@@ -65,9 +66,6 @@ class CaptureOverlay final : public QMainWindow {
     QWidget*     m_toolbar = nullptr;
     InlineSelect* m_fullscreenScope = nullptr;
     InlineSelect* m_windowBackground = nullptr;
-    QCheckBox*   m_save = nullptr;
-    QCheckBox*   m_clipboard = nullptr;
-    QCheckBox*   m_thumbnail = nullptr;
     QLabel*      m_status = nullptr;
     QImage       m_desktopImage;
     QRect        m_desktopGeometry;

@@ -91,7 +91,7 @@ RenderWindowFn renderWindowFunction() {
     return fn;
 }
 
-bool renderMonitorArtifact(const PHLMONITOR& monitor, const std::filesystem::path& path, int& width, int& height) {
+bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& frozenTime, const std::filesystem::path& path, int& width, int& height) {
     if (!monitor || !monitor->m_activeWorkspace || !g_pHyprRenderer || !g_pHyprOpenGL)
         return false;
 
@@ -114,7 +114,7 @@ bool renderMonitorArtifact(const PHLMONITOR& monitor, const std::filesystem::pat
     }
 
     g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 1.0});
-    g_pHyprRenderer->renderWorkspace(monitor, monitor->m_activeWorkspace, Time::steadyNow(), CBox{0, 0, static_cast<double>(width), static_cast<double>(height)});
+    g_pHyprRenderer->renderWorkspace(monitor, monitor->m_activeWorkspace, frozenTime, CBox{0, 0, static_cast<double>(width), static_cast<double>(height)});
     g_pHyprOpenGL->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
     g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
@@ -123,7 +123,13 @@ bool renderMonitorArtifact(const PHLMONITOR& monitor, const std::filesystem::pat
     return writeRgbaFramebuffer(framebuffer, path);
 }
 
-bool renderWindowArtifact(const PHLWINDOW& window, const PHLMONITOR& monitor, const std::filesystem::path& path, int& width, int& height) {
+bool renderWindowArtifact(const PHLWINDOW& window,
+                          const PHLMONITOR& monitor,
+                          const Time::steady_tp& frozenTime,
+                          bool decorate,
+                          const std::filesystem::path& path,
+                          int& width,
+                          int& height) {
     if (!window || !monitor || !g_pHyprRenderer || !g_pHyprOpenGL)
         return false;
 
@@ -157,7 +163,7 @@ bool renderWindowArtifact(const PHLWINDOW& window, const PHLMONITOR& monitor, co
 
     *window->m_realPosition = Vector2D{-fullBox.x, -fullBox.y};
     *window->m_realSize = previousRealSize;
-    renderWindow(g_pHyprRenderer.get(), window, monitor, Time::steadyNow(), false, RENDER_PASS_ALL, false, true);
+    renderWindow(g_pHyprRenderer.get(), window, monitor, frozenTime, decorate, RENDER_PASS_ALL, false, false);
     *window->m_realPosition = previousRealPos;
     *window->m_realSize = previousRealSize;
 
@@ -176,6 +182,8 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
     session.id = makeSessionId();
     session.defaults = defaults;
     const auto root = artifactRoot(session.id);
+    const auto frozenTime = Time::steadyNow();
+    const bool renderDecorations = defaults.windowBorder == DecorationPolicy::Keep || defaults.windowShadow == DecorationPolicy::Keep;
 
     int monitorIndex = 0;
     for (const auto& monitor : g_pCompositor->m_monitors) {
@@ -187,7 +195,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         info.scale = monitor->m_scale;
         info.transform = static_cast<int>(monitor->m_transform);
         const auto path = root / ("monitor-" + std::to_string(monitorIndex++) + ".rgba");
-        if (renderMonitorArtifact(monitor, path, info.artifactWidth, info.artifactHeight))
+        if (renderMonitorArtifact(monitor, frozenTime, path, info.artifactWidth, info.artifactHeight))
             info.artifactPath = path.string();
         session.monitors.push_back(std::move(info));
     }
@@ -217,7 +225,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         info.fullGeometry = full;
         info.zIndex = z++;
         const auto path = root / ("window-" + pointerId(window.get()) + ".rgba");
-        if (renderWindowArtifact(window, monitor, path, info.artifactWidth, info.artifactHeight))
+        if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight))
             info.artifactPath = path.string();
         session.windows.push_back(std::move(info));
     }
