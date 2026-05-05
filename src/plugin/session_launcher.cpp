@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <sstream>
@@ -21,6 +22,12 @@ std::string boolArg(bool value) {
     return value ? "1" : "0";
 }
 
+std::string defaultInstalledHelperPath() {
+    if (const char* home = std::getenv("HOME"); home && *home)
+        return std::string(home) + "/.local/bin/hyprcapture-ui";
+    return {};
+}
+
 std::vector<std::string> helperCandidates(const std::string& configured) {
     std::vector<std::string> candidates;
     if (!configured.empty())
@@ -28,6 +35,9 @@ std::vector<std::string> helperCandidates(const std::string& configured) {
 
     if (const char* helperEnv = std::getenv("HYPRCAPTURE_HELPER"); helperEnv && *helperEnv)
         candidates.push_back(helperEnv);
+
+    if (auto installed = defaultInstalledHelperPath(); !installed.empty())
+        candidates.push_back(std::move(installed));
 
     candidates.push_back("hyprcapture-ui");
 

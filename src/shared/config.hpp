@@ -27,7 +27,7 @@ struct CaptureDefaults {
     bool             fushionMode = false;
     std::string      saveDir = "~/Pictures/Screenshots";
     std::string      filenameTemplate = "Screenshot-%Y-%m-%d-%H%M%S.png";
-    std::string      helper = "hyprcapture-ui";
+    std::string      helper;
     std::int64_t     thumbnailTimeoutMs = 5000;
 };
 

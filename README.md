@@ -3,7 +3,7 @@
 HyprCapture is a Hyprland-only screenshot tool split into a compositor plugin and a Qt layer-shell helper. The plugin captures frozen compositor artifacts and launches the helper; the helper provides the selection overlay, output rendering, clipboard integration, and result thumbnail.
 
 > [!IMPORTANT]
-> `hyprpm` installs the compositor plugin only. Install `hyprcapture-ui` separately into a path visible to the Hyprland session, or set `plugin:hyprcapture:helper` to an absolute executable path.
+> `hyprpm` builds the compositor plugin and installs the helper to `~/.local/bin/hyprcapture-ui`. Set `plugin:hyprcapture:helper` only when you want to override that default helper path.
 
 > [!WARNING]
 > Hyprland plugins run inside the compositor process. Install plugins only from sources you trust.
@@ -49,7 +49,35 @@ permission = /usr/(bin|local/bin)/hyprpm, plugin, allow
 
 Do not also manually `hyprctl plugin load` the same `.so` if you manage it through `hyprpm`.
 
-### Install the helper
+### Helper install path
+
+The `hyprpm` manifest installs the helper automatically:
+
+```toml
+build = [
+    "cmake -S . -B build-hyprpm -DCMAKE_BUILD_TYPE=Release",
+    "cmake --build build-hyprpm --target hyprcapture hyprcapture-ui",
+    "install -Dm755 build-hyprpm/hyprcapture-ui \"$HOME/.local/bin/hyprcapture-ui\""
+]
+```
+
+The plugin default helper lookup is:
+
+1. `HYPRCAPTURE_HELPER`
+2. `$HOME/.local/bin/hyprcapture-ui`
+3. `hyprcapture-ui` from `PATH`
+
+Only configure `plugin:hyprcapture:helper` if you want to use a custom helper path:
+
+```conf
+plugin {
+    hyprcapture {
+        helper = /home/you/.local/bin/hyprcapture-ui
+    }
+}
+```
+
+### Manual helper install
 
 Requirements:
 
@@ -67,16 +95,6 @@ Build and install the helper:
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release --target hyprcapture-ui
 install -Dm755 build-release/hyprcapture-ui "$HOME/.local/bin/hyprcapture-ui"
-```
-
-Make sure `~/.local/bin` is in the environment that launches Hyprland. If not, configure an absolute helper path:
-
-```conf
-plugin {
-    hyprcapture {
-        helper = /home/you/.local/bin/hyprcapture-ui
-    }
-}
 ```
 
 For development without installing, point `helper` at the build-tree executable or launch Hyprland with:
@@ -171,7 +189,6 @@ plugin {
         filename_template = Screenshot-%Y-%m-%d-%H%M%S.png
         include_cursor = 0
         thumbnail_timeout_ms = 5000
-        helper = hyprcapture-ui
     }
 }
 ```
@@ -199,7 +216,7 @@ plugin {
 | `save_dir` | string | `~/Pictures/Screenshots` | Output directory. `~` is expanded against `HOME`. |
 | `filename_template` | string | `Screenshot-%Y-%m-%d-%H%M%S.png` | `strftime` template for saved screenshot filenames. |
 | `thumbnail_timeout_ms` | int | `5000` | Thumbnail auto-close timeout in milliseconds. Use `0` to keep it open until user action. |
-| `helper` | string | `hyprcapture-ui` | Helper executable path or command name. `HYPRCAPTURE_HELPER` is also tried as a fallback. |
+| `helper` | string | empty | Optional helper override. By default the plugin tries `HYPRCAPTURE_HELPER`, then `$HOME/.local/bin/hyprcapture-ui`, then `hyprcapture-ui` from `PATH`. |
 
 ## Development
 

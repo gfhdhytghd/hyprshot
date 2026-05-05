@@ -127,7 +127,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:save_dir", Hyprlang::STRING{"~/Pictures/Screenshots"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:filename_template", Hyprlang::STRING{"Screenshot-%Y-%m-%d-%H%M%S.png"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:thumbnail_timeout_ms", Hyprlang::INT{5000});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:helper", Hyprlang::STRING{"hyprcapture-ui"});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:helper", Hyprlang::STRING{""});
 
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:open", dispatchOpen);
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:quick", dispatchQuick);
