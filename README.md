@@ -153,6 +153,7 @@ bind = SUPER SHIFT, F, hyprcapture:quick,fullscreen
 - Region mode: drag a rectangle, then release or press Enter.
 - Fullscreen mode: captures according to `fullscreen_scope`.
 - Window mode: hover a window and press Enter or click it.
+- Fushion mode: the toolbar keeps the fullscreen action and configuration controls; drag anywhere to capture a region, or single-click a window to capture that window.
 - Esc cancels the helper.
 - The toolbar is anchored near the bottom of the screen and only shows controls relevant to the active mode.
 
@@ -204,7 +205,7 @@ plugin {
 | `window_border` | string | `keep` | Window border policy. Supports `keep` and `remove`. |
 | `window_shadow` | string | `keep` | Window shadow policy. Supports `keep` and `remove`. |
 | `include_cursor` | bool | `0` | Parsed and forwarded by the plugin/helper; cursor compositing is not currently rendered into the output. |
-| `fushion_mode` | bool | `0` | Treat the toolbar mode buttons as capture actions: Full captures immediately, Region selects a box, and Window captures with a single click. The toolbar shows all capture controls in this mode; fullscreen multi-monitor scope is shown only when multiple monitors are present. |
+| `fushion_mode` | bool | `0` | Fuse region and window interactions in one overlay: drag to capture a region, or single-click a window to capture that window. The toolbar keeps the fullscreen action and shows all capture controls; fullscreen multi-monitor scope is shown only when multiple monitors are present. |
 
 ### Output options
 

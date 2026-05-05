@@ -800,6 +800,11 @@ void CaptureOverlay::buildToolbar() {
         button->setChecked(mode == m_mode);
         group->addButton(button);
         layout->addWidget(button);
+        if (m_defaults.fushionMode && mode != hyprcapture::CaptureMode::Fullscreen) {
+            button->hide();
+            button->setFixedSize(0, 0);
+            button->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+        }
         connect(button, &QPushButton::clicked, this, [this, mode] {
             const bool wasActiveMode = m_mode == mode;
             setMode(mode);
@@ -1055,12 +1060,14 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
     paintDesktop(painter, rect());
     painter.fillRect(rect(), QColor(0, 0, 0, 80));
 
-    if (m_mode == hyprcapture::CaptureMode::Region && (m_dragging || !normalizedSelection().isNull())) {
-        const QRect sel = normalizedSelection().intersected(regionCaptureBounds());
+    const bool fusionGesture = m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen;
+    const QRect sel = normalizedSelection().intersected(regionCaptureBounds());
+    const bool selectionVisible = m_dragging || (sel.width() > 4 && sel.height() > 4);
+    if ((m_mode == hyprcapture::CaptureMode::Region || fusionGesture) && selectionVisible) {
         paintDesktop(painter, sel);
         painter.setPen(QPen(QColor(255, 255, 255, 230), 2));
         painter.drawRect(sel.adjusted(0, 0, -1, -1));
-    } else if (m_mode == hyprcapture::CaptureMode::Window) {
+    } else if (m_mode == hyprcapture::CaptureMode::Window || fusionGesture) {
         const auto* window = hoveredWindow();
         for (const auto& candidate : m_windowArtifacts) {
             const QRect target = globalToLocalRect(windowFrameGeometry(candidate));
@@ -1082,6 +1089,16 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton)
         return;
 
+    if (m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen) {
+        m_mode = hyprcapture::CaptureMode::Region;
+        m_dragging = true;
+        m_dragStart = event->pos();
+        m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
+        updateStatus();
+        update();
+        return;
+    }
+
     if (m_mode == hyprcapture::CaptureMode::Fullscreen) {
         finishCapture();
         return;
@@ -1097,6 +1114,14 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
 }
 
 void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
+    if (m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen) {
+        if (m_dragging)
+            m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
+        updateStatus();
+        update();
+        return;
+    }
+
     if (m_mode == hyprcapture::CaptureMode::Window) {
         updateStatus();
         update();
@@ -1111,13 +1136,39 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
 void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton)
         return;
+
+    if (m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen) {
+        if (!m_dragging)
+            return;
+
+        m_dragging = false;
+        m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
+        const QRect selection = normalizedSelection().intersected(regionCaptureBounds());
+        if (selection.width() > 4 && selection.height() > 4) {
+            m_mode = hyprcapture::CaptureMode::Region;
+            finishCapture();
+            return;
+        }
+
+        if (hoveredWindow()) {
+            m_mode = hyprcapture::CaptureMode::Window;
+            finishCapture();
+            return;
+        }
+
+        updateStatus();
+        update();
+        return;
+    }
+
     if (m_mode == hyprcapture::CaptureMode::Window) {
         finishCapture();
         return;
     }
     m_dragging = false;
     m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
-    if (m_mode != hyprcapture::CaptureMode::Region || normalizedSelection().width() > 4)
+    const QRect selection = normalizedSelection().intersected(regionCaptureBounds());
+    if (m_mode != hyprcapture::CaptureMode::Region || (selection.width() > 4 && selection.height() > 4))
         finishCapture();
 }
 
@@ -1125,6 +1176,16 @@ void CaptureOverlay::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Escape) {
         cancelCapture();
     } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        if (m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen) {
+            const QRect selection = normalizedSelection().intersected(regionCaptureBounds());
+            if (selection.width() > 4 && selection.height() > 4) {
+                m_mode = hyprcapture::CaptureMode::Region;
+            } else if (hoveredWindow()) {
+                m_mode = hyprcapture::CaptureMode::Window;
+            } else {
+                return;
+            }
+        }
         finishCapture();
     }
 }
