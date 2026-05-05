@@ -21,6 +21,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QMetaObject>
 #include <QPalette>
 #include <QPainter>
 #include <QPainterPath>
@@ -33,6 +34,7 @@
 #include <QStringList>
 #include <QStyleHints>
 #include <QSvgRenderer>
+#include <QThread>
 #include <QVBoxLayout>
 #include <QTimer>
 
@@ -78,12 +80,52 @@ constexpr double kWindowFrameFallbackRadius = 8.0;
 constexpr int kOverlayFadeDurationMs = 100;
 constexpr int kModeIconSize = 24;
 
+struct CaptureOutputResult {
+    QString savedPath;
+    QString restoreClipboardPath;
+    bool    showThumbnail = false;
+    bool    clipboardRequested = false;
+    bool    clipboardCopied = false;
+};
+
 const char* kFullscreenSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M128 266.666667v490.666666a53.393333 53.393333 0 0 0 53.333333 53.333334h661.333334a53.393333 53.393333 0 0 0 53.333333-53.333334V266.666667a53.393333 53.393333 0 0 0-53.333333-53.333334H181.333333a53.393333 53.393333 0 0 0-53.333333 53.333334z m725.333333 0v490.666666a10.666667 10.666667 0 0 1-10.666666 10.666667H181.333333a10.666667 10.666667 0 0 1-10.666666-10.666667V266.666667a10.666667 10.666667 0 0 1 10.666666-10.666667h661.333334a10.666667 10.666667 0 0 1 10.666666 10.666667z m-597.333333 608a21.333333 21.333333 0 0 1-21.333333 21.333333H96a53.393333 53.393333 0 0 1-53.333333-53.333333v-138.666667a21.333333 21.333333 0 0 1 42.666666 0v138.666667a10.666667 10.666667 0 0 0 10.666667 10.666666h138.666667a21.333333 21.333333 0 0 1 21.333333 21.333334zM42.666667 320V181.333333a53.393333 53.393333 0 0 1 53.333333-53.333333h138.666667a21.333333 21.333333 0 0 1 0 42.666667H96a10.666667 10.666667 0 0 0-10.666667 10.666666v138.666667a21.333333 21.333333 0 0 1-42.666666 0z m938.666666-138.666667v138.666667a21.333333 21.333333 0 0 1-42.666666 0V181.333333a10.666667 10.666667 0 0 0-10.666667-10.666666h-138.666667a21.333333 21.333333 0 0 1 0-42.666667h138.666667a53.393333 53.393333 0 0 1 53.333333 53.333333z m0 522.666667v138.666667a53.393333 53.393333 0 0 1-53.333333 53.333333h-138.666667a21.333333 21.333333 0 0 1 0-42.666667h138.666667a10.666667 10.666667 0 0 0 10.666667-10.666666v-138.666667a21.333333 21.333333 0 0 1 42.666666 0z" fill="#000000"/></svg>)";
 const char* kWindowSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M808.125883 243.195881 134.874315 243.195881c-30.608112 0-55.513338 24.905226-55.513338 55.520501l0 505.178641c0 30.615275 24.905226 55.520501 55.513338 55.520501L808.125883 859.415524c30.607088 0 55.512315-24.905226 55.512315-55.520501L863.638197 298.716382C863.638197 268.101107 838.733994 243.195881 808.125883 243.195881zM835.629283 803.895023c0 15.167444-12.338003 27.510564-27.503401 27.510564L134.874315 831.405587c-15.167444 0-27.504424-12.343119-27.504424-27.510564L107.369891 383.246591l728.259392 0L835.629283 803.895023zM835.629283 355.236654 107.370915 355.236654l0-56.519248c0-15.173584 12.33698-27.510564 27.504424-27.510564L808.125883 271.206842c15.165398 0 27.503401 12.33698 27.503401 27.510564L835.629283 355.236654zM920.166655 131.156132 274.924002 131.156132c-30.608112 0-55.513338 24.905226-55.513338 55.514361l0 28.515451c0 7.734148 6.263657 14.004969 14.005992 14.004969 7.740288 0 14.005992-6.27082 14.005992-14.004969l0-28.515451c0-15.167444 12.33698-27.504424 27.503401-27.504424L920.167678 159.166069c15.165398 0 27.503401 12.33698 27.503401 27.504424l0 519.188726c0 15.167444-12.338003 27.511587-27.503401 27.511587l-28.516474 0c-7.739265 0-14.004969 6.27082-14.004969 14.004969 0 7.736195 6.263657 14.007015 14.004969 14.007015l28.516474 0c30.607088 0 55.512315-24.905226 55.512315-55.521524L975.679993 186.670493C975.67897 156.061358 950.773743 131.156132 920.166655 131.156132zM219.410664 299.216779l-56.019875 0c-7.740288 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.263657 14.011108 14.005992 14.011108l56.019875 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C233.415632 305.487599 227.151975 299.216779 219.410664 299.216779zM331.450413 299.216779l-56.019875 0c-7.741311 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.262634 14.011108 14.005992 14.011108l56.019875 0c7.739265 0 14.004969-6.27082 14.004969-14.011108C345.455381 305.487599 339.191724 299.216779 331.450413 299.216779zM443.490162 299.216779l-56.018851 0c-7.741311 0-14.007015 6.27082-14.007015 13.998829 0 7.740288 6.263657 14.011108 14.007015 14.011108l56.018851 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C457.49513 305.487599 451.231473 299.216779 443.490162 299.216779z" fill="#000000"/></svg>)";
 const char* kRegionSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M960 256V64H768v64H256V64H64v192h64v512H64v192h192v-64h512v64h192V768h-64V256z m-128 512h-64v64H256v-64h-64V256h64v-64h512v64h64z" fill="#000000"/></svg>)";
 
 QString qString(const std::string& value) {
     return QString::fromStdString(value);
+}
+
+CaptureOutputResult writeCaptureOutput(const QImage& image, const hyprcapture::CaptureDefaults& defaults, QString restoreClipboardPath) {
+    CaptureOutputResult result;
+    result.restoreClipboardPath = std::move(restoreClipboardPath);
+    result.showThumbnail = defaults.showThumbnail;
+
+    if (defaults.save) {
+        const auto dirPath = hyprcapture::expandUserPath(defaults.saveDir);
+        QDir       dir(QString::fromStdString(dirPath.string()));
+        if (!dir.exists())
+            dir.mkpath(".");
+        const QString path = dir.filePath(QString::fromStdString(hyprcapture::makeTimestampedFilename(defaults.filenameTemplate)));
+        if (image.save(path, "PNG"))
+            result.savedPath = path;
+    }
+
+    if (result.showThumbnail && result.savedPath.isEmpty()) {
+        const QString path = hyprcapture::ui::runtimeFile("thumbnail", ".png");
+        if (image.save(path, "PNG"))
+            result.savedPath = path;
+    }
+
+    result.clipboardRequested = defaults.clipboard;
+    if (defaults.clipboard) {
+        if (result.savedPath.isEmpty() || !hyprcapture::ui::copyImageFileToClipboardDetached(result.savedPath))
+            result.clipboardCopied = hyprcapture::ui::copyImageToClipboardDetached(image);
+        else
+            result.clipboardCopied = true;
+    }
+
+    return result;
 }
 
 double maxScreenDevicePixelRatio() {
@@ -1473,32 +1515,34 @@ void CaptureOverlay::finishCapture() {
         updateStatus();
         return;
     }
-    saveImage(image);
+
+    QString restoreClipboardPath;
+    if (m_defaults.clipboard && m_defaults.showThumbnail)
+        restoreClipboardPath = hyprcapture::ui::saveClipboardSnapshot();
+
+    saveImage(image, restoreClipboardPath);
+    fadeOutThen({});
 }
 
-void CaptureOverlay::saveImage(const QImage& image) {
-    QString savedPath;
-    QString restoreClipboardPath;
-    if (m_defaults.save) {
-        const auto dirPath = hyprcapture::expandUserPath(m_defaults.saveDir);
-        QDir dir(QString::fromStdString(dirPath.string()));
-        if (!dir.exists())
-            dir.mkpath(".");
-        savedPath = dir.filePath(QString::fromStdString(hyprcapture::makeTimestampedFilename(m_defaults.filenameTemplate)));
-        image.save(savedPath, "PNG");
-    }
-
-    if (m_defaults.clipboard) {
-        restoreClipboardPath = hyprcapture::ui::saveClipboardSnapshot();
-        hyprcapture::ui::copyImageToClipboard(image);
-    }
-
-    if (m_defaults.showThumbnail) {
-        fadeOutThen([this, image, savedPath, restoreClipboardPath] { showThumbnail(image, savedPath, restoreClipboardPath); });
-        return;
-    }
-
-    fadeOutThen([] { qApp->quit(); });
+void CaptureOverlay::saveImage(const QImage& image, const QString& restoreClipboardPath) {
+    const auto defaults = m_defaults;
+    auto*      worker = QThread::create([this, image, defaults, restoreClipboardPath] {
+        const CaptureOutputResult result = writeCaptureOutput(image, defaults, restoreClipboardPath);
+        QMetaObject::invokeMethod(
+            this,
+            [this, image, result] {
+                if (result.clipboardRequested && !result.clipboardCopied)
+                    hyprcapture::ui::copyImageToClipboard(image);
+                if (result.showThumbnail) {
+                    showThumbnail(image, result.savedPath, result.restoreClipboardPath);
+                    return;
+                }
+                qApp->quit();
+            },
+            Qt::QueuedConnection);
+    });
+    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+    worker->start();
 }
 
 void CaptureOverlay::showThumbnail(const QImage& image, const QString& path, const QString& restoreClipboardPath) {

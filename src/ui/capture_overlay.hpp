@@ -61,7 +61,7 @@ class CaptureOverlay final : public QMainWindow {
     void updateToolbarControlsForMode();
     void finishCapture();
     void cancelCapture();
-    void saveImage(const QImage& image);
+    void saveImage(const QImage& image, const QString& restoreClipboardPath);
     QImage renderResultImage() const;
     QImage renderDesktopRectAtDisplayResolution(const QRect& globalRect) const;
     void paintDesktop(QPainter& painter, const QRect& target) const;

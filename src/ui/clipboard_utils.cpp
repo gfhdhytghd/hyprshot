@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
 #include <QJsonArray>
@@ -65,6 +66,29 @@ bool copyBytesWithWlCopy(const QByteArray& bytes, const QString& mimeType) {
     return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
 }
 
+bool copyFileWithWlCopyDetached(const QString& path, const QString& mimeType, bool removeAfterCopy) {
+    if (path.isEmpty() || !QFileInfo::exists(path))
+        return false;
+
+    const QString program = wlCopyProgram();
+    if (program.isEmpty())
+        return false;
+
+    const QString shell = QStandardPaths::findExecutable(QStringLiteral("sh"));
+    if (shell.isEmpty())
+        return false;
+
+    const QString script = QStringLiteral(R"("$1" --type "$2" < "$3"; status=$?; if [ "$4" = "1" ]; then rm -f "$3"; fi; exit $status)");
+    return QProcess::startDetached(shell,
+                                   {QStringLiteral("-c"),
+                                    script,
+                                    QStringLiteral("hyprcapture-wl-copy"),
+                                    program,
+                                    mimeType,
+                                    path,
+                                    removeAfterCopy ? QStringLiteral("1") : QStringLiteral("0")});
+}
+
 bool clearWithWlCopy() {
     const QString program = wlCopyProgram();
     if (program.isEmpty())
@@ -92,6 +116,14 @@ QByteArray pngBytes(const QImage& image) {
     if (!image.save(&buffer, "PNG"))
         return {};
     return bytes;
+}
+
+bool copyImageToQtClipboard(const QImage& image) {
+    auto* clipboard = QGuiApplication::clipboard();
+    if (!clipboard)
+        return false;
+    clipboard->setImage(image);
+    return true;
 }
 
 void removeSnapshotFiles(const QJsonObject& obj, const QString& path) {
@@ -180,11 +212,25 @@ bool copyImageToClipboard(const QImage& image) {
     if (copyBytesWithWlCopy(pngBytes(image), QStringLiteral("image/png")))
         return true;
 
-    auto* clipboard = QGuiApplication::clipboard();
-    if (!clipboard)
+    return copyImageToQtClipboard(image);
+}
+
+bool copyImageToClipboardDetached(const QImage& image) {
+    if (image.isNull())
         return false;
-    clipboard->setImage(image);
-    return true;
+
+    const QString path = runtimeFile("clipboard-copy", ".png");
+    if (image.save(path, "PNG")) {
+        if (copyFileWithWlCopyDetached(path, QStringLiteral("image/png"), true))
+            return true;
+        QFile::remove(path);
+    }
+
+    return false;
+}
+
+bool copyImageFileToClipboardDetached(const QString& path) {
+    return copyFileWithWlCopyDetached(path, QStringLiteral("image/png"), false);
 }
 
 bool copyPixmapToClipboard(const QPixmap& pixmap) {
