@@ -1490,11 +1490,15 @@ QImage CaptureOverlay::renderResultImage() const {
         const QRect desktopSource = desktopSourceRectForGlobalRect(logicalSource);
         const QImage maskArtifact = repairedArtifact.format() == QImage::Format_RGBA8888 ? repairedArtifact : repairedArtifact.convertToFormat(QImage::Format_RGBA8888);
         bool         paintedBackground = false;
-        if (bg == hyprcapture::WindowBackground::Real && !windowArtifact->realBackground.isNull()) {
-            QPainter backgroundPainter(&background);
-            backgroundPainter.drawImage(background.rect(), windowArtifact->realBackground, artifactSource);
-            paintedBackground = true;
-        } else if (paintWindowBackground(background, bg, m_desktopImage, desktopSource)) {
+        if (bg == hyprcapture::WindowBackground::Real && !windowArtifact->realBackground.isNull() && logicalSource.isValid()) {
+            const QRect backgroundSource = projectedImageRect(logicalSource, windowArtifact->fullGeometry, windowArtifact->realBackground.size());
+            if (backgroundSource.isValid()) {
+                QPainter backgroundPainter(&background);
+                backgroundPainter.drawImage(background.rect(), windowArtifact->realBackground, backgroundSource);
+                paintedBackground = true;
+            }
+        }
+        if (!paintedBackground && paintWindowBackground(background, bg, m_desktopImage, desktopSource)) {
             if (bg == hyprcapture::WindowBackground::Real)
                 reconstructRealWindowBackground(background, maskArtifact, artifactSource);
             paintedBackground = true;

@@ -151,7 +151,7 @@ RgbaReadback cropReadback(const RgbaReadback& readback, const PixelBounds& bound
     return cropped;
 }
 
-RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int cropTopY, int cropWidth, int cropHeight) {
+RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int cropTopY, int cropWidth, int cropHeight, bool directGlY = false) {
     const int framebufferWidth = static_cast<int>(std::lround(framebuffer.m_size.x));
     const int framebufferHeight = static_cast<int>(std::lround(framebuffer.m_size.y));
     if (framebufferWidth <= 0 || framebufferHeight <= 0 || cropWidth <= 0 || cropHeight <= 0)
@@ -174,7 +174,8 @@ RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer.getFBID());
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        glReadPixels(srcX, framebufferHeight - srcTopY - srcHeight, srcWidth, srcHeight, GL_RGBA, GL_UNSIGNED_BYTE, rows.data());
+        const int readY = directGlY ? srcTopY : framebufferHeight - srcTopY - srcHeight;
+        glReadPixels(srcX, readY, srcWidth, srcHeight, GL_RGBA, GL_UNSIGNED_BYTE, rows.data());
         glBindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFramebuffer);
 
         const int dstX = srcX - cropX;
@@ -189,6 +190,10 @@ RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int
     return readback;
 }
 
+RgbaReadback readRenderPassFramebufferRegion(CFramebuffer& framebuffer, int cropX, int cropTopY, int cropWidth, int cropHeight) {
+    return readRgbaFramebufferRegion(framebuffer, cropX, cropTopY, cropWidth, cropHeight, true);
+}
+
 class RealBackgroundCapturePass final : public IPassElement {
   public:
     explicit RealBackgroundCapturePass(RealBackgroundCaptureState* state) : m_state(state) {}
@@ -197,7 +202,7 @@ class RealBackgroundCapturePass final : public IPassElement {
         if (!m_state || m_state->captured || !g_pHyprOpenGL || !g_pHyprOpenGL->m_renderData.currentFB)
             return;
 
-        m_state->readback = readRgbaFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, m_state->cropX, m_state->cropY, m_state->width, m_state->height);
+        m_state->readback = readRenderPassFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, m_state->cropX, m_state->cropY, m_state->width, m_state->height);
         m_state->captured = !m_state->readback.pixels.empty();
     }
 
@@ -344,7 +349,7 @@ void hkRenderTextureInternal(void* openGLThisptr, SP<CTexture> texture, const CB
         return;
 
     state->awaitingBlurBackground = false;
-    auto readback = readRgbaFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, state->cropX, state->cropY, state->width, state->height);
+    auto readback = readRenderPassFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, state->cropX, state->cropY, state->width, state->height);
     if (readback.pixels.empty())
         return;
 
