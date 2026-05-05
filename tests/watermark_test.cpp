@@ -3,7 +3,9 @@
 
 #include <QGuiApplication>
 #include <QImage>
+#include <QRect>
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <iostream>
@@ -14,6 +16,17 @@ bool imageDiffers(const QImage& a, const QImage& b) {
     if (a.size() != b.size() || a.format() != b.format() || a.sizeInBytes() != b.sizeInBytes())
         return true;
     return std::memcmp(a.constBits(), b.constBits(), static_cast<std::size_t>(a.sizeInBytes())) != 0;
+}
+
+QRect diffBounds(const QImage& a, const QImage& b) {
+    QRect bounds;
+    for (int y = 0; y < std::min(a.height(), b.height()); ++y) {
+        for (int x = 0; x < std::min(a.width(), b.width()); ++x) {
+            if (a.pixel(x, y) != b.pixel(x, y))
+                bounds = bounds.united(QRect(x, y, 1, 1));
+        }
+    }
+    return bounds;
 }
 
 } // namespace
@@ -40,12 +53,18 @@ int main(int argc, char** argv) {
 
     defaults.watermark = "hypercam2";
     defaults.watermarkPosition = WatermarkPosition::DownRight;
-    defaults.watermarkWidth = "40%";
+    defaults.watermarkWidth = "20%";
     defaults.watermarkOffset = "-10px -10px";
 
     auto hypercam = base;
     ui::applyWatermark(hypercam, defaults);
     assert(imageDiffers(base, hypercam));
+    assert(diffBounds(base, hypercam).height() >= 32);
+
+    defaults.watermark = "/missing/unregistered hypercam 2.jpg";
+    auto hypercamPathAlias = base;
+    ui::applyWatermark(hypercamPathAlias, defaults);
+    assert(imageDiffers(base, hypercamPathAlias));
 
     defaults.watermark.clear();
     auto disabled = base;

@@ -19,18 +19,20 @@ enum class BuiltinWatermark { None, Hypercam2, ActivateLinux };
 
 struct Length {
     double value = 0.0;
-    bool   percent = false;
-    bool   valid = false;
+    bool percent = false;
+    bool valid = false;
 };
 
-constexpr const char* kActivateLinuxSvg = R"SVG(<svg width="340" height="120" viewBox="0 0 340 120" xmlns="http://www.w3.org/2000/svg">
-  <g fill="#c4c4c4" fill-opacity="0.4" font-family="sans-serif">
+constexpr const char* kActivateLinuxSvg =
+    R"SVG(<svg width="340" height="120" viewBox="0 0 340 120" xmlns="http://www.w3.org/2000/svg">
+  <g fill="#c4c4c4" fill-opacity="0.2" font-family="sans-serif">
     <text x="20" y="52" font-size="24">Activate Linux</text>
     <text x="20" y="76" font-size="16">Go to Settings to activate Linux.</text>
   </g>
 </svg>)SVG";
 
-constexpr const char* kHypercamJpegBase64 = R"BASE64(/9j/4AAQSkZJRgABAQEAYABgAAD/4QBARXhpZgAASUkqAAgAAAABAGmHBAABAAAAGgAAAAAAAAACAAKgCQABAAAA4AEAAAOgCQAB
+constexpr const char* kHypercamJpegBase64 =
+    R"BASE64(/9j/4AAQSkZJRgABAQEAYABgAAD/4QBARXhpZgAASUkqAAgAAAABAGmHBAABAAAAGgAAAAAAAAACAAKgCQABAAAA4AEAAAOgCQAB
 AAAALgAAAAAAAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYU
 GBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/
 wAARCAAuAeADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQID
@@ -170,18 +172,27 @@ QString normalizedBuiltinId(const std::string& value) {
 
 bool watermarkDisabled(const std::string& value) {
     const auto id = normalizedBuiltinId(value);
-    return id.isEmpty() || id == QLatin1String("0") || id == QLatin1String("off") || id == QLatin1String("false") ||
-           id == QLatin1String("none") || id == QLatin1String("disabled");
+    return id.isEmpty() || id == QLatin1String("0") || id == QLatin1String("off") || id == QLatin1String("false") || id == QLatin1String("none") ||
+           id == QLatin1String("disabled");
 }
 
 BuiltinWatermark builtinWatermarkFor(const std::string& value) {
     const auto id = normalizedBuiltinId(value);
-    if (id == QLatin1String("hypercam") || id == QLatin1String("hypercam2") || id == QLatin1String("hypercam-2") ||
-        id == QLatin1String("unregistered-hypercam") || id == QLatin1String("unregistered-hypercam-2"))
+    const auto basename = QFileInfo(id).fileName();
+    if (id == QLatin1String("hypercam") || id == QLatin1String("hypercam2") || id == QLatin1String("hypercam-2") || id == QLatin1String("unregistered") ||
+        id == QLatin1String("unregistered-hypercam") || id == QLatin1String("unregistered-hypercam-2") || id == QLatin1String("unregistered-hypercam-2.jpg") ||
+        basename == QLatin1String("unregistered") || basename == QLatin1String("unregistered-hypercam-2") ||
+        basename == QLatin1String("unregistered-hypercam-2.jpg"))
         return BuiltinWatermark::Hypercam2;
     if (id == QLatin1String("activate-linux") || id == QLatin1String("activatelinux") || id == QLatin1String("linux-activation"))
         return BuiltinWatermark::ActivateLinux;
     return BuiltinWatermark::None;
+}
+
+bool isDefaultWatermarkWidth(const std::string& value) {
+    auto normalized = QString::fromStdString(value).trimmed().toLower();
+    normalized.remove(QLatin1Char(' '));
+    return normalized == QLatin1String("20%");
 }
 
 Length parseLength(QString token) {
@@ -200,20 +211,18 @@ Length parseLength(QString token) {
     return length;
 }
 
-double resolveLength(const Length& length, double reference) {
-    return length.percent ? reference * length.value / 100.0 : length.value;
-}
+double resolveLength(const Length& length, double reference) { return length.percent ? reference * length.value / 100.0 : length.value; }
 
 std::array<Length, 2> parseVec2(QString value) {
     std::array<Length, 2> result{Length{}, Length{}};
     static const QRegularExpression tokenPattern(QStringLiteral(R"([-+]?(?:\d+(?:\.\d*)?|\.\d+)\s*(?:%|px)?)"));
-    auto                            it = tokenPattern.globalMatch(value);
+    auto it = tokenPattern.globalMatch(value);
     for (int i = 0; i < 2 && it.hasNext(); ++i)
         result[static_cast<std::size_t>(i)] = parseLength(it.next().captured(0));
     return result;
 }
 
-int targetWatermarkWidth(const QImage& target, const CaptureDefaults& defaults) {
+int targetWatermarkWidth(const QImage& target, const CaptureDefaults& defaults, BuiltinWatermark builtin) {
     const auto width = parseLength(QString::fromStdString(defaults.watermarkWidth));
     if (!width.valid)
         return 0;
@@ -223,7 +232,14 @@ int targetWatermarkWidth(const QImage& target, const CaptureDefaults& defaults) 
         return 0;
 
     const int maxWidth = std::max(1, target.width() * 4);
-    return std::clamp(static_cast<int>(std::round(pixels)), 1, maxWidth);
+    int targetWidth = std::clamp(static_cast<int>(std::round(pixels)), 1, maxWidth);
+    if (builtin == BuiltinWatermark::Hypercam2 && isDefaultWatermarkWidth(defaults.watermarkWidth)) {
+        constexpr double kHypercamAspect = 480.0 / 46.0;
+        const int widthForReadableHeight = static_cast<int>(std::round(std::max(46.0, target.height() * 0.065) * kHypercamAspect));
+        const int defaultMaxWidth = std::max(1, static_cast<int>(std::round(target.width() * 0.8)));
+        targetWidth = std::max(targetWidth, std::min(widthForReadableHeight, defaultMaxWidth));
+    }
+    return targetWidth;
 }
 
 QImage scaledRasterWatermark(QImage image, int targetWidth) {
@@ -247,7 +263,7 @@ QImage renderSvgWatermark(const QByteArray& svg, int targetWidth) {
         sourceSize = QSize(340, 120);
 
     const int targetHeight = std::max(1, static_cast<int>(std::round(static_cast<double>(targetWidth) * sourceSize.height() / sourceSize.width())));
-    QImage    image(QSize(targetWidth, targetHeight), QImage::Format_ARGB32_Premultiplied);
+    QImage image(QSize(targetWidth, targetHeight), QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
 
     QPainter painter(&image);
@@ -288,8 +304,8 @@ QImage loadFileWatermark(const std::string& configuredPath, int targetWidth) {
     return scaledRasterWatermark(reader.read(), targetWidth);
 }
 
-QImage loadWatermark(const CaptureDefaults& defaults, int targetWidth) {
-    if (const auto builtin = builtinWatermarkFor(defaults.watermark); builtin != BuiltinWatermark::None)
+QImage loadWatermark(const CaptureDefaults& defaults, int targetWidth, BuiltinWatermark builtin) {
+    if (builtin != BuiltinWatermark::None)
         return loadBuiltinWatermark(builtin, targetWidth);
     return loadFileWatermark(defaults.watermark, targetWidth);
 }
@@ -303,15 +319,42 @@ QPoint watermarkPosition(const QSize& targetSize, const QSize& watermarkSize, Wa
     const double bottom = targetSize.height() - watermarkSize.height();
 
     switch (position) {
-        case WatermarkPosition::UpLeft: x = 0.0; y = 0.0; break;
-        case WatermarkPosition::UpMiddle: x = centerX; y = 0.0; break;
-        case WatermarkPosition::UpRight: x = right; y = 0.0; break;
-        case WatermarkPosition::LeftMiddle: x = 0.0; y = centerY; break;
-        case WatermarkPosition::Central: x = centerX; y = centerY; break;
-        case WatermarkPosition::RightMiddle: x = right; y = centerY; break;
-        case WatermarkPosition::DownLeft: x = 0.0; y = bottom; break;
-        case WatermarkPosition::DownMiddle: x = centerX; y = bottom; break;
-        case WatermarkPosition::DownRight: x = right; y = bottom; break;
+    case WatermarkPosition::UpLeft:
+        x = 0.0;
+        y = 0.0;
+        break;
+    case WatermarkPosition::UpMiddle:
+        x = centerX;
+        y = 0.0;
+        break;
+    case WatermarkPosition::UpRight:
+        x = right;
+        y = 0.0;
+        break;
+    case WatermarkPosition::LeftMiddle:
+        x = 0.0;
+        y = centerY;
+        break;
+    case WatermarkPosition::Central:
+        x = centerX;
+        y = centerY;
+        break;
+    case WatermarkPosition::RightMiddle:
+        x = right;
+        y = centerY;
+        break;
+    case WatermarkPosition::DownLeft:
+        x = 0.0;
+        y = bottom;
+        break;
+    case WatermarkPosition::DownMiddle:
+        x = centerX;
+        y = bottom;
+        break;
+    case WatermarkPosition::DownRight:
+        x = right;
+        y = bottom;
+        break;
     }
 
     const auto offset = parseVec2(offsetConfig);
@@ -329,11 +372,12 @@ void applyWatermark(QImage& image, const CaptureDefaults& defaults) {
     if (image.isNull() || watermarkDisabled(defaults.watermark))
         return;
 
-    const int targetWidth = targetWatermarkWidth(image, defaults);
+    const BuiltinWatermark builtin = builtinWatermarkFor(defaults.watermark);
+    const int targetWidth = targetWatermarkWidth(image, defaults, builtin);
     if (targetWidth <= 0)
         return;
 
-    const QImage watermark = loadWatermark(defaults, targetWidth);
+    const QImage watermark = loadWatermark(defaults, targetWidth, builtin);
     if (watermark.isNull())
         return;
 
@@ -343,7 +387,8 @@ void applyWatermark(QImage& image, const CaptureDefaults& defaults) {
     QPainter painter(&image);
     painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-    painter.drawImage(watermarkPosition(image.size(), watermark.size(), defaults.watermarkPosition, QString::fromStdString(defaults.watermarkOffset)), watermark);
+    painter.drawImage(watermarkPosition(image.size(), watermark.size(), defaults.watermarkPosition, QString::fromStdString(defaults.watermarkOffset)),
+                      watermark);
 }
 
 } // namespace hyprcapture::ui
