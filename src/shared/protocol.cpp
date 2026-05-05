@@ -53,6 +53,7 @@ std::string encodeSessionJson(const CaptureSession& session) {
     out << ",\"clipboard\":" << (session.defaults.clipboard ? "true" : "false");
     out << ",\"showThumbnail\":" << (session.defaults.showThumbnail ? "true" : "false");
     out << ",\"includeCursor\":" << (session.defaults.includeCursor ? "true" : "false");
+    out << ",\"fushionMode\":" << (session.defaults.fushionMode ? "true" : "false");
     out << ",\"saveDir\":" << quote(session.defaults.saveDir);
     out << ",\"filenameTemplate\":" << quote(session.defaults.filenameTemplate);
     out << ",\"thumbnailTimeoutMs\":" << session.defaults.thumbnailTimeoutMs;

@@ -7,20 +7,27 @@
 #include <QPoint>
 #include <QRect>
 #include <QString>
+#include <functional>
 #include <vector>
 
 class QButtonGroup;
+class QGraphicsOpacityEffect;
 class QLabel;
+class QPainter;
 class QResizeEvent;
+class QShowEvent;
+class QPropertyAnimation;
 class InlineSelect;
 
 class CaptureOverlay final : public QMainWindow {
     Q_OBJECT
+    Q_PROPERTY(double overlayOpacity READ overlayOpacity WRITE setOverlayOpacity)
 
   public:
     explicit CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, QString sessionJson, QWidget* parent = nullptr);
 
   protected:
+    void showEvent(QShowEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
@@ -57,11 +64,25 @@ class CaptureOverlay final : public QMainWindow {
     void saveImage(const QImage& image);
     QImage renderResultImage() const;
     QImage renderDesktopRectAtDisplayResolution(const QRect& globalRect) const;
+    void paintDesktop(QPainter& painter, const QRect& target) const;
     QRect normalizedSelection() const;
     QRect captureRectForMode() const;
+    QRect fullscreenCaptureRect() const;
+    QRect regionCaptureBounds() const;
+    QRect localScreenRectAt(const QPoint& localPos) const;
+    QPoint clampedToRect(const QPoint& point, const QRect& bounds) const;
     QRect globalToLocalRect(const QRect& rect) const;
+    QRect desktopSourceRectForGlobalRect(const QRect& rect) const;
     QRect localToDesktopSourceRect(const QRect& rect) const;
     QPoint cursorLogicalPosition() const;
+    int monitorCount() const;
+    bool hasMultipleMonitors() const;
+    void hideOptionPopups();
+    hyprcapture::FullscreenScope currentFullscreenScope() const;
+    hyprcapture::RegionScope currentRegionScope() const;
+    hyprcapture::WindowBackground currentWindowBackground() const;
+    hyprcapture::DecorationPolicy currentWindowBorder() const;
+    hyprcapture::DecorationPolicy currentWindowShadow() const;
     QRect windowFrameGeometry(const WindowArtifact& window) const;
     double windowFrameRadius(const WindowArtifact& window) const;
     const WindowArtifact* hoveredWindow() const;
@@ -69,18 +90,30 @@ class CaptureOverlay final : public QMainWindow {
     void updateStatus();
     void relayoutToolbar();
     void showThumbnail(const QImage& image, const QString& path, const QString& restoreClipboardPath);
+    double overlayOpacity() const;
+    void setOverlayOpacity(double opacity);
+    void startFadeIn();
+    void fadeOutThen(std::function<void()> finished);
+    void runOverlayFade(double start, double end, std::function<void()> finished);
 
     hyprcapture::CaptureDefaults m_defaults;
     hyprcapture::CaptureMode     m_mode;
     bool                      m_quick = false;
     bool                      m_dragging = false;
     bool                      m_finishing = false;
+    bool                      m_fadeOutStarted = false;
+    double                    m_overlayOpacity = 0.0;
     QPoint                    m_dragStart;
     QPoint                    m_dragEnd;
 
     QWidget*     m_toolbar = nullptr;
+    QGraphicsOpacityEffect* m_toolbarOpacity = nullptr;
+    QPropertyAnimation* m_fadeAnimation = nullptr;
     InlineSelect* m_fullscreenScope = nullptr;
+    InlineSelect* m_regionScope = nullptr;
     InlineSelect* m_windowBackground = nullptr;
+    InlineSelect* m_windowBorder = nullptr;
+    InlineSelect* m_windowShadow = nullptr;
     QLabel*      m_status = nullptr;
     QImage       m_desktopImage;
     QRect        m_desktopGeometry;

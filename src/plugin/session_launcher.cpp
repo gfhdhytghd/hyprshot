@@ -83,6 +83,8 @@ LaunchResult launchHelper(const LaunchRequest& request) {
         args.push_back(boolArg(request.defaults.showThumbnail));
         args.push_back("--include-cursor");
         args.push_back(boolArg(request.defaults.includeCursor));
+        args.push_back("--fushion-mode");
+        args.push_back(boolArg(request.defaults.fushionMode));
         args.push_back("--save-dir");
         args.push_back(request.defaults.saveDir);
         args.push_back("--filename-template");

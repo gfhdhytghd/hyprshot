@@ -12,7 +12,9 @@
 #include <QFrame>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -24,11 +26,13 @@
 #include <QPainterPath>
 #include <QPixmap>
 #include <QProcess>
+#include <QPropertyAnimation>
 #include <QPushButton>
 #include <QScreen>
 #include <QSizePolicy>
 #include <QStringList>
 #include <QStyleHints>
+#include <QSvgRenderer>
 #include <QVBoxLayout>
 #include <QTimer>
 
@@ -41,12 +45,15 @@ class InlineSelect final : public QWidget {
     explicit InlineSelect(QWidget* popupParent, QWidget* parent = nullptr);
 
     void addItems(const QStringList& items);
+    void setPrefix(const QString& prefix);
     void setCurrentText(const QString& text);
     QString currentText() const;
+    void setControlVisible(bool visible);
     void hidePopup();
     bool isPopupVisible() const;
 
   private:
+    QString buttonText(const QString& text) const;
     void showPopup();
     void choose(const QString& text);
 
@@ -56,6 +63,7 @@ class InlineSelect final : public QWidget {
     QVBoxLayout* m_panelLayout = nullptr;
     QStringList  m_items;
     QString      m_current;
+    QString      m_prefix;
 };
 
 namespace {
@@ -66,9 +74,35 @@ constexpr int kWindowShadowMaxRgb = 32;
 constexpr int kWindowShadowMaxAlpha = 223;
 constexpr int kWindowBackgroundInteriorRadius = 1;
 constexpr double kWindowFrameFallbackRadius = 8.0;
+constexpr int kOverlayFadeDurationMs = 100;
+constexpr int kModeIconSize = 24;
+
+const char* kFullscreenSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M128 266.666667v490.666666a53.393333 53.393333 0 0 0 53.333333 53.333334h661.333334a53.393333 53.393333 0 0 0 53.333333-53.333334V266.666667a53.393333 53.393333 0 0 0-53.333333-53.333334H181.333333a53.393333 53.393333 0 0 0-53.333333 53.333334z m725.333333 0v490.666666a10.666667 10.666667 0 0 1-10.666666 10.666667H181.333333a10.666667 10.666667 0 0 1-10.666666-10.666667V266.666667a10.666667 10.666667 0 0 1 10.666666-10.666667h661.333334a10.666667 10.666667 0 0 1 10.666666 10.666667z m-597.333333 608a21.333333 21.333333 0 0 1-21.333333 21.333333H96a53.393333 53.393333 0 0 1-53.333333-53.333333v-138.666667a21.333333 21.333333 0 0 1 42.666666 0v138.666667a10.666667 10.666667 0 0 0 10.666667 10.666666h138.666667a21.333333 21.333333 0 0 1 21.333333 21.333334zM42.666667 320V181.333333a53.393333 53.393333 0 0 1 53.333333-53.333333h138.666667a21.333333 21.333333 0 0 1 0 42.666667H96a10.666667 10.666667 0 0 0-10.666667 10.666666v138.666667a21.333333 21.333333 0 0 1-42.666666 0z m938.666666-138.666667v138.666667a21.333333 21.333333 0 0 1-42.666666 0V181.333333a10.666667 10.666667 0 0 0-10.666667-10.666666h-138.666667a21.333333 21.333333 0 0 1 0-42.666667h138.666667a53.393333 53.393333 0 0 1 53.333333 53.333333z m0 522.666667v138.666667a53.393333 53.393333 0 0 1-53.333333 53.333333h-138.666667a21.333333 21.333333 0 0 1 0-42.666667h138.666667a10.666667 10.666667 0 0 0 10.666667-10.666666v-138.666667a21.333333 21.333333 0 0 1 42.666666 0z" fill="#000000"/></svg>)";
+const char* kWindowSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M808.125883 243.195881 134.874315 243.195881c-30.608112 0-55.513338 24.905226-55.513338 55.520501l0 505.178641c0 30.615275 24.905226 55.520501 55.513338 55.520501L808.125883 859.415524c30.607088 0 55.512315-24.905226 55.512315-55.520501L863.638197 298.716382C863.638197 268.101107 838.733994 243.195881 808.125883 243.195881zM835.629283 803.895023c0 15.167444-12.338003 27.510564-27.503401 27.510564L134.874315 831.405587c-15.167444 0-27.504424-12.343119-27.504424-27.510564L107.369891 383.246591l728.259392 0L835.629283 803.895023zM835.629283 355.236654 107.370915 355.236654l0-56.519248c0-15.173584 12.33698-27.510564 27.504424-27.510564L808.125883 271.206842c15.165398 0 27.503401 12.33698 27.503401 27.510564L835.629283 355.236654zM920.166655 131.156132 274.924002 131.156132c-30.608112 0-55.513338 24.905226-55.513338 55.514361l0 28.515451c0 7.734148 6.263657 14.004969 14.005992 14.004969 7.740288 0 14.005992-6.27082 14.005992-14.004969l0-28.515451c0-15.167444 12.33698-27.504424 27.503401-27.504424L920.167678 159.166069c15.165398 0 27.503401 12.33698 27.503401 27.504424l0 519.188726c0 15.167444-12.338003 27.511587-27.503401 27.511587l-28.516474 0c-7.739265 0-14.004969 6.27082-14.004969 14.004969 0 7.736195 6.263657 14.007015 14.004969 14.007015l28.516474 0c30.607088 0 55.512315-24.905226 55.512315-55.521524L975.679993 186.670493C975.67897 156.061358 950.773743 131.156132 920.166655 131.156132zM219.410664 299.216779l-56.019875 0c-7.740288 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.263657 14.011108 14.005992 14.011108l56.019875 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C233.415632 305.487599 227.151975 299.216779 219.410664 299.216779zM331.450413 299.216779l-56.019875 0c-7.741311 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.262634 14.011108 14.005992 14.011108l56.019875 0c7.739265 0 14.004969-6.27082 14.004969-14.011108C345.455381 305.487599 339.191724 299.216779 331.450413 299.216779zM443.490162 299.216779l-56.018851 0c-7.741311 0-14.007015 6.27082-14.007015 13.998829 0 7.740288 6.263657 14.011108 14.007015 14.011108l56.018851 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C457.49513 305.487599 451.231473 299.216779 443.490162 299.216779z" fill="#000000"/></svg>)";
+const char* kRegionSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M960 256V64H768v64H256V64H64v192h64v512H64v192h192v-64h512v64h192V768h-64V256z m-128 512h-64v64H256v-64h-64V256h64v-64h512v64h64z" fill="#000000"/></svg>)";
 
 QString qString(const std::string& value) {
     return QString::fromStdString(value);
+}
+
+double maxScreenDevicePixelRatio() {
+    double dpr = 1.0;
+    for (const auto* screen : QGuiApplication::screens())
+        dpr = std::max(dpr, screen ? screen->devicePixelRatio() : 1.0);
+    return dpr;
+}
+
+QIcon iconFromSvg(const char* svg) {
+    QSvgRenderer renderer{QByteArray(svg)};
+    const double dpr = maxScreenDevicePixelRatio();
+    QPixmap pixmap(QSize(std::max(1, static_cast<int>(std::ceil(kModeIconSize * dpr))),
+                         std::max(1, static_cast<int>(std::ceil(kModeIconSize * dpr)))));
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    renderer.render(&painter, QRectF(0, 0, kModeIconSize, kModeIconSize));
+    return QIcon(pixmap);
 }
 
 QColor followSystemColor() {
@@ -96,6 +130,7 @@ QString toolbarStyleSheet(const QPalette& palette) {
     const QColor border = mixedColor(text, window, 0.55);
     const QColor hover = mixedColor(button, highlight, 0.16);
     const QColor checked = mixedColor(button, highlight, 0.32);
+    const QColor modeChecked = mixedColor(text, window, 0.72);
 
     return QStringLiteral(
                "#toolbar { background: %1; border: 1px solid %2; border-radius: 8px; }"
@@ -103,8 +138,19 @@ QString toolbarStyleSheet(const QPalette& palette) {
                "QPushButton:hover { background: %4; }"
                "QPushButton:checked { color: %3; background: %5; }"
                "QPushButton:pressed { color: %6; background: %7; }"
+               "QPushButton#captureModeButton { padding: 4px 6px; background: transparent; }"
+               "QPushButton#captureModeButton:hover { background: transparent; }"
+               "QPushButton#captureModeButton:checked { background: %8; border-radius: 7px; }"
+               "QPushButton#captureModeButton:pressed { background: %8; border-radius: 7px; }"
                "QLabel { color: %3; }")
-        .arg(cssRgba(window, 238), cssRgba(border, 150), cssRgba(text), cssRgba(hover, 180), cssRgba(checked, 220), cssRgba(highlightedText), cssRgba(highlight), cssRgba(button, 170));
+        .arg(cssRgba(window, 238),
+             cssRgba(border, 150),
+             cssRgba(text),
+             cssRgba(hover, 180),
+             cssRgba(checked, 220),
+             cssRgba(highlightedText),
+             cssRgba(highlight),
+             cssRgba(modeChecked));
 }
 
 QString popupStyleSheet(const QPalette& palette) {
@@ -499,7 +545,7 @@ void InlineSelect::addItems(const QStringList& items) {
     int width = 0;
     const auto metrics = m_button->fontMetrics();
     for (const auto& item : m_items)
-        width = std::max(width, metrics.horizontalAdvance(item + QStringLiteral("  ▾")) + 34);
+        width = std::max(width, metrics.horizontalAdvance(buttonText(item)) + 34);
     m_button->setMinimumWidth(width);
     m_panel->setMinimumWidth(width);
 
@@ -507,15 +553,31 @@ void InlineSelect::addItems(const QStringList& items) {
         setCurrentText(m_items.first());
 }
 
+void InlineSelect::setPrefix(const QString& prefix) {
+    m_prefix = prefix;
+    if (!m_current.isEmpty())
+        m_button->setText(buttonText(m_current));
+}
+
 void InlineSelect::setCurrentText(const QString& text) {
     m_current = text;
-    m_button->setText(text + QStringLiteral("  ▾"));
+    m_button->setText(buttonText(text));
     for (auto* button : m_panel->findChildren<QPushButton*>())
         button->setChecked(button->text() == text);
 }
 
 QString InlineSelect::currentText() const {
     return m_current;
+}
+
+void InlineSelect::setControlVisible(bool visible) {
+    if (!visible)
+        hidePopup();
+
+    setVisible(visible);
+    setMaximumSize(visible ? QSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX) : QSize(0, 0));
+    setSizePolicy(visible ? QSizePolicy::Fixed : QSizePolicy::Ignored, visible ? QSizePolicy::Fixed : QSizePolicy::Ignored);
+    updateGeometry();
 }
 
 void InlineSelect::hidePopup() {
@@ -527,6 +589,12 @@ void InlineSelect::hidePopup() {
 
 bool InlineSelect::isPopupVisible() const {
     return m_panel->isVisible();
+}
+
+QString InlineSelect::buttonText(const QString& text) const {
+    if (m_prefix.isEmpty())
+        return text + QStringLiteral("  ▾");
+    return m_prefix + QStringLiteral(": ") + text + QStringLiteral("  ▾");
 }
 
 void InlineSelect::showPopup() {
@@ -630,14 +698,26 @@ void CaptureOverlay::captureScreensBeforeOverlay() {
     if (!m_desktopGeometry.isValid())
         return;
 
-    m_desktopImage = QImage(m_desktopGeometry.size(), QImage::Format_RGBA8888);
-    m_desktopImage.fill(QColor(30, 34, 38));
-
-    QPainter painter(&m_desktopImage);
     if (!m_monitorArtifacts.empty()) {
+        double scaleX = 1.0;
+        double scaleY = 1.0;
         for (const auto& artifact : m_monitorArtifacts) {
-            const QPoint target = artifact.logicalGeometry.topLeft() - m_desktopGeometry.topLeft();
-            painter.drawImage(QRect(target, artifact.logicalGeometry.size()), artifact.image);
+            if (!artifact.image.isNull() && artifact.logicalGeometry.isValid()) {
+                scaleX = std::max(scaleX, static_cast<double>(artifact.image.width()) / std::max(1, artifact.logicalGeometry.width()));
+                scaleY = std::max(scaleY, static_cast<double>(artifact.image.height()) / std::max(1, artifact.logicalGeometry.height()));
+            }
+        }
+
+        const QSize imageSize(std::max(1, static_cast<int>(std::ceil(m_desktopGeometry.width() * scaleX))),
+                              std::max(1, static_cast<int>(std::ceil(m_desktopGeometry.height() * scaleY))));
+        m_desktopImage = QImage(imageSize, QImage::Format_RGBA8888);
+        m_desktopImage.fill(QColor(30, 34, 38));
+
+        QPainter painter(&m_desktopImage);
+        for (const auto& artifact : m_monitorArtifacts) {
+            const QRect target = logicalRectToOutputRect(artifact.logicalGeometry, m_desktopGeometry, scaleX, scaleY).intersected(m_desktopImage.rect());
+            if (target.isValid())
+                painter.drawImage(target, artifact.image);
         }
         return;
     }
@@ -647,18 +727,26 @@ void CaptureOverlay::captureScreensBeforeOverlay() {
     if (grim.waitForFinished(1500) && grim.exitStatus() == QProcess::NormalExit && grim.exitCode() == 0) {
         QImage grimImage;
         if (grimImage.loadFromData(grim.readAllStandardOutput(), "PNG") && !grimImage.isNull()) {
-            painter.drawImage(m_desktopImage.rect(), grimImage);
+            m_desktopImage = grimImage.convertToFormat(QImage::Format_RGBA8888);
             return;
         }
     }
 
+    const double scale = maxScreenDevicePixelRatio();
+    const QSize imageSize(std::max(1, static_cast<int>(std::ceil(m_desktopGeometry.width() * scale))),
+                          std::max(1, static_cast<int>(std::ceil(m_desktopGeometry.height() * scale))));
+    m_desktopImage = QImage(imageSize, QImage::Format_RGBA8888);
+    m_desktopImage.fill(QColor(30, 34, 38));
+
+    QPainter painter(&m_desktopImage);
     const auto screens = QGuiApplication::screens();
     for (auto* screen : screens) {
         const QPixmap pixmap = screen->grabWindow(0);
         if (pixmap.isNull())
             continue;
-        const QPoint target = screen->geometry().topLeft() - m_desktopGeometry.topLeft();
-        painter.drawPixmap(target, pixmap);
+        const QRect target = logicalRectToOutputRect(screen->geometry(), m_desktopGeometry, scale, scale).intersected(m_desktopImage.rect());
+        if (target.isValid())
+            painter.drawPixmap(target, pixmap);
     }
 }
 
@@ -667,14 +755,23 @@ void CaptureOverlay::buildToolbar() {
     m_toolbar->setObjectName("toolbar");
     m_toolbar->setAttribute(Qt::WA_StyledBackground);
     m_toolbar->setStyleSheet(toolbarStyleSheet(QApplication::palette()));
+    m_toolbarOpacity = new QGraphicsOpacityEffect(m_toolbar);
+    m_toolbarOpacity->setOpacity(m_overlayOpacity);
+    m_toolbar->setGraphicsEffect(m_toolbarOpacity);
 
     auto* layout = new QHBoxLayout(m_toolbar);
     layout->setContentsMargins(10, 7, 10, 7);
     layout->setSizeConstraint(QLayout::SetFixedSize);
 
     auto* group = new QButtonGroup(this);
-    const auto addMode = [&](const QString& label, hyprcapture::CaptureMode mode) {
-        auto* button = new QPushButton(label, m_toolbar);
+    const auto addMode = [&](const QString& tooltip, hyprcapture::CaptureMode mode, const QIcon& icon) {
+        auto* button = new QPushButton(m_toolbar);
+        button->setObjectName("captureModeButton");
+        button->setIcon(icon);
+        button->setIconSize(QSize(kModeIconSize, kModeIconSize));
+        button->setFixedSize(36, 32);
+        button->setToolTip(tooltip);
+        button->setAccessibleName(tooltip);
         button->setCheckable(true);
         button->setChecked(mode == m_mode);
         group->addButton(button);
@@ -682,23 +779,43 @@ void CaptureOverlay::buildToolbar() {
         connect(button, &QPushButton::clicked, this, [this, mode] {
             const bool wasActiveMode = m_mode == mode;
             setMode(mode);
-            if (mode == hyprcapture::CaptureMode::Fullscreen && wasActiveMode)
+            if (mode == hyprcapture::CaptureMode::Fullscreen && (m_defaults.fushionMode || wasActiveMode))
                 finishCapture();
         });
     };
-    addMode("Full", hyprcapture::CaptureMode::Fullscreen);
-    addMode("Region", hyprcapture::CaptureMode::Region);
-    addMode("Window", hyprcapture::CaptureMode::Window);
+    addMode("Fullscreen", hyprcapture::CaptureMode::Fullscreen, iconFromSvg(kFullscreenSvg));
+    addMode("Region", hyprcapture::CaptureMode::Region, iconFromSvg(kRegionSvg));
+    addMode("Window", hyprcapture::CaptureMode::Window, iconFromSvg(kWindowSvg));
 
     m_fullscreenScope = new InlineSelect(this, m_toolbar);
+    m_fullscreenScope->setPrefix("Full");
     m_fullscreenScope->addItems(QStringList{"all", "current", "per-monitor"});
     m_fullscreenScope->setCurrentText(qString(hyprcapture::toString(m_defaults.fullscreenScope)));
     layout->addWidget(m_fullscreenScope);
 
+    m_regionScope = new InlineSelect(this, m_toolbar);
+    m_regionScope->setPrefix("Region");
+    m_regionScope->addItems(QStringList{"global", "current-monitor"});
+    m_regionScope->setCurrentText(qString(hyprcapture::toString(m_defaults.regionScope)));
+    layout->addWidget(m_regionScope);
+
     m_windowBackground = new InlineSelect(this, m_toolbar);
+    m_windowBackground->setPrefix("Bg");
     m_windowBackground->addItems(QStringList{"follow-system", "white", "black", "real", "transparent"});
     m_windowBackground->setCurrentText(qString(hyprcapture::toString(m_defaults.windowBackground)));
     layout->addWidget(m_windowBackground);
+
+    m_windowBorder = new InlineSelect(this, m_toolbar);
+    m_windowBorder->setPrefix("Border");
+    m_windowBorder->addItems(QStringList{"keep", "remove"});
+    m_windowBorder->setCurrentText(qString(hyprcapture::toString(m_defaults.windowBorder)));
+    layout->addWidget(m_windowBorder);
+
+    m_windowShadow = new InlineSelect(this, m_toolbar);
+    m_windowShadow->setPrefix("Shadow");
+    m_windowShadow->addItems(QStringList{"keep", "remove"});
+    m_windowShadow->setCurrentText(qString(hyprcapture::toString(m_defaults.windowShadow)));
+    layout->addWidget(m_windowShadow);
 
     auto* cancel = new QPushButton("Cancel", m_toolbar);
     layout->addWidget(cancel);
@@ -712,11 +829,81 @@ void CaptureOverlay::buildToolbar() {
     relayoutToolbar();
 }
 
-void CaptureOverlay::setMode(hyprcapture::CaptureMode mode) {
+double CaptureOverlay::overlayOpacity() const {
+    return m_overlayOpacity;
+}
+
+void CaptureOverlay::setOverlayOpacity(double opacity) {
+    m_overlayOpacity = std::clamp(opacity, 0.0, 1.0);
+    if (m_toolbarOpacity)
+        m_toolbarOpacity->setOpacity(m_overlayOpacity);
+    update();
+}
+
+void CaptureOverlay::runOverlayFade(double start, double end, std::function<void()> finished) {
+    if (m_fadeAnimation) {
+        m_fadeAnimation->stop();
+        m_fadeAnimation->deleteLater();
+        m_fadeAnimation = nullptr;
+    }
+
+    setOverlayOpacity(start);
+
+    auto* animation = new QPropertyAnimation(this, "overlayOpacity", this);
+    m_fadeAnimation = animation;
+    animation->setDuration(kOverlayFadeDurationMs);
+    animation->setStartValue(start);
+    animation->setEndValue(end);
+    animation->setEasingCurve(QEasingCurve::InOutCubic);
+    connect(animation, &QPropertyAnimation::finished, this, [this, animation, finished = std::move(finished)]() mutable {
+        if (m_fadeAnimation == animation)
+            m_fadeAnimation = nullptr;
+        animation->deleteLater();
+        if (finished)
+            finished();
+    });
+    animation->start();
+}
+
+void CaptureOverlay::startFadeIn() {
+    runOverlayFade(m_overlayOpacity, 1.0, {});
+}
+
+void CaptureOverlay::fadeOutThen(std::function<void()> finished) {
+    if (m_fadeOutStarted)
+        return;
+    m_fadeOutStarted = true;
+
+    hideOptionPopups();
+
+    runOverlayFade(m_overlayOpacity, 0.0, [this, finished = std::move(finished)]() mutable {
+        hide();
+        if (finished)
+            finished();
+    });
+}
+
+void CaptureOverlay::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+    if (!m_fadeOutStarted && m_overlayOpacity < 1.0)
+        startFadeIn();
+}
+
+void CaptureOverlay::hideOptionPopups() {
     if (m_fullscreenScope)
         m_fullscreenScope->hidePopup();
+    if (m_regionScope)
+        m_regionScope->hidePopup();
     if (m_windowBackground)
         m_windowBackground->hidePopup();
+    if (m_windowBorder)
+        m_windowBorder->hidePopup();
+    if (m_windowShadow)
+        m_windowShadow->hidePopup();
+}
+
+void CaptureOverlay::setMode(hyprcapture::CaptureMode mode) {
+    hideOptionPopups();
 
     m_mode = mode;
     updateToolbarControlsForMode();
@@ -726,38 +913,127 @@ void CaptureOverlay::setMode(hyprcapture::CaptureMode mode) {
 
 void CaptureOverlay::updateToolbarControlsForMode() {
     if (m_fullscreenScope) {
-        if (m_mode != hyprcapture::CaptureMode::Fullscreen)
-            m_fullscreenScope->hidePopup();
-        m_fullscreenScope->setVisible(m_mode == hyprcapture::CaptureMode::Fullscreen);
+        const bool visible = hasMultipleMonitors() && (m_defaults.fushionMode || m_mode == hyprcapture::CaptureMode::Fullscreen);
+        m_fullscreenScope->setControlVisible(visible);
+    }
+
+    if (m_regionScope) {
+        const bool visible = m_defaults.fushionMode || m_mode == hyprcapture::CaptureMode::Region;
+        m_regionScope->setControlVisible(visible);
     }
 
     if (m_windowBackground) {
-        if (m_mode != hyprcapture::CaptureMode::Window)
-            m_windowBackground->hidePopup();
-        m_windowBackground->setVisible(m_mode == hyprcapture::CaptureMode::Window);
+        const bool visible = m_defaults.fushionMode || m_mode == hyprcapture::CaptureMode::Window;
+        m_windowBackground->setControlVisible(visible);
+    }
+
+    if (m_windowBorder) {
+        const bool visible = m_defaults.fushionMode || m_mode == hyprcapture::CaptureMode::Window;
+        m_windowBorder->setControlVisible(visible);
+    }
+
+    if (m_windowShadow) {
+        const bool visible = m_defaults.fushionMode || m_mode == hyprcapture::CaptureMode::Window;
+        m_windowShadow->setControlVisible(visible);
     }
 
     relayoutToolbar();
 }
 
+int CaptureOverlay::monitorCount() const {
+    const int qtScreens = QGuiApplication::screens().size();
+    if (qtScreens > 0)
+        return qtScreens;
+    return m_sessionMonitorCount;
+}
+
+bool CaptureOverlay::hasMultipleMonitors() const {
+    return monitorCount() > 1;
+}
+
+hyprcapture::FullscreenScope CaptureOverlay::currentFullscreenScope() const {
+    if (!m_fullscreenScope || !hasMultipleMonitors())
+        return hyprcapture::FullscreenScope::All;
+    return hyprcapture::parseFullscreenScope(m_fullscreenScope->currentText().toStdString(), m_defaults.fullscreenScope);
+}
+
+hyprcapture::RegionScope CaptureOverlay::currentRegionScope() const {
+    if (!m_regionScope)
+        return m_defaults.regionScope;
+    return hyprcapture::parseRegionScope(m_regionScope->currentText().toStdString(), m_defaults.regionScope);
+}
+
+hyprcapture::WindowBackground CaptureOverlay::currentWindowBackground() const {
+    if (!m_windowBackground)
+        return m_defaults.windowBackground;
+    return hyprcapture::parseWindowBackground(m_windowBackground->currentText().toStdString(), m_defaults.windowBackground);
+}
+
+hyprcapture::DecorationPolicy CaptureOverlay::currentWindowBorder() const {
+    if (!m_windowBorder)
+        return m_defaults.windowBorder;
+    return hyprcapture::parseDecorationPolicy(m_windowBorder->currentText().toStdString(), m_defaults.windowBorder);
+}
+
+hyprcapture::DecorationPolicy CaptureOverlay::currentWindowShadow() const {
+    if (!m_windowShadow)
+        return m_defaults.windowShadow;
+    return hyprcapture::parseDecorationPolicy(m_windowShadow->currentText().toStdString(), m_defaults.windowShadow);
+}
+
+void CaptureOverlay::paintDesktop(QPainter& painter, const QRect& target) const {
+    if (!target.isValid())
+        return;
+
+    if (!m_monitorArtifacts.empty()) {
+        painter.save();
+        painter.setClipRect(target);
+        painter.fillRect(target, QColor(30, 34, 38));
+
+        const QRect globalTarget(QPoint(mapToGlobal(target.topLeft())), target.size());
+        for (const auto& artifact : m_monitorArtifacts) {
+            if (artifact.image.isNull() || !artifact.logicalGeometry.isValid())
+                continue;
+
+            const QRect logicalPart = globalTarget.intersected(artifact.logicalGeometry);
+            if (!logicalPart.isValid())
+                continue;
+
+            const QRect source = logicalRectToImageRect(logicalPart, artifact.logicalGeometry, artifact.image.size());
+            const QRect localTarget = globalToLocalRect(logicalPart).intersected(target);
+            if (source.isValid() && localTarget.isValid())
+                painter.drawImage(localTarget, artifact.image, source);
+        }
+        painter.restore();
+        return;
+    }
+
+    if (m_desktopImage.isNull()) {
+        painter.fillRect(target, QColor(30, 34, 38));
+        return;
+    }
+
+    const QRect source = localToDesktopSourceRect(target);
+    if (source.isValid())
+        painter.drawImage(target, m_desktopImage, source);
+    else
+        painter.fillRect(target, QColor(30, 34, 38));
+}
+
 void CaptureOverlay::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    const auto paintDesktop = [&](const QRect& target) {
-        if (m_desktopImage.isNull()) {
-            painter.fillRect(target, QColor(30, 34, 38));
-            return;
-        }
+    painter.setCompositionMode(QPainter::CompositionMode_Source);
+    painter.fillRect(rect(), Qt::transparent);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    painter.setOpacity(m_overlayOpacity);
 
-        painter.drawImage(target, m_desktopImage, localToDesktopSourceRect(target));
-    };
-
-    paintDesktop(rect());
+    paintDesktop(painter, rect());
     painter.fillRect(rect(), QColor(0, 0, 0, 80));
 
     if (m_mode == hyprcapture::CaptureMode::Region && (m_dragging || !normalizedSelection().isNull())) {
-        const QRect sel = normalizedSelection();
-        paintDesktop(sel);
+        const QRect sel = normalizedSelection().intersected(regionCaptureBounds());
+        paintDesktop(painter, sel);
         painter.setPen(QPen(QColor(255, 255, 255, 230), 2));
         painter.drawRect(sel.adjusted(0, 0, -1, -1));
     } else if (m_mode == hyprcapture::CaptureMode::Window) {
@@ -778,10 +1054,7 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
 void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
     if (m_toolbar->geometry().contains(event->pos()))
         return;
-    if (m_fullscreenScope)
-        m_fullscreenScope->hidePopup();
-    if (m_windowBackground)
-        m_windowBackground->hidePopup();
+    hideOptionPopups();
     if (event->button() != Qt::LeftButton)
         return;
 
@@ -795,7 +1068,7 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
 
     m_dragging = true;
     m_dragStart = event->pos();
-    m_dragEnd = event->pos();
+    m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
     update();
 }
 
@@ -807,7 +1080,7 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
     }
     if (!m_dragging)
         return;
-    m_dragEnd = event->pos();
+    m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
     update();
 }
 
@@ -819,7 +1092,7 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event) {
         return;
     }
     m_dragging = false;
-    m_dragEnd = event->pos();
+    m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
     if (m_mode != hyprcapture::CaptureMode::Region || normalizedSelection().width() > 4)
         finishCapture();
 }
@@ -843,21 +1116,61 @@ QRect CaptureOverlay::normalizedSelection() const {
 
 QRect CaptureOverlay::captureRectForMode() const {
     if (m_mode == hyprcapture::CaptureMode::Region && normalizedSelection().isValid())
-        return normalizedSelection();
+        return normalizedSelection().intersected(regionCaptureBounds());
     if (m_mode == hyprcapture::CaptureMode::Window) {
         if (const auto* window = hoveredWindow())
             return globalToLocalRect(windowFrameGeometry(*window));
         return {};
     }
+    return fullscreenCaptureRect();
+}
+
+QRect CaptureOverlay::fullscreenCaptureRect() const {
+    if (currentFullscreenScope() == hyprcapture::FullscreenScope::Current)
+        return localScreenRectAt(mapFromGlobal(QCursor::pos()));
     return rect();
+}
+
+QRect CaptureOverlay::regionCaptureBounds() const {
+    if (currentRegionScope() == hyprcapture::RegionScope::CurrentMonitor)
+        return localScreenRectAt(m_dragStart);
+    return rect();
+}
+
+QRect CaptureOverlay::localScreenRectAt(const QPoint& localPos) const {
+    QScreen* screen = QGuiApplication::screenAt(mapToGlobal(localPos));
+    if (!screen)
+        screen = QGuiApplication::screenAt(QCursor::pos());
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    return screen ? globalToLocalRect(screen->geometry()).intersected(rect()) : rect();
+}
+
+QPoint CaptureOverlay::clampedToRect(const QPoint& point, const QRect& bounds) const {
+    if (!bounds.isValid())
+        return point;
+    return QPoint(std::clamp(point.x(), bounds.left(), bounds.right()), std::clamp(point.y(), bounds.top(), bounds.bottom()));
 }
 
 QRect CaptureOverlay::globalToLocalRect(const QRect& rect) const {
     return QRect(mapFromGlobal(rect.topLeft()), rect.size());
 }
 
+QRect CaptureOverlay::desktopSourceRectForGlobalRect(const QRect& rect) const {
+    if (m_desktopImage.isNull() || !m_desktopGeometry.isValid() || !rect.isValid())
+        return {};
+
+    const QRect clipped = rect.intersected(m_desktopGeometry);
+    if (!clipped.isValid())
+        return {};
+
+    const double scaleX = static_cast<double>(m_desktopImage.width()) / std::max(1, m_desktopGeometry.width());
+    const double scaleY = static_cast<double>(m_desktopImage.height()) / std::max(1, m_desktopGeometry.height());
+    return logicalRectToOutputRect(clipped, m_desktopGeometry, scaleX, scaleY).intersected(m_desktopImage.rect());
+}
+
 QRect CaptureOverlay::localToDesktopSourceRect(const QRect& rect) const {
-    return QRect(mapToGlobal(rect.topLeft()) - m_desktopGeometry.topLeft(), rect.size());
+    return desktopSourceRectForGlobalRect(QRect(QPoint(mapToGlobal(rect.topLeft())), rect.size()));
 }
 
 QPoint CaptureOverlay::cursorLogicalPosition() const {
@@ -978,14 +1291,14 @@ QImage CaptureOverlay::renderDesktopRectAtDisplayResolution(const QRect& globalR
 }
 
 QImage CaptureOverlay::renderResultImage() const {
-    const auto bg = hyprcapture::parseWindowBackground(m_windowBackground->currentText().toStdString(), m_defaults.windowBackground);
+    const auto bg = currentWindowBackground();
     if (m_mode == hyprcapture::CaptureMode::Window) {
         const auto* windowArtifact = hoveredWindow();
         if (!windowArtifact || windowArtifact->image.isNull())
             return {};
 
         QRect artifactSource = windowArtifact->image.rect();
-        const bool cropDecorations = m_defaults.windowBorder == hyprcapture::DecorationPolicy::Remove || m_defaults.windowShadow == hyprcapture::DecorationPolicy::Remove;
+        const bool cropDecorations = currentWindowBorder() == hyprcapture::DecorationPolicy::Remove || currentWindowShadow() == hyprcapture::DecorationPolicy::Remove;
         if (cropDecorations && windowArtifact->visibleGeometry.isValid() && windowArtifact->fullGeometry.contains(windowArtifact->visibleGeometry)) {
             const double scaleX = static_cast<double>(windowArtifact->image.width()) / std::max(1, windowArtifact->fullGeometry.width());
             const double scaleY = static_cast<double>(windowArtifact->image.height()) / std::max(1, windowArtifact->fullGeometry.height());
@@ -1006,7 +1319,7 @@ QImage CaptureOverlay::renderResultImage() const {
         QImage background(image.size(), QImage::Format_RGBA8888);
         background.fill(Qt::transparent);
         const QRect logicalSource = artifactRectToLogicalRect(artifactSource, repairedArtifact.size(), windowArtifact->fullGeometry);
-        const QRect desktopSource = QRect(logicalSource.topLeft() - m_desktopGeometry.topLeft(), logicalSource.size());
+        const QRect desktopSource = desktopSourceRectForGlobalRect(logicalSource);
         const QImage maskArtifact = repairedArtifact.format() == QImage::Format_RGBA8888 ? repairedArtifact : repairedArtifact.convertToFormat(QImage::Format_RGBA8888);
         bool         paintedBackground = false;
         if (bg == hyprcapture::WindowBackground::Real && !windowArtifact->realBackground.isNull()) {
@@ -1037,13 +1350,14 @@ QImage CaptureOverlay::renderResultImage() const {
             return highResolution;
     }
 
-    QImage image(cap.size().expandedTo(QSize(1, 1)), QImage::Format_ARGB32_Premultiplied);
+    const QRect desktopSource = localToDesktopSourceRect(cap);
+    const QSize outputSize = desktopSource.isValid() ? desktopSource.size() : cap.size();
+    QImage image(outputSize.expandedTo(QSize(1, 1)), QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
 
     QPainter painter(&image);
-    const QRect desktopSource = localToDesktopSourceRect(cap);
 
-    if (m_mode != hyprcapture::CaptureMode::Window && !m_desktopImage.isNull()) {
+    if (m_mode != hyprcapture::CaptureMode::Window && !m_desktopImage.isNull() && desktopSource.isValid()) {
         painter.drawImage(image.rect(), m_desktopImage, desktopSource);
     } else if (m_mode == hyprcapture::CaptureMode::Window && bg == hyprcapture::WindowBackground::Real && !m_desktopImage.isNull()) {
         painter.drawImage(image.rect(), m_desktopImage, desktopSource);
@@ -1094,12 +1408,12 @@ void CaptureOverlay::saveImage(const QImage& image) {
         hyprcapture::ui::copyImageToClipboard(image);
     }
 
-    if (m_defaults.showThumbnail)
-        showThumbnail(image, savedPath, restoreClipboardPath);
+    if (m_defaults.showThumbnail) {
+        fadeOutThen([this, image, savedPath, restoreClipboardPath] { showThumbnail(image, savedPath, restoreClipboardPath); });
+        return;
+    }
 
-    hide();
-    if (!m_defaults.showThumbnail)
-        qApp->quit();
+    fadeOutThen([] { qApp->quit(); });
 }
 
 void CaptureOverlay::showThumbnail(const QImage& image, const QString& path, const QString& restoreClipboardPath) {
@@ -1117,6 +1431,5 @@ void CaptureOverlay::showThumbnail(const QImage& image, const QString& path, con
 }
 
 void CaptureOverlay::cancelCapture() {
-    close();
-    qApp->quit();
+    fadeOutThen([] { qApp->quit(); });
 }

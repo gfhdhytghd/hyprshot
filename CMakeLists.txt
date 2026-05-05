@@ -24,7 +24,7 @@ add_compile_options(
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(HYPR_DEPS REQUIRED hyprland)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg)
 find_package(LayerShellQt REQUIRED)
 
 add_library(hyprcapture SHARED
@@ -49,7 +49,7 @@ add_executable(hyprcapture-ui
 )
 
 target_include_directories(hyprcapture-ui PRIVATE src)
-target_link_libraries(hyprcapture-ui PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets LayerShellQt::Interface)
+target_link_libraries(hyprcapture-ui PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg LayerShellQt::Interface)
 
 if(BUILD_TESTING)
   add_executable(hyprcapture-config-test

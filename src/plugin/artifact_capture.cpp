@@ -845,7 +845,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
     session.defaults = defaults;
     const auto root = artifactRoot(session.id);
     const auto frozenTime = Time::steadyNow();
-    const bool renderDecorations = defaults.windowBorder == DecorationPolicy::Keep || defaults.windowShadow == DecorationPolicy::Keep;
+    const bool renderDecorations = defaults.fushionMode || defaults.windowBorder == DecorationPolicy::Keep || defaults.windowShadow == DecorationPolicy::Keep;
 
     int monitorIndex = 0;
     for (const auto& monitor : g_pCompositor->m_monitors) {

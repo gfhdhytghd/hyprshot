@@ -49,6 +49,7 @@ int main(int argc, char** argv) {
         {"clipboard", "Copy output.", "0|1", "1"},
         {"thumbnail", "Show thumbnail.", "0|1", "1"},
         {"include-cursor", "Include cursor.", "0|1", "0"},
+        {{"fushion-mode", "fusion-mode"}, "Enable fushion toolbar behavior.", "0|1", "0"},
         {"save-dir", "Save directory.", "path", "~/Pictures/Screenshots"},
         {"filename-template", "Filename strftime template.", "template", "Screenshot-%Y-%m-%d-%H%M%S.png"},
         {"thumbnail-timeout-ms", "Thumbnail timeout.", "ms", "5000"},
@@ -79,6 +80,7 @@ int main(int argc, char** argv) {
     defaults.clipboard = flagValue(parser, "clipboard", defaults.clipboard);
     defaults.showThumbnail = flagValue(parser, "thumbnail", defaults.showThumbnail);
     defaults.includeCursor = flagValue(parser, "include-cursor", defaults.includeCursor);
+    defaults.fushionMode = flagValue(parser, "fushion-mode", defaults.fushionMode);
     defaults.saveDir = parser.value("save-dir").toStdString();
     defaults.filenameTemplate = parser.value("filename-template").toStdString();
     defaults.thumbnailTimeoutMs = parser.value("thumbnail-timeout-ms").toLongLong();

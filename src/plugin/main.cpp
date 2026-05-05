@@ -3,6 +3,9 @@
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
+#include <hyprland/src/desktop/rule/Engine.hpp>
+#include <hyprland/src/desktop/rule/layerRule/LayerRule.hpp>
+#include <hyprland/src/desktop/rule/layerRule/LayerRuleEffectContainer.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 
 #include "plugin/session_launcher.hpp"
@@ -10,6 +13,8 @@
 inline HANDLE g_pluginHandle = nullptr;
 
 namespace {
+
+constexpr const char* kOverlayLayerRuleName = "hyprcapture-ui-no-compositor-anim";
 
 template <typename T>
 T configValue(const std::string& name, T fallback) {
@@ -55,6 +60,7 @@ hyprcapture::CaptureDefaults readDefaults() {
     defaults.clipboard = configInt("clipboard", defaults.clipboard ? 1 : 0) != 0;
     defaults.showThumbnail = configInt("show_thumbnail", defaults.showThumbnail ? 1 : 0) != 0;
     defaults.includeCursor = configInt("include_cursor", defaults.includeCursor ? 1 : 0) != 0;
+    defaults.fushionMode = configInt("fushion_mode", defaults.fushionMode ? 1 : 0) != 0;
     defaults.saveDir = configString("save_dir", defaults.saveDir);
     defaults.filenameTemplate = configString("filename_template", defaults.filenameTemplate);
     defaults.helper = configString("helper", defaults.helper);
@@ -62,7 +68,20 @@ hyprcapture::CaptureDefaults readDefaults() {
     return defaults;
 }
 
+void installOverlayLayerRule() {
+    using namespace Desktop::Rule;
+
+    ruleEngine()->unregisterRule(kOverlayLayerRuleName);
+
+    SP<CLayerRule> rule = makeShared<CLayerRule>(kOverlayLayerRuleName);
+    rule->registerMatch(RULE_PROP_NAMESPACE, "^hyprcapture-ui$");
+    rule->addEffect(LAYER_RULE_EFFECT_NO_ANIM, "1");
+    ruleEngine()->registerRule(SP<IRule>{rule});
+}
+
 SDispatchResult openCapture(const std::string& args, bool quick) {
+    installOverlayLayerRule();
+
     auto defaults = readDefaults();
     const auto requestedMode = hyprcapture::parseCaptureMode(args, defaults.mode);
     const auto result = hyprcapture::launchHelper({.defaults = defaults, .requestedMode = requestedMode, .quick = quick});
@@ -104,6 +123,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:clipboard", Hyprlang::INT{1});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:show_thumbnail", Hyprlang::INT{1});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:include_cursor", Hyprlang::INT{0});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:fushion_mode", Hyprlang::INT{0});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:save_dir", Hyprlang::STRING{"~/Pictures/Screenshots"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:filename_template", Hyprlang::STRING{"Screenshot-%Y-%m-%d-%H%M%S.png"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:thumbnail_timeout_ms", Hyprlang::INT{5000});
@@ -113,6 +133,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:quick", dispatchQuick);
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:cancel", dispatchCancel);
     HyprlandAPI::reloadConfig();
+    installOverlayLayerRule();
 
     return {
         .name = "HyprCapture",
@@ -123,5 +144,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    Desktop::Rule::ruleEngine()->unregisterRule(kOverlayLayerRuleName);
     g_pluginHandle = nullptr;
 }

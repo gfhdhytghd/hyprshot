@@ -166,6 +166,7 @@ plugin {
         save = 1
         clipboard = 1
         show_thumbnail = 1
+        fushion_mode = 0
         save_dir = ~/Pictures/Screenshots
         filename_template = Screenshot-%Y-%m-%d-%H%M%S.png
         include_cursor = 0
@@ -186,6 +187,7 @@ plugin {
 | `window_border` | string | `keep` | Window border policy. Supports `keep` and `remove`. |
 | `window_shadow` | string | `keep` | Window shadow policy. Supports `keep` and `remove`. |
 | `include_cursor` | bool | `0` | Parsed and forwarded by the plugin/helper; cursor compositing is not currently rendered into the output. |
+| `fushion_mode` | bool | `0` | Treat the toolbar mode buttons as capture actions: Full captures immediately, Region selects a box, and Window captures with a single click. The toolbar shows all capture controls in this mode; fullscreen multi-monitor scope is shown only when multiple monitors are present. |
 
 ### Output options
 

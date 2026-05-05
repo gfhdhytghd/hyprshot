@@ -32,6 +32,7 @@ int main() {
     CaptureSession session;
     session.id = "test-session";
     session.defaults.mode = CaptureMode::Window;
+    session.defaults.fushionMode = true;
     session.defaults.windowBackground = WindowBackground::FollowSystem;
     session.monitors.push_back({.name = "eDP-1", .logicalGeometry = {.x = 0, .y = 0, .width = 1920, .height = 1080}, .scale = 2.0, .transform = 0});
     session.monitors.back().artifactPath = "/tmp/monitor.rgba";
@@ -54,6 +55,7 @@ int main() {
     session.windows.back().realBackgroundWidth = 200;
     session.windows.back().realBackgroundHeight = 100;
     const auto json = encodeSessionJson(session);
+    assert(json.find("\"fushionMode\":true") != std::string::npos);
     assert(json.find("\"windowBackground\":\"follow-system\"") != std::string::npos);
     assert(json.find("\"fullGeometry\"") != std::string::npos);
     assert(json.find("\"rounding\":12") != std::string::npos);
