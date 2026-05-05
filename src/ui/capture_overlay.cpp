@@ -1397,27 +1397,44 @@ void CaptureOverlay::updateStatus() {
     if (!m_status)
         return;
 
+    const auto setStatusText = [this](const QString& text) {
+        if (text.isEmpty()) {
+            m_status->clear();
+            m_status->hide();
+            m_status->setFixedSize(0, 0);
+            m_status->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+            return;
+        }
+
+        m_status->setVisible(true);
+        m_status->setMinimumSize(0, 0);
+        m_status->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        m_status->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        m_status->setText(text);
+        m_status->adjustSize();
+    };
+
     if (m_mode != hyprcapture::CaptureMode::Window) {
-        m_status->clear();
+        setStatusText({});
         relayoutToolbar();
         return;
     }
 
     if (!windowCaptureAvailable()) {
         if (m_sessionMonitorCount == 0 && m_sessionWindowCount == 0)
-            m_status->setText("plugin reload needed");
+            setStatusText("plugin reload needed");
         else if (m_sessionWindowCount > 0)
-            m_status->setText("window artifact failed");
+            setStatusText("window artifact failed");
         else
-            m_status->setText("no visible windows");
+            setStatusText("no visible windows");
         relayoutToolbar();
         return;
     }
 
     if (hoveredWindow())
-        m_status->clear();
+        setStatusText({});
     else
-        m_status->setText("choose window");
+        setStatusText("choose window");
     relayoutToolbar();
 }
 
