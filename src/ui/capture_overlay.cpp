@@ -1414,7 +1414,10 @@ void CaptureOverlay::updateStatus() {
         return;
     }
 
-    m_status->setText(hoveredWindow() ? QString("window selected") : QString("choose window"));
+    if (hoveredWindow())
+        m_status->clear();
+    else
+        m_status->setText("choose window");
     relayoutToolbar();
 }
 
