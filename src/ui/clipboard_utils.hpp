@@ -3,6 +3,7 @@
 #include <QColor>
 #include <QImage>
 #include <QList>
+#include <QProcessEnvironment>
 #include <QString>
 #include <QUrl>
 
@@ -21,6 +22,11 @@ struct ClipboardSnapshotData {
 };
 
 QString runtimeFile(const QString& prefix, const QString& suffix);
+QString trustedSystemProgram(const QString& name);
+QProcessEnvironment trustedProcessEnvironment();
+bool isPrivateRuntimePath(const QString& path);
+bool isPrivateRuntimeFile(const QString& path, qint64 maxSize);
+bool savePrivatePng(const QImage& image, const QString& path);
 ClipboardSnapshotData captureClipboardSnapshotData();
 QString saveClipboardSnapshotData(const ClipboardSnapshotData& snapshot);
 QString saveClipboardSnapshot();

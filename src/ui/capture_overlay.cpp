@@ -89,6 +89,10 @@ constexpr int kOverlayFadeDurationMs = 100;
 constexpr int kModeIconSize = 24;
 constexpr int kCancelIconSize = 16;
 constexpr int kSelectArrowIconSize = 12;
+constexpr int kMaxArtifactDimension = 32768;
+constexpr qint64 kMaxArtifactBytes = 512LL * 1024LL * 1024LL;
+constexpr int kMaxSessionMonitors = 64;
+constexpr int kMaxSessionWindows = 512;
 
 struct CaptureOutputResult {
     QString savedPath;
@@ -136,9 +140,56 @@ void traceTiming(const QString& event, qint64 elapsedMs = -1) {
 }
 
 bool savePng(const QImage& image, const QString& path) {
-    QImageWriter writer(path, "PNG");
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly))
+        return false;
+    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+
+    QImageWriter writer(&file, "PNG");
     writer.setQuality(75);
-    return writer.write(image);
+    if (!writer.write(image)) {
+        file.remove();
+        return false;
+    }
+    return true;
+}
+
+QString uniqueOutputPath(const QDir& dir, const QString& rawFilename) {
+    QFileInfo info(QFileInfo(rawFilename).fileName());
+    QString   base = info.completeBaseName();
+    QString   suffix = info.suffix();
+    if (base.isEmpty())
+        base = QStringLiteral("Screenshot");
+    if (suffix.isEmpty())
+        suffix = QStringLiteral("png");
+
+    for (int i = 0; i < 1000; ++i) {
+        const QString filename = i == 0 ? QStringLiteral("%1.%2").arg(base, suffix) : QStringLiteral("%1-%2.%3").arg(base).arg(i).arg(suffix);
+        const QString path = dir.filePath(filename);
+        if (!QFileInfo::exists(path))
+            return path;
+    }
+
+    return dir.filePath(QStringLiteral("%1-%2.%3").arg(base).arg(QDateTime::currentMSecsSinceEpoch()).arg(suffix));
+}
+
+void cleanupArtifactFiles(const QStringList& paths) {
+    QStringList dirs;
+    for (const QString& path : paths) {
+        if (!hyprcapture::ui::isPrivateRuntimePath(path))
+            continue;
+        QFile::remove(path);
+        const QString dir = QFileInfo(path).absolutePath();
+        if (!dirs.contains(dir))
+            dirs.push_back(dir);
+    }
+
+    for (const QString& dir : dirs) {
+        if (!hyprcapture::ui::isPrivateRuntimePath(dir))
+            continue;
+        QDir parent(QFileInfo(dir).absolutePath());
+        parent.rmdir(QFileInfo(dir).fileName());
+    }
 }
 
 CaptureOutputResult writeCaptureOutput(const QImage& image,
@@ -161,7 +212,7 @@ CaptureOutputResult writeCaptureOutput(const QImage& image,
         QDir       dir(QString::fromStdString(dirPath.string()));
         if (!dir.exists())
             dir.mkpath(".");
-        const QString path = dir.filePath(QString::fromStdString(hyprcapture::makeTimestampedFilename(defaults.filenameTemplate)));
+        const QString path = uniqueOutputPath(dir, QString::fromStdString(hyprcapture::makeTimestampedFilename(defaults.filenameTemplate)));
         if (savePng(image, path))
             result.savedPath = path;
         traceTiming(QStringLiteral("image_save"), timer.elapsed());
@@ -171,7 +222,7 @@ CaptureOutputResult writeCaptureOutput(const QImage& image,
         QElapsedTimer timer;
         timer.start();
         const QString path = hyprcapture::ui::runtimeFile("thumbnail", ".png");
-        if (savePng(image, path))
+        if (hyprcapture::ui::savePrivatePng(image, path))
             result.savedPath = path;
         traceTiming(QStringLiteral("thumbnail_temp_save"), timer.elapsed());
     }
@@ -291,12 +342,15 @@ bool artifactTopDown(const QJsonObject& obj) {
 
 QImage loadRawRgba(const QString& path, int width, int height, bool topDown) {
     QFile file(path);
-    if (path.isEmpty() || width <= 0 || height <= 0 || !file.open(QIODevice::ReadOnly))
+    if (path.isEmpty() || width <= 0 || height <= 0 || width > kMaxArtifactDimension || height > kMaxArtifactDimension)
+        return {};
+
+    const qint64 expected = static_cast<qint64>(width) * static_cast<qint64>(height) * 4;
+    if (expected <= 0 || expected > kMaxArtifactBytes || !hyprcapture::ui::isPrivateRuntimeFile(path, expected) || !file.open(QIODevice::ReadOnly))
         return {};
 
     const QByteArray bytes = file.readAll();
-    const qsizetype expected = static_cast<qsizetype>(width) * static_cast<qsizetype>(height) * 4;
-    if (bytes.size() < expected)
+    if (bytes.size() != expected)
         return {};
 
     QImage image(reinterpret_cast<const uchar*>(bytes.constData()), width, height, width * 4, QImage::Format_RGBA8888);
@@ -819,15 +873,19 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
 
     const auto monitors = root.value("monitors").toArray();
     const auto windows = root.value("windows").toArray();
-    m_sessionMonitorCount = monitors.size();
-    m_sessionWindowCount = windows.size();
+    m_sessionMonitorCount = std::min(static_cast<int>(monitors.size()), kMaxSessionMonitors);
+    m_sessionWindowCount = std::min(static_cast<int>(windows.size()), kMaxSessionWindows);
+    QStringList artifactFiles;
 
-    for (const auto value : monitors) {
+    for (qsizetype i = 0; i < monitors.size() && i < kMaxSessionMonitors; ++i) {
+        const auto value = monitors.at(i);
         const auto obj = value.toObject();
         MonitorArtifact artifact;
         artifact.name = obj.value("name").toString();
         artifact.logicalGeometry = jsonRect(obj.value("geometry").toObject());
-        artifact.image = loadRawRgba(obj.value("artifactPath").toString(), obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt(), artifactTopDown(obj));
+        const QString artifactPath = obj.value("artifactPath").toString();
+        artifact.image = loadRawRgba(artifactPath, obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt(), artifactTopDown(obj));
+        artifactFiles.push_back(artifactPath);
         if (!artifact.logicalGeometry.isValid())
             continue;
         m_desktopGeometry = m_desktopGeometry.united(artifact.logicalGeometry);
@@ -835,7 +893,8 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
             m_monitorArtifacts.push_back(std::move(artifact));
     }
 
-    for (const auto value : windows) {
+    for (qsizetype i = 0; i < windows.size() && i < kMaxSessionWindows; ++i) {
+        const auto value = windows.at(i);
         const auto obj = value.toObject();
         WindowArtifact artifact;
         artifact.title = obj.value("title").toString();
@@ -845,15 +904,20 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
         artifact.rounding = obj.contains("rounding") ? obj.value("rounding").toDouble(0.0) : kWindowFrameFallbackRadius;
         artifact.roundingPower = obj.value("roundingPower").toDouble(2.0);
         artifact.borderSize = obj.value("borderSize").toDouble(0.0);
-        artifact.image = loadRawRgba(obj.value("artifactPath").toString(), obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt(), artifactTopDown(obj));
-        artifact.realBackground =
-            loadRawRgba(obj.value("realBackgroundPath").toString(),
-                        obj.value("realBackgroundWidth").toInt(),
-                        obj.value("realBackgroundHeight").toInt(),
-                        obj.contains("realBackgroundTopDown") ? obj.value("realBackgroundTopDown").toBool(true) : artifactTopDown(obj));
+        const QString artifactPath = obj.value("artifactPath").toString();
+        const QString realBackgroundPath = obj.value("realBackgroundPath").toString();
+        artifact.image = loadRawRgba(artifactPath, obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt(), artifactTopDown(obj));
+        artifact.realBackground = loadRawRgba(realBackgroundPath,
+                                              obj.value("realBackgroundWidth").toInt(),
+                                              obj.value("realBackgroundHeight").toInt(),
+                                              obj.contains("realBackgroundTopDown") ? obj.value("realBackgroundTopDown").toBool(true) : artifactTopDown(obj));
+        artifactFiles.push_back(artifactPath);
+        artifactFiles.push_back(realBackgroundPath);
         if (artifact.fullGeometry.isValid() && !artifact.image.isNull())
             m_windowArtifacts.push_back(std::move(artifact));
     }
+
+    cleanupArtifactFiles(artifactFiles);
 }
 
 void CaptureOverlay::captureScreensBeforeOverlay() {
@@ -888,8 +952,12 @@ void CaptureOverlay::captureScreensBeforeOverlay() {
         return;
     }
 
-    QProcess grim;
-    grim.start("grim", {"-t", "png", "-"});
+    const QString grimProgram = hyprcapture::ui::trustedSystemProgram(QStringLiteral("grim"));
+    QProcess      grim;
+    if (!grimProgram.isEmpty()) {
+        grim.setProcessEnvironment(hyprcapture::ui::trustedProcessEnvironment());
+        grim.start(grimProgram, {"-t", "png", "-"});
+    }
     if (grim.waitForFinished(1500) && grim.exitStatus() == QProcess::NormalExit && grim.exitCode() == 0) {
         QImage grimImage;
         if (grimImage.loadFromData(grim.readAllStandardOutput(), "PNG") && !grimImage.isNull()) {
@@ -1649,7 +1717,7 @@ void CaptureOverlay::showThumbnail(const QImage& image, const QString& path, con
         QElapsedTimer timer;
         timer.start();
         thumbPath = hyprcapture::ui::runtimeFile("thumbnail", ".png");
-        savePng(image, thumbPath);
+        hyprcapture::ui::savePrivatePng(image, thumbPath);
         traceTiming(QStringLiteral("thumbnail_late_save"), timer.elapsed());
     }
 

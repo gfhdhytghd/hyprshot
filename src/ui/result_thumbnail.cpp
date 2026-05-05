@@ -280,10 +280,13 @@ void ResultThumbnail::wheelEvent(QWheelEvent* event) {
 
 bool ResultThumbnail::openPath(const QString& path) {
     QProcess process;
-    auto environment = QProcessEnvironment::systemEnvironment();
+    auto environment = hyprcapture::ui::trustedProcessEnvironment();
     environment.remove("QT_WAYLAND_SHELL_INTEGRATION");
     process.setProcessEnvironment(environment);
-    process.setProgram("xdg-open");
+    const QString program = hyprcapture::ui::trustedSystemProgram(QStringLiteral("xdg-open"));
+    if (program.isEmpty())
+        return false;
+    process.setProgram(program);
     process.setArguments({path});
     return process.startDetached();
 }

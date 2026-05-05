@@ -16,14 +16,18 @@
 #include <drm_fourcc.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
-#include <fstream>
+#include <fcntl.h>
 #include <sstream>
 #include <system_error>
+#include <sys/stat.h>
 #include <utility>
+#include <unistd.h>
 #include <vector>
 
 extern HANDLE g_pluginHandle;
@@ -79,24 +83,69 @@ bool intersects(const Rect& a, const Rect& b) {
     return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
+bool ensurePrivateDirectory(const std::filesystem::path& path) {
+    const auto native = path.string();
+    if (native.empty())
+        return false;
+
+    if (mkdir(native.c_str(), 0700) != 0 && errno != EEXIST)
+        return false;
+
+    struct stat st {};
+    if (lstat(native.c_str(), &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != geteuid())
+        return false;
+
+    if ((st.st_mode & 0777) != 0700 && chmod(native.c_str(), 0700) != 0)
+        return false;
+
+    return true;
+}
+
 std::filesystem::path artifactRoot(const std::string& sessionId) {
-    for (const auto& base : {std::filesystem::path{"/dev/shm"}, std::filesystem::path{"/tmp"}}) {
-        std::error_code ec;
-        auto root = base / "hyprcapture" / sessionId;
-        std::filesystem::create_directories(root, ec);
-        if (!ec)
+    const auto rootName = "hyprcapture-" + std::to_string(static_cast<unsigned long long>(geteuid()));
+    for (const auto& base : {std::filesystem::path{"/dev/shm"}, std::filesystem::path{"/tmp"}, std::filesystem::temp_directory_path()}) {
+        const auto userRoot = base / rootName;
+        if (!ensurePrivateDirectory(userRoot))
+            continue;
+
+        const auto root = userRoot / sessionId;
+        if (ensurePrivateDirectory(root))
             return root;
     }
 
-    auto root = std::filesystem::temp_directory_path() / "hyprcapture" / sessionId;
-    std::filesystem::create_directories(root);
-    return root;
+    return {};
 }
 
 bool writeRgbaFile(const std::filesystem::path& path, const std::vector<unsigned char>& pixels) {
-    std::ofstream out(path, std::ios::binary);
-    out.write(reinterpret_cast<const char*>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
-    return out.good();
+    const auto native = path.string();
+    const int  fd = open(native.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd < 0)
+        return false;
+
+    const auto* data = reinterpret_cast<const char*>(pixels.data());
+    std::size_t written = 0;
+    while (written < pixels.size()) {
+        const ssize_t chunk = write(fd, data + written, pixels.size() - written);
+        if (chunk < 0) {
+            if (errno == EINTR)
+                continue;
+            close(fd);
+            unlink(native.c_str());
+            return false;
+        }
+        if (chunk == 0) {
+            close(fd);
+            unlink(native.c_str());
+            return false;
+        }
+        written += static_cast<std::size_t>(chunk);
+    }
+
+    if (close(fd) != 0) {
+        unlink(native.c_str());
+        return false;
+    }
+    return true;
 }
 
 unsigned char alphaAt(const RgbaReadback& readback, int x, int y) {
@@ -849,6 +898,8 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
     session.id = makeSessionId();
     session.defaults = defaults;
     const auto root = artifactRoot(session.id);
+    if (root.empty())
+        return session;
     const auto frozenTime = Time::steadyNow();
     const bool renderDecorations = defaults.fushionMode || defaults.windowBorder == DecorationPolicy::Keep || defaults.windowShadow == DecorationPolicy::Keep;
 

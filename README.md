@@ -66,7 +66,10 @@ The plugin default helper lookup is:
 
 1. `HYPRCAPTURE_HELPER`
 2. `$HOME/.local/bin/hyprcapture-ui`
-3. `hyprcapture-ui` from `PATH`
+3. `/usr/local/bin/hyprcapture-ui`
+4. `/usr/bin/hyprcapture-ui`
+
+Helper paths must resolve to trusted regular executables owned by the current user or root, without group/other write permission, and with trusted parent directory permissions.
 
 Only configure `plugin:hyprcapture:helper` if you want to use a custom helper path:
 
@@ -214,13 +217,13 @@ plugin {
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `save` | bool | `1` | Save the output image to `save_dir`. |
+| `save` | bool | `1` | Save the output image to `save_dir` as an owner-only file. |
 | `clipboard` | bool | `1` | Copy the output image to the clipboard. Uses `wl-copy` when available so the clipboard survives helper exit. |
 | `show_thumbnail` | bool | `1` | Show the result thumbnail after capture. |
 | `save_dir` | string | `~/Pictures/Screenshots` | Output directory. `~` is expanded against `HOME`. |
 | `filename_template` | string | `Screenshot-%Y-%m-%d-%H%M%S.png` | `strftime` template for saved screenshot filenames. |
 | `thumbnail_timeout_ms` | int | `5000` | Thumbnail auto-close timeout in milliseconds. Use `0` to keep it open until user action. |
-| `helper` | string | empty | Optional helper override. By default the plugin tries `HYPRCAPTURE_HELPER`, then `$HOME/.local/bin/hyprcapture-ui`, then `hyprcapture-ui` from `PATH`. |
+| `helper` | string | empty | Optional absolute helper override. By default the plugin tries `HYPRCAPTURE_HELPER`, then `$HOME/.local/bin/hyprcapture-ui`, then trusted system install paths. |
 
 ### Watermark options
 
@@ -242,7 +245,7 @@ ctest --test-dir build-cmake --output-on-failure
 ./build-cmake/hyprcapture-ui --help
 ```
 
-Temporary compositor artifacts and thumbnail/clipboard scratch files are written under `/dev/shm/hyprcapture` when available, with `/tmp/hyprcapture` as fallback. They are intentionally not placed under `/run/user/$UID`.
+Temporary compositor artifacts and thumbnail/clipboard scratch files are written under a per-user private runtime directory such as `/dev/shm/hyprcapture-$UID` when available, with `/tmp/hyprcapture-$UID` as fallback. The directory is forced to `0700`, scratch files are written as owner-only files, and compositor artifact files are removed by the helper after loading.
 
 ## Notes
 

@@ -3,6 +3,7 @@
 #include <QBuffer>
 #include <QClipboard>
 #include <QColor>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -16,14 +17,150 @@
 #include <QMimeData>
 #include <QPixmap>
 #include <QProcess>
-#include <QStandardPaths>
+#include <QProcessEnvironment>
+#include <QSet>
 #include <QUrl>
+
+#include <atomic>
+#include <cerrno>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace hyprcapture::ui {
 namespace {
 
+constexpr qint64 kMaxClipboardSnapshotBytes = 16 * 1024 * 1024;
+constexpr qint64 kMaxClipboardImageBytes = 128 * 1024 * 1024;
+
+bool isTrustedOwner(uid_t uid) {
+    return uid == 0 || uid == geteuid();
+}
+
+bool hasWritableGroupOrOther(mode_t mode) {
+    return (mode & 0022) != 0;
+}
+
+bool parentChainTrusted(const QString& path) {
+    QFileInfo info(path);
+    QDir      current = info.absoluteDir();
+    while (!current.path().isEmpty()) {
+        const QByteArray native = QFile::encodeName(current.absolutePath());
+        struct stat      st {};
+        if (stat(native.constData(), &st) != 0 || !S_ISDIR(st.st_mode) || !isTrustedOwner(st.st_uid) || hasWritableGroupOrOther(st.st_mode))
+            return false;
+        if (current.isRoot())
+            break;
+        if (!current.cdUp())
+            break;
+    }
+    return true;
+}
+
+QString trustedExecutablePath(const QString& path) {
+    const QFileInfo info(path);
+    const QString   canonical = info.canonicalFilePath();
+    if (canonical.isEmpty() || !QFileInfo(canonical).isAbsolute() || !parentChainTrusted(canonical))
+        return {};
+
+    const QByteArray native = QFile::encodeName(canonical);
+    struct stat      st {};
+    if (stat(native.constData(), &st) != 0 || !S_ISREG(st.st_mode) || !isTrustedOwner(st.st_uid) || hasWritableGroupOrOther(st.st_mode))
+        return {};
+    if (access(native.constData(), X_OK) != 0)
+        return {};
+    return canonical;
+}
+
+QString trustedSystemProgramImpl(const QString& name) {
+    for (const QString& dir : {QStringLiteral("/usr/local/bin"), QStringLiteral("/usr/bin"), QStringLiteral("/bin")}) {
+        const QString trusted = trustedExecutablePath(QDir(dir).filePath(name));
+        if (!trusted.isEmpty())
+            return trusted;
+    }
+    return {};
+}
+
 QString wlCopyProgram() {
-    return QStandardPaths::findExecutable(QStringLiteral("wl-copy"));
+    return trustedSystemProgramImpl(QStringLiteral("wl-copy"));
+}
+
+bool ensurePrivateDirectory(const QString& path) {
+    const QByteArray native = QFile::encodeName(path);
+    if (native.isEmpty())
+        return false;
+
+    if (mkdir(native.constData(), 0700) != 0 && errno != EEXIST)
+        return false;
+
+    struct stat st {};
+    if (lstat(native.constData(), &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != geteuid())
+        return false;
+
+    if ((st.st_mode & 0777) != 0700 && chmod(native.constData(), 0700) != 0)
+        return false;
+
+    return true;
+}
+
+QString privateRuntimeRoot() {
+    const QString rootName = QStringLiteral("hyprcapture-%1").arg(QString::number(static_cast<qulonglong>(geteuid())));
+    QStringList   bases{QStringLiteral("/dev/shm"), QDir::tempPath()};
+    bases.removeDuplicates();
+    for (const QString& base : bases) {
+        const QFileInfo baseInfo(base);
+        if (!baseInfo.exists() || !baseInfo.isDir())
+            continue;
+        const QString path = QDir(base).filePath(rootName);
+        if (ensurePrivateDirectory(path))
+            return path;
+    }
+    return {};
+}
+
+bool pathIsInPrivateRuntimeRoot(const QString& path) {
+    const QString root = privateRuntimeRoot();
+    if (root.isEmpty())
+        return false;
+
+    const QString rootCanonical = QFileInfo(root).canonicalFilePath();
+    const QString pathCanonical = QFileInfo(path).canonicalFilePath();
+    if (rootCanonical.isEmpty() || pathCanonical.isEmpty())
+        return false;
+
+    return pathCanonical == rootCanonical || pathCanonical.startsWith(rootCanonical + QLatin1Char('/'));
+}
+
+bool privateRuntimeFileExists(const QString& path, qint64 maxSize) {
+    if (path.isEmpty() || !pathIsInPrivateRuntimeRoot(path))
+        return false;
+    const QFileInfo info(path);
+    return info.exists() && info.isFile() && info.isReadable() && info.size() >= 0 && info.size() <= maxSize;
+}
+
+bool allowEnvironmentName(const QString& name) {
+    static const QSet<QString> allowed{
+        QStringLiteral("HOME"),
+        QStringLiteral("USER"),
+        QStringLiteral("LOGNAME"),
+        QStringLiteral("LANG"),
+        QStringLiteral("XDG_RUNTIME_DIR"),
+        QStringLiteral("XDG_CURRENT_DESKTOP"),
+        QStringLiteral("XDG_SESSION_TYPE"),
+        QStringLiteral("XDG_DATA_HOME"),
+        QStringLiteral("XDG_CONFIG_HOME"),
+        QStringLiteral("XDG_DATA_DIRS"),
+        QStringLiteral("DESKTOP_SESSION"),
+        QStringLiteral("WAYLAND_DISPLAY"),
+        QStringLiteral("DISPLAY"),
+        QStringLiteral("DBUS_SESSION_BUS_ADDRESS"),
+        QStringLiteral("QT_QPA_PLATFORM"),
+        QStringLiteral("QT_SCALE_FACTOR"),
+        QStringLiteral("QT_AUTO_SCREEN_SCALE_FACTOR"),
+        QStringLiteral("QT_ENABLE_HIGHDPI_SCALING"),
+        QStringLiteral("HYPRCAPTURE_TIMING"),
+        QStringLiteral("HYPRCAPTURE_TIMING_FILE"),
+    };
+    return allowed.contains(name) || name.startsWith(QStringLiteral("LC_"));
 }
 
 bool copyBytesWithWlCopy(const QByteArray& bytes, const QString& mimeType) {
@@ -37,6 +174,7 @@ bool copyBytesWithWlCopy(const QByteArray& bytes, const QString& mimeType) {
     QProcess process;
     process.setProgram(program);
     process.setArguments({QStringLiteral("--type"), mimeType});
+    process.setProcessEnvironment(trustedProcessEnvironment());
     process.start();
     if (!process.waitForStarted(1000))
         return false;
@@ -75,19 +213,22 @@ bool copyFileWithWlCopyDetached(const QString& path, const QString& mimeType, bo
     if (program.isEmpty())
         return false;
 
-    const QString shell = QStandardPaths::findExecutable(QStringLiteral("sh"));
+    const QString shell = trustedSystemProgramImpl(QStringLiteral("sh"));
     if (shell.isEmpty())
         return false;
 
     const QString script = QStringLiteral(R"("$1" --type "$2" < "$3"; status=$?; if [ "$4" = "1" ]; then rm -f "$3"; fi; exit $status)");
-    return QProcess::startDetached(shell,
-                                   {QStringLiteral("-c"),
-                                    script,
-                                    QStringLiteral("hyprcapture-wl-copy"),
-                                    program,
-                                    mimeType,
-                                    path,
-                                    removeAfterCopy ? QStringLiteral("1") : QStringLiteral("0")});
+    QProcess process;
+    process.setProgram(shell);
+    process.setArguments({QStringLiteral("-c"),
+                          script,
+                          QStringLiteral("hyprcapture-wl-copy"),
+                          program,
+                          mimeType,
+                          path,
+                          removeAfterCopy ? QStringLiteral("1") : QStringLiteral("0")});
+    process.setProcessEnvironment(trustedProcessEnvironment());
+    return process.startDetached();
 }
 
 bool clearWithWlCopy() {
@@ -98,6 +239,7 @@ bool clearWithWlCopy() {
     QProcess process;
     process.setProgram(program);
     process.setArguments({QStringLiteral("--clear")});
+    process.setProcessEnvironment(trustedProcessEnvironment());
     process.start();
     if (!process.waitForStarted(1000))
         return false;
@@ -121,10 +263,31 @@ QByteArray pngBytes(const QImage& image) {
     return bytes;
 }
 
+bool writePrivateFile(const QString& path, const QByteArray& bytes) {
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly))
+        return false;
+    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    if (file.write(bytes) != bytes.size()) {
+        file.remove();
+        return false;
+    }
+    return true;
+}
+
 bool savePng(const QImage& image, const QString& path) {
-    QImageWriter writer(path, "PNG");
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly))
+        return false;
+    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+
+    QImageWriter writer(&file, "PNG");
     writer.setQuality(75);
-    return writer.write(image);
+    if (!writer.write(image)) {
+        file.remove();
+        return false;
+    }
+    return true;
 }
 
 bool copyImageToQtClipboard(const QImage& image) {
@@ -136,29 +299,57 @@ bool copyImageToQtClipboard(const QImage& image) {
 }
 
 void removeSnapshotFiles(const QJsonObject& obj, const QString& path) {
-    if (obj.contains("image"))
-        QFile::remove(obj.value("image").toString());
-    QFile::remove(path);
+    if (obj.contains("image")) {
+        const QString imagePath = obj.value("image").toString();
+        if (pathIsInPrivateRuntimeRoot(imagePath))
+            QFile::remove(imagePath);
+    }
+    if (pathIsInPrivateRuntimeRoot(path))
+        QFile::remove(path);
 }
 
 } // namespace
 
 QString runtimeFile(const QString& prefix, const QString& suffix) {
-    QDir dir;
-    bool found = false;
-    for (const QString& root : {QStringLiteral("/dev/shm"), QDir::tempPath()}) {
-        QDir candidate(root);
-        if (!candidate.exists())
-            continue;
-        if ((candidate.exists("hyprcapture") || candidate.mkpath("hyprcapture")) && candidate.cd("hyprcapture")) {
-            dir = candidate;
-            found = true;
-            break;
-        }
+    static std::atomic_uint64_t counter{0};
+    const QString root = privateRuntimeRoot();
+    if (root.isEmpty())
+        return {};
+    return QDir(root).filePath(QStringLiteral("%1-%2-%3-%4%5")
+                                   .arg(prefix)
+                                   .arg(QCoreApplication::applicationPid())
+                                   .arg(QDateTime::currentMSecsSinceEpoch())
+                                   .arg(counter.fetch_add(1, std::memory_order_relaxed))
+                                   .arg(suffix));
+}
+
+QString trustedSystemProgram(const QString& name) {
+    return trustedSystemProgramImpl(name);
+}
+
+QProcessEnvironment trustedProcessEnvironment() {
+    const auto source = QProcessEnvironment::systemEnvironment();
+    QProcessEnvironment env;
+    env.insert(QStringLiteral("PATH"), QStringLiteral("/usr/local/bin:/usr/bin:/bin"));
+    for (const QString& name : source.keys()) {
+        if (allowEnvironmentName(name))
+            env.insert(name, source.value(name));
     }
-    if (!found)
-        dir = QDir::tempPath();
-    return dir.filePath(QStringLiteral("%1-%2%3").arg(prefix).arg(QDateTime::currentMSecsSinceEpoch()).arg(suffix));
+    return env;
+}
+
+bool isPrivateRuntimePath(const QString& path) {
+    return pathIsInPrivateRuntimeRoot(path);
+}
+
+bool isPrivateRuntimeFile(const QString& path, qint64 maxSize) {
+    return privateRuntimeFileExists(path, maxSize);
+}
+
+bool savePrivatePng(const QImage& image, const QString& path) {
+    if (image.isNull() || path.isEmpty())
+        return false;
+    return savePng(image, path);
 }
 
 ClipboardSnapshotData captureClipboardSnapshotData() {
@@ -238,10 +429,8 @@ QString saveClipboardSnapshotData(const ClipboardSnapshotData& snapshot) {
     }
 
     const QString path = runtimeFile("clipboard", ".json");
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    if (!writePrivateFile(path, QJsonDocument(root).toJson(QJsonDocument::Compact)))
         return {};
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
     return path;
 }
 
@@ -288,7 +477,7 @@ void restoreClipboardSnapshot(const QString& path) {
         return;
 
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
+    if (!privateRuntimeFileExists(path, kMaxClipboardSnapshotBytes) || !file.open(QIODevice::ReadOnly))
         return;
 
     const auto doc = QJsonDocument::fromJson(file.readAll());
@@ -307,8 +496,10 @@ void restoreClipboardSnapshot(const QString& path) {
     }
 
     if (obj.contains("image")) {
-        QFile imageFile(obj.value("image").toString());
-        if (imageFile.open(QIODevice::ReadOnly) && copyBytesWithWlCopy(imageFile.readAll(), QStringLiteral("image/png"))) {
+        const QString imagePath = obj.value("image").toString();
+        QFile         imageFile(imagePath);
+        if (privateRuntimeFileExists(imagePath, kMaxClipboardImageBytes) && imageFile.open(QIODevice::ReadOnly) &&
+            copyBytesWithWlCopy(imageFile.readAll(), QStringLiteral("image/png"))) {
             removeSnapshotFiles(obj, path);
             return;
         }
@@ -355,7 +546,8 @@ void restoreClipboardSnapshot(const QString& path) {
             mime->setColorData(color);
     }
     if (obj.contains("image")) {
-        QImage image(obj.value("image").toString());
+        const QString imagePath = obj.value("image").toString();
+        QImage        image(privateRuntimeFileExists(imagePath, kMaxClipboardImageBytes) ? imagePath : QString{});
         if (!image.isNull())
             mime->setImageData(image);
     }

@@ -33,6 +33,8 @@ int main() {
     const auto expanded = expandUserPath("~/Pictures/Screenshots").string();
     assert(expanded.find("Pictures/Screenshots") != std::string::npos);
     assert(makeTimestampedFilename("Screenshot-%Y.png").ends_with(".png"));
+    assert(makeTimestampedFilename("../escape.png") == "escape.png");
+    assert(makeTimestampedFilename("..") == "Screenshot.png");
 
     CaptureSession session;
     session.id = "test-session";

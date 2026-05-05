@@ -166,7 +166,10 @@ std::string makeTimestampedFilename(std::string_view filenameTemplate) {
     std::ostringstream out;
     out << std::put_time(&tm, std::string(filenameTemplate).c_str());
     auto filename = out.str();
-    return filename.empty() ? "Screenshot.png" : filename;
+    filename = std::filesystem::path(filename).filename().string();
+    if (filename.empty() || filename == "." || filename == "..")
+        return "Screenshot.png";
+    return filename;
 }
 
 } // namespace hyprcapture

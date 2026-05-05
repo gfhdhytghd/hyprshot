@@ -69,6 +69,14 @@ if(BUILD_TESTING)
   target_include_directories(hyprcapture-watermark-test PRIVATE src)
   target_link_libraries(hyprcapture-watermark-test PRIVATE Qt6::Gui Qt6::Svg)
   add_test(NAME hyprcapture-watermark-test COMMAND hyprcapture-watermark-test)
+
+  add_executable(hyprcapture-security-test
+    tests/security_test.cpp
+    src/ui/clipboard_utils.cpp
+  )
+  target_include_directories(hyprcapture-security-test PRIVATE src)
+  target_link_libraries(hyprcapture-security-test PRIVATE Qt6::Core Qt6::Gui)
+  add_test(NAME hyprcapture-security-test COMMAND hyprcapture-security-test)
 endif()
 
 install(TARGETS hyprcapture LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
