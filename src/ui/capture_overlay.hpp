@@ -19,6 +19,10 @@ class QShowEvent;
 class QPropertyAnimation;
 class InlineSelect;
 
+namespace hyprcapture::ui {
+struct ClipboardSnapshotData;
+}
+
 class CaptureOverlay final : public QMainWindow {
     Q_OBJECT
     Q_PROPERTY(double overlayOpacity READ overlayOpacity WRITE setOverlayOpacity)
@@ -61,7 +65,7 @@ class CaptureOverlay final : public QMainWindow {
     void updateToolbarControlsForMode();
     void finishCapture();
     void cancelCapture();
-    void saveImage(const QImage& image, const QString& restoreClipboardPath);
+    void saveImage(const QImage& image, hyprcapture::ui::ClipboardSnapshotData clipboardSnapshot);
     QImage renderResultImage() const;
     QImage renderDesktopRectAtDisplayResolution(const QRect& globalRect) const;
     void paintDesktop(QPainter& painter, const QRect& target) const;
@@ -112,8 +116,6 @@ class CaptureOverlay final : public QMainWindow {
     InlineSelect* m_fullscreenScope = nullptr;
     InlineSelect* m_regionScope = nullptr;
     InlineSelect* m_windowBackground = nullptr;
-    InlineSelect* m_windowBorder = nullptr;
-    InlineSelect* m_windowShadow = nullptr;
     QLabel*      m_status = nullptr;
     QImage       m_desktopImage;
     QRect        m_desktopGeometry;

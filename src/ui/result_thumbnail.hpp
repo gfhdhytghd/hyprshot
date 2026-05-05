@@ -17,6 +17,7 @@ class ResultThumbnail final : public QWidget {
     ResultThumbnail(const QPixmap& pixmap, QString path, QString restoreClipboardPath, int timeoutMs, QWidget* parent = nullptr);
 
   protected:
+    void closeEvent(QCloseEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;

@@ -1,13 +1,28 @@
 #pragma once
 
+#include <QColor>
+#include <QImage>
+#include <QList>
 #include <QString>
+#include <QUrl>
 
-class QImage;
 class QPixmap;
 
 namespace hyprcapture::ui {
 
+struct ClipboardSnapshotData {
+    bool        valid = false;
+    bool        empty = true;
+    QString     text;
+    QString     html;
+    QList<QUrl> urls;
+    QColor      color;
+    QImage      image;
+};
+
 QString runtimeFile(const QString& prefix, const QString& suffix);
+ClipboardSnapshotData captureClipboardSnapshotData();
+QString saveClipboardSnapshotData(const ClipboardSnapshotData& snapshot);
 QString saveClipboardSnapshot();
 bool copyImageToClipboard(const QImage& image);
 bool copyImageToClipboardDetached(const QImage& image);

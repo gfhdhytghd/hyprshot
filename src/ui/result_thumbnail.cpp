@@ -5,6 +5,7 @@
 #include <LayerShellQt/Window>
 
 #include <QApplication>
+#include <QCloseEvent>
 #include <QContextMenuEvent>
 #include <QDrag>
 #include <QEasingCurve>
@@ -206,6 +207,11 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
 
     m_swipeResetTimer.setSingleShot(true);
     connect(&m_swipeResetTimer, &QTimer::timeout, this, &ResultThumbnail::resetSwipe);
+}
+
+void ResultThumbnail::closeEvent(QCloseEvent* event) {
+    QWidget::closeEvent(event);
+    qApp->quit();
 }
 
 void ResultThumbnail::mousePressEvent(QMouseEvent* event) {

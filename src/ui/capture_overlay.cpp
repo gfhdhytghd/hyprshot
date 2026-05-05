@@ -7,7 +7,10 @@
 
 #include <QApplication>
 #include <QButtonGroup>
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFrame>
 #include <QFileInfo>
@@ -15,6 +18,7 @@
 #include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QImageWriter>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -40,7 +44,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <utility>
 
 class InlineSelect final : public QWidget {
   public:
@@ -96,33 +102,83 @@ QString qString(const std::string& value) {
     return QString::fromStdString(value);
 }
 
-CaptureOutputResult writeCaptureOutput(const QImage& image, const hyprcapture::CaptureDefaults& defaults, QString restoreClipboardPath) {
+bool timingEnabled() {
+    return qEnvironmentVariableIsSet("HYPRCAPTURE_TIMING") || qEnvironmentVariableIsSet("HYPRCAPTURE_TIMING_FILE");
+}
+
+void traceTiming(const QString& event, qint64 elapsedMs = -1) {
+    if (!timingEnabled())
+        return;
+
+    QString line = QStringLiteral("%1 pid=%2 %3")
+                       .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs))
+                       .arg(QCoreApplication::applicationPid())
+                       .arg(event);
+    if (elapsedMs >= 0)
+        line += QStringLiteral(" elapsed_ms=%1").arg(elapsedMs);
+    line += QLatin1Char('\n');
+
+    const QString path = qEnvironmentVariable("HYPRCAPTURE_TIMING_FILE");
+    if (!path.isEmpty()) {
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Append))
+            file.write(line.toUtf8());
+        return;
+    }
+
+    fputs(line.toLocal8Bit().constData(), stderr);
+}
+
+bool savePng(const QImage& image, const QString& path) {
+    QImageWriter writer(path, "PNG");
+    writer.setQuality(75);
+    return writer.write(image);
+}
+
+CaptureOutputResult writeCaptureOutput(const QImage& image,
+                                        const hyprcapture::CaptureDefaults& defaults,
+                                        const hyprcapture::ui::ClipboardSnapshotData& clipboardSnapshot) {
     CaptureOutputResult result;
-    result.restoreClipboardPath = std::move(restoreClipboardPath);
     result.showThumbnail = defaults.showThumbnail;
 
+    if (defaults.clipboard && defaults.showThumbnail) {
+        QElapsedTimer timer;
+        timer.start();
+        result.restoreClipboardPath = hyprcapture::ui::saveClipboardSnapshotData(clipboardSnapshot);
+        traceTiming(QStringLiteral("clipboard_snapshot_save"), timer.elapsed());
+    }
+
     if (defaults.save) {
+        QElapsedTimer timer;
+        timer.start();
         const auto dirPath = hyprcapture::expandUserPath(defaults.saveDir);
         QDir       dir(QString::fromStdString(dirPath.string()));
         if (!dir.exists())
             dir.mkpath(".");
         const QString path = dir.filePath(QString::fromStdString(hyprcapture::makeTimestampedFilename(defaults.filenameTemplate)));
-        if (image.save(path, "PNG"))
+        if (savePng(image, path))
             result.savedPath = path;
+        traceTiming(QStringLiteral("image_save"), timer.elapsed());
     }
 
     if (result.showThumbnail && result.savedPath.isEmpty()) {
+        QElapsedTimer timer;
+        timer.start();
         const QString path = hyprcapture::ui::runtimeFile("thumbnail", ".png");
-        if (image.save(path, "PNG"))
+        if (savePng(image, path))
             result.savedPath = path;
+        traceTiming(QStringLiteral("thumbnail_temp_save"), timer.elapsed());
     }
 
     result.clipboardRequested = defaults.clipboard;
     if (defaults.clipboard) {
+        QElapsedTimer timer;
+        timer.start();
         if (result.savedPath.isEmpty() || !hyprcapture::ui::copyImageFileToClipboardDetached(result.savedPath))
             result.clipboardCopied = hyprcapture::ui::copyImageToClipboardDetached(image);
         else
             result.clipboardCopied = true;
+        traceTiming(QStringLiteral("clipboard_copy_start"), timer.elapsed());
     }
 
     return result;
@@ -678,16 +734,30 @@ void InlineSelect::choose(const QString& text) {
 
 CaptureOverlay::CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, QString sessionJson, QWidget* parent)
     : QMainWindow(parent), m_defaults(std::move(defaults)), m_mode(m_defaults.mode), m_quick(quick) {
+    QElapsedTimer constructorTimer;
+    constructorTimer.start();
     setWindowFlags(Qt::FramelessWindowHint | Qt::Tool);
     setAttribute(Qt::WA_TranslucentBackground);
     setMouseTracking(true);
     setCursor(Qt::CrossCursor);
 
+    QElapsedTimer parseTimer;
+    parseTimer.start();
     parseSessionJson(sessionJson);
+    traceTiming(QStringLiteral("parse_session"), parseTimer.elapsed());
+
+    QElapsedTimer preCaptureTimer;
+    preCaptureTimer.start();
     captureScreensBeforeOverlay();
+    traceTiming(QStringLiteral("prepare_desktop"), preCaptureTimer.elapsed());
+
     setGeometry(m_desktopGeometry.isValid() ? m_desktopGeometry : QRect(0, 0, 1280, 720));
 
+    QElapsedTimer toolbarTimer;
+    toolbarTimer.start();
     buildToolbar();
+    traceTiming(QStringLiteral("build_toolbar"), toolbarTimer.elapsed());
+
     winId();
     if (auto* layerWindow = LayerShellQt::Window::get(windowHandle())) {
         layerWindow->setScope("hyprcapture-ui");
@@ -699,6 +769,7 @@ CaptureOverlay::CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick
         layerWindow->setActivateOnShow(true);
         layerWindow->setDesiredSize(QSize(0, 0));
     }
+    traceTiming(QStringLiteral("overlay_construct"), constructorTimer.elapsed());
     if (m_quick)
         QTimer::singleShot(0, this, &CaptureOverlay::finishCapture);
 }
@@ -876,18 +947,6 @@ void CaptureOverlay::buildToolbar() {
     m_windowBackground->setCurrentText(qString(hyprcapture::toString(m_defaults.windowBackground)));
     layout->addWidget(m_windowBackground);
 
-    m_windowBorder = new InlineSelect(this, m_toolbar);
-    m_windowBorder->setPrefix("Border");
-    m_windowBorder->addItems(QStringList{"keep", "remove"});
-    m_windowBorder->setCurrentText(qString(hyprcapture::toString(m_defaults.windowBorder)));
-    layout->addWidget(m_windowBorder);
-
-    m_windowShadow = new InlineSelect(this, m_toolbar);
-    m_windowShadow->setPrefix("Shadow");
-    m_windowShadow->addItems(QStringList{"keep", "remove"});
-    m_windowShadow->setCurrentText(qString(hyprcapture::toString(m_defaults.windowShadow)));
-    layout->addWidget(m_windowShadow);
-
     auto* cancel = new QPushButton("Cancel", m_toolbar);
     layout->addWidget(cancel);
     connect(cancel, &QPushButton::clicked, this, &CaptureOverlay::cancelCapture);
@@ -967,10 +1026,6 @@ void CaptureOverlay::hideOptionPopups() {
         m_regionScope->hidePopup();
     if (m_windowBackground)
         m_windowBackground->hidePopup();
-    if (m_windowBorder)
-        m_windowBorder->hidePopup();
-    if (m_windowShadow)
-        m_windowShadow->hidePopup();
 }
 
 void CaptureOverlay::setMode(hyprcapture::CaptureMode mode) {
@@ -996,16 +1051,6 @@ void CaptureOverlay::updateToolbarControlsForMode() {
     if (m_windowBackground) {
         const bool visible = m_defaults.fushionMode || m_mode == hyprcapture::CaptureMode::Window;
         m_windowBackground->setControlVisible(visible);
-    }
-
-    if (m_windowBorder) {
-        const bool visible = m_defaults.fushionMode || m_mode == hyprcapture::CaptureMode::Window;
-        m_windowBorder->setControlVisible(visible);
-    }
-
-    if (m_windowShadow) {
-        const bool visible = m_defaults.fushionMode || m_mode == hyprcapture::CaptureMode::Window;
-        m_windowShadow->setControlVisible(visible);
     }
 
     relayoutToolbar();
@@ -1041,15 +1086,11 @@ hyprcapture::WindowBackground CaptureOverlay::currentWindowBackground() const {
 }
 
 hyprcapture::DecorationPolicy CaptureOverlay::currentWindowBorder() const {
-    if (!m_windowBorder)
-        return m_defaults.windowBorder;
-    return hyprcapture::parseDecorationPolicy(m_windowBorder->currentText().toStdString(), m_defaults.windowBorder);
+    return m_defaults.windowBorder;
 }
 
 hyprcapture::DecorationPolicy CaptureOverlay::currentWindowShadow() const {
-    if (!m_windowShadow)
-        return m_defaults.windowShadow;
-    return hyprcapture::parseDecorationPolicy(m_windowShadow->currentText().toStdString(), m_defaults.windowShadow);
+    return m_defaults.windowShadow;
 }
 
 void CaptureOverlay::paintDesktop(QPainter& painter, const QRect& target) const {
@@ -1509,28 +1550,40 @@ void CaptureOverlay::finishCapture() {
         return;
     m_finishing = true;
 
+    QElapsedTimer renderTimer;
+    renderTimer.start();
     const auto image = renderResultImage();
+    traceTiming(QStringLiteral("render_result"), renderTimer.elapsed());
     if (image.isNull()) {
         m_finishing = false;
         updateStatus();
         return;
     }
 
-    QString restoreClipboardPath;
-    if (m_defaults.clipboard && m_defaults.showThumbnail)
-        restoreClipboardPath = hyprcapture::ui::saveClipboardSnapshot();
+    hyprcapture::ui::ClipboardSnapshotData clipboardSnapshot;
+    if (m_defaults.clipboard && m_defaults.showThumbnail) {
+        QElapsedTimer snapshotTimer;
+        snapshotTimer.start();
+        clipboardSnapshot = hyprcapture::ui::captureClipboardSnapshotData();
+        traceTiming(QStringLiteral("clipboard_snapshot_collect"), snapshotTimer.elapsed());
+    }
 
-    saveImage(image, restoreClipboardPath);
+    saveImage(image, clipboardSnapshot);
+    traceTiming(QStringLiteral("fade_start"));
     fadeOutThen({});
 }
 
-void CaptureOverlay::saveImage(const QImage& image, const QString& restoreClipboardPath) {
+void CaptureOverlay::saveImage(const QImage& image, hyprcapture::ui::ClipboardSnapshotData clipboardSnapshot) {
     const auto defaults = m_defaults;
-    auto*      worker = QThread::create([this, image, defaults, restoreClipboardPath] {
-        const CaptureOutputResult result = writeCaptureOutput(image, defaults, restoreClipboardPath);
+    auto*      worker = QThread::create([this, image, defaults, clipboardSnapshot = std::move(clipboardSnapshot)] {
+        QElapsedTimer totalTimer;
+        totalTimer.start();
+        const CaptureOutputResult result = writeCaptureOutput(image, defaults, clipboardSnapshot);
+        traceTiming(QStringLiteral("output_worker_total"), totalTimer.elapsed());
         QMetaObject::invokeMethod(
             this,
             [this, image, result] {
+                traceTiming(QStringLiteral("output_ready"));
                 if (result.clipboardRequested && !result.clipboardCopied)
                     hyprcapture::ui::copyImageToClipboard(image);
                 if (result.showThumbnail) {
@@ -1548,14 +1601,18 @@ void CaptureOverlay::saveImage(const QImage& image, const QString& restoreClipbo
 void CaptureOverlay::showThumbnail(const QImage& image, const QString& path, const QString& restoreClipboardPath) {
     QString thumbPath = path;
     if (thumbPath.isEmpty()) {
+        QElapsedTimer timer;
+        timer.start();
         thumbPath = hyprcapture::ui::runtimeFile("thumbnail", ".png");
-        image.save(thumbPath, "PNG");
+        savePng(image, thumbPath);
+        traceTiming(QStringLiteral("thumbnail_late_save"), timer.elapsed());
     }
 
     QStringList args{"--thumbnail-window", thumbPath, "--thumbnail-timeout-ms", QString::number(m_defaults.thumbnailTimeoutMs)};
     if (!restoreClipboardPath.isEmpty())
         args << "--restore-clipboard" << restoreClipboardPath;
     QProcess::startDetached(QCoreApplication::applicationFilePath(), args);
+    traceTiming(QStringLiteral("thumbnail_started"));
     qApp->quit();
 }
 

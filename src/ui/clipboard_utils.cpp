@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
+#include <QImageWriter>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -113,9 +114,17 @@ QByteArray pngBytes(const QImage& image) {
     QBuffer buffer(&bytes);
     if (!buffer.open(QIODevice::WriteOnly))
         return {};
-    if (!image.save(&buffer, "PNG"))
+    QImageWriter writer(&buffer, "PNG");
+    writer.setQuality(75);
+    if (!writer.write(image))
         return {};
     return bytes;
+}
+
+bool savePng(const QImage& image, const QString& path) {
+    QImageWriter writer(path, "PNG");
+    writer.setQuality(75);
+    return writer.write(image);
 }
 
 bool copyImageToQtClipboard(const QImage& image) {
@@ -152,34 +161,32 @@ QString runtimeFile(const QString& prefix, const QString& suffix) {
     return dir.filePath(QStringLiteral("%1-%2%3").arg(prefix).arg(QDateTime::currentMSecsSinceEpoch()).arg(suffix));
 }
 
-QString saveClipboardSnapshot() {
+ClipboardSnapshotData captureClipboardSnapshotData() {
+    ClipboardSnapshotData snapshot;
     const auto* clipboard = QGuiApplication::clipboard();
     const auto* mime = clipboard ? clipboard->mimeData() : nullptr;
     if (!mime)
-        return {};
+        return snapshot;
 
-    QJsonObject root;
-    root.insert("empty", true);
+    snapshot.valid = true;
     if (mime->hasText()) {
-        root.insert("text", mime->text());
-        root.insert("empty", false);
+        snapshot.text = mime->text();
+        snapshot.empty = false;
     }
     if (mime->hasHtml()) {
-        root.insert("html", mime->html());
-        root.insert("empty", false);
+        snapshot.html = mime->html();
+        snapshot.empty = false;
     }
     if (mime->hasUrls()) {
-        QJsonArray urls;
         for (const auto& url : mime->urls())
-            urls.append(url.toString());
-        root.insert("urls", urls);
-        root.insert("empty", false);
+            snapshot.urls.append(url);
+        snapshot.empty = false;
     }
     if (mime->hasColor()) {
         const QColor color = qvariant_cast<QColor>(mime->colorData());
         if (color.isValid()) {
-            root.insert("color", color.name(QColor::HexArgb));
-            root.insert("empty", false);
+            snapshot.color = color;
+            snapshot.empty = false;
         }
     }
     if (mime->hasImage()) {
@@ -189,11 +196,44 @@ QString saveClipboardSnapshot() {
             image = pixmap.toImage();
         }
         if (!image.isNull()) {
-            const QString imagePath = runtimeFile("clipboard-image", ".png");
-            if (image.save(imagePath, "PNG")) {
-                root.insert("image", imagePath);
-                root.insert("empty", false);
-            }
+            snapshot.image = image;
+            snapshot.empty = false;
+        }
+    }
+
+    return snapshot;
+}
+
+QString saveClipboardSnapshotData(const ClipboardSnapshotData& snapshot) {
+    if (!snapshot.valid)
+        return {};
+
+    QJsonObject root;
+    root.insert("empty", snapshot.empty);
+    if (!snapshot.text.isEmpty()) {
+        root.insert("text", snapshot.text);
+        root.insert("empty", false);
+    }
+    if (!snapshot.html.isEmpty()) {
+        root.insert("html", snapshot.html);
+        root.insert("empty", false);
+    }
+    if (!snapshot.urls.isEmpty()) {
+        QJsonArray urls;
+        for (const auto& url : snapshot.urls)
+            urls.append(url.toString());
+        root.insert("urls", urls);
+        root.insert("empty", false);
+    }
+    if (snapshot.color.isValid()) {
+        root.insert("color", snapshot.color.name(QColor::HexArgb));
+        root.insert("empty", false);
+    }
+    if (!snapshot.image.isNull()) {
+        const QString imagePath = runtimeFile("clipboard-image", ".png");
+        if (savePng(snapshot.image, imagePath)) {
+            root.insert("image", imagePath);
+            root.insert("empty", false);
         }
     }
 
@@ -203,6 +243,10 @@ QString saveClipboardSnapshot() {
         return {};
     file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
     return path;
+}
+
+QString saveClipboardSnapshot() {
+    return saveClipboardSnapshotData(captureClipboardSnapshotData());
 }
 
 bool copyImageToClipboard(const QImage& image) {
@@ -220,7 +264,7 @@ bool copyImageToClipboardDetached(const QImage& image) {
         return false;
 
     const QString path = runtimeFile("clipboard-copy", ".png");
-    if (image.save(path, "PNG")) {
+    if (savePng(image, path)) {
         if (copyFileWithWlCopyDetached(path, QStringLiteral("image/png"), true))
             return true;
         QFile::remove(path);
