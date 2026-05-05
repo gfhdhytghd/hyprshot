@@ -61,6 +61,7 @@ class InlineSelect final : public QWidget {
     QPushButton* m_button = nullptr;
     QFrame*      m_panel = nullptr;
     QVBoxLayout* m_panelLayout = nullptr;
+    int          m_buttonWidth = 0;
     QStringList  m_items;
     QString      m_current;
     QString      m_prefix;
@@ -134,11 +135,11 @@ QString toolbarStyleSheet(const QPalette& palette) {
 
     return QStringLiteral(
                "#toolbar { background: %1; border: 1px solid %2; border-radius: 8px; }"
-               "QPushButton { color: %3; background: transparent; padding: 6px 10px; border: none; border-radius: 5px; }"
+               "QPushButton { color: %3; background: transparent; padding: 6px 10px; border: none; border-radius: 5px; outline: none; }"
                "QPushButton:hover { background: %4; }"
                "QPushButton:checked { color: %3; background: %5; }"
                "QPushButton:pressed { color: %6; background: %7; }"
-               "QPushButton#captureModeButton { padding: 4px 6px; background: transparent; }"
+               "QPushButton#captureModeButton { padding: 4px 6px; background: transparent; border: none; outline: none; }"
                "QPushButton#captureModeButton:hover { background: transparent; }"
                "QPushButton#captureModeButton:checked { background: %8; border-radius: 7px; }"
                "QPushButton#captureModeButton:pressed { background: %8; border-radius: 7px; }"
@@ -546,7 +547,8 @@ void InlineSelect::addItems(const QStringList& items) {
     const auto metrics = m_button->fontMetrics();
     for (const auto& item : m_items)
         width = std::max(width, metrics.horizontalAdvance(buttonText(item)) + 34);
-    m_button->setMinimumWidth(width);
+    m_buttonWidth = width;
+    m_button->setMinimumWidth(m_buttonWidth);
     m_panel->setMinimumWidth(width);
 
     if (m_current.isEmpty() && !m_items.isEmpty())
@@ -571,12 +573,26 @@ QString InlineSelect::currentText() const {
 }
 
 void InlineSelect::setControlVisible(bool visible) {
-    if (!visible)
+    if (!visible) {
         hidePopup();
+        m_button->hide();
+        m_button->setMinimumSize(0, 0);
+        m_button->setMaximumSize(0, 0);
+        setFixedSize(0, 0);
+        setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+        setVisible(false);
+        updateGeometry();
+        return;
+    }
 
     setVisible(visible);
-    setMaximumSize(visible ? QSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX) : QSize(0, 0));
-    setSizePolicy(visible ? QSizePolicy::Fixed : QSizePolicy::Ignored, visible ? QSizePolicy::Fixed : QSizePolicy::Ignored);
+    setMinimumSize(0, 0);
+    setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    m_button->show();
+    m_button->setMinimumWidth(m_buttonWidth);
+    m_button->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    adjustSize();
     updateGeometry();
 }
 
@@ -651,6 +667,12 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
         return;
 
     const auto root = doc.object();
+    const auto defaultValues = root.value("defaults").toObject();
+    if (defaultValues.contains("fushionMode"))
+        m_defaults.fushionMode = defaultValues.value("fushionMode").toBool(m_defaults.fushionMode);
+    if (defaultValues.contains("fusionMode"))
+        m_defaults.fushionMode = defaultValues.value("fusionMode").toBool(m_defaults.fushionMode);
+
     const auto monitors = root.value("monitors").toArray();
     const auto windows = root.value("windows").toArray();
     m_sessionMonitorCount = monitors.size();
@@ -767,6 +789,8 @@ void CaptureOverlay::buildToolbar() {
     const auto addMode = [&](const QString& tooltip, hyprcapture::CaptureMode mode, const QIcon& icon) {
         auto* button = new QPushButton(m_toolbar);
         button->setObjectName("captureModeButton");
+        button->setFlat(true);
+        button->setFocusPolicy(Qt::NoFocus);
         button->setIcon(icon);
         button->setIconSize(QSize(kModeIconSize, kModeIconSize));
         button->setFixedSize(36, 32);
