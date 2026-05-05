@@ -45,15 +45,6 @@ FullscreenScope parseFullscreenScope(std::string_view value, FullscreenScope fal
     return fallback;
 }
 
-RegionScope parseRegionScope(std::string_view value, RegionScope fallback) {
-    const auto v = normalized(value);
-    if (v == "global" || v == "all")
-        return RegionScope::Global;
-    if (v == "current" || v == "current-monitor")
-        return RegionScope::CurrentMonitor;
-    return fallback;
-}
-
 WindowBackground parseWindowBackground(std::string_view value, WindowBackground fallback) {
     const auto v = normalized(value);
     if (v == "white")
@@ -117,14 +108,6 @@ std::string toString(FullscreenScope value) {
         case FullscreenScope::PerMonitor: return "per-monitor";
     }
     return "all";
-}
-
-std::string toString(RegionScope value) {
-    switch (value) {
-        case RegionScope::Global: return "global";
-        case RegionScope::CurrentMonitor: return "current-monitor";
-    }
-    return "global";
 }
 
 std::string toString(WindowBackground value) {

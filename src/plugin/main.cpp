@@ -51,7 +51,6 @@ hyprcapture::CaptureDefaults readDefaults() {
     defaults.mode = hyprcapture::parseCaptureMode(configString("default_mode", hyprcapture::toString(defaults.mode)), defaults.mode);
     defaults.fullscreenScope =
         hyprcapture::parseFullscreenScope(configString("fullscreen_scope", hyprcapture::toString(defaults.fullscreenScope)), defaults.fullscreenScope);
-    defaults.regionScope = hyprcapture::parseRegionScope(configString("region_scope", hyprcapture::toString(defaults.regionScope)), defaults.regionScope);
     defaults.windowBackground =
         hyprcapture::parseWindowBackground(configString("window_background", hyprcapture::toString(defaults.windowBackground)), defaults.windowBackground);
     defaults.windowBorder = hyprcapture::parseDecorationPolicy(configString("window_border", hyprcapture::toString(defaults.windowBorder)), defaults.windowBorder);
@@ -120,7 +119,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:default_mode", Hyprlang::STRING{"region"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:fullscreen_scope", Hyprlang::STRING{"all"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:region_scope", Hyprlang::STRING{"global"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:window_background", Hyprlang::STRING{"follow-system"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:window_border", Hyprlang::STRING{"keep"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:window_shadow", Hyprlang::STRING{"keep"});

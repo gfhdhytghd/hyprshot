@@ -83,7 +83,6 @@ class CaptureOverlay final : public QMainWindow {
     bool hasMultipleMonitors() const;
     void hideOptionPopups();
     hyprcapture::FullscreenScope currentFullscreenScope() const;
-    hyprcapture::RegionScope currentRegionScope() const;
     hyprcapture::WindowBackground currentWindowBackground() const;
     hyprcapture::DecorationPolicy currentWindowBorder() const;
     hyprcapture::DecorationPolicy currentWindowShadow() const;
@@ -114,7 +113,6 @@ class CaptureOverlay final : public QMainWindow {
     QGraphicsOpacityEffect* m_toolbarOpacity = nullptr;
     QPropertyAnimation* m_fadeAnimation = nullptr;
     InlineSelect* m_fullscreenScope = nullptr;
-    InlineSelect* m_regionScope = nullptr;
     InlineSelect* m_windowBackground = nullptr;
     QLabel*      m_status = nullptr;
     QImage       m_desktopImage;

@@ -41,7 +41,6 @@ int main(int argc, char** argv) {
     parser.addOptions({
         {{"m", "mode"}, "Capture mode.", "mode", "region"},
         {"fullscreen-scope", "Fullscreen scope.", "scope", "all"},
-        {"region-scope", "Region scope.", "scope", "global"},
         {"window-background", "Window background.", "background", "follow-system"},
         {"window-border", "Window border policy.", "policy", "keep"},
         {"window-shadow", "Window shadow policy.", "policy", "keep"},
@@ -76,7 +75,6 @@ int main(int argc, char** argv) {
     hyprcapture::CaptureDefaults defaults;
     defaults.mode = hyprcapture::parseCaptureMode(parser.value("mode").toStdString(), defaults.mode);
     defaults.fullscreenScope = hyprcapture::parseFullscreenScope(parser.value("fullscreen-scope").toStdString(), defaults.fullscreenScope);
-    defaults.regionScope = hyprcapture::parseRegionScope(parser.value("region-scope").toStdString(), defaults.regionScope);
     defaults.windowBackground = hyprcapture::parseWindowBackground(parser.value("window-background").toStdString(), defaults.windowBackground);
     defaults.windowBorder = hyprcapture::parseDecorationPolicy(parser.value("window-border").toStdString(), defaults.windowBorder);
     defaults.windowShadow = hyprcapture::parseDecorationPolicy(parser.value("window-shadow").toStdString(), defaults.windowShadow);

@@ -63,6 +63,7 @@ class InlineSelect final : public QWidget {
 
   private:
     QString buttonText(const QString& text) const;
+    void updateButtonIcon();
     void showPopup();
     void choose(const QString& text);
 
@@ -86,6 +87,8 @@ constexpr int kWindowBackgroundInteriorRadius = 1;
 constexpr double kWindowFrameFallbackRadius = 8.0;
 constexpr int kOverlayFadeDurationMs = 100;
 constexpr int kModeIconSize = 24;
+constexpr int kCancelIconSize = 16;
+constexpr int kSelectArrowIconSize = 12;
 
 struct CaptureOutputResult {
     QString savedPath;
@@ -99,6 +102,7 @@ const char* kFullscreenSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w
 const char* kWindowSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M808.125883 243.195881 134.874315 243.195881c-30.608112 0-55.513338 24.905226-55.513338 55.520501l0 505.178641c0 30.615275 24.905226 55.520501 55.513338 55.520501L808.125883 859.415524c30.607088 0 55.512315-24.905226 55.512315-55.520501L863.638197 298.716382C863.638197 268.101107 838.733994 243.195881 808.125883 243.195881zM835.629283 803.895023c0 15.167444-12.338003 27.510564-27.503401 27.510564L134.874315 831.405587c-15.167444 0-27.504424-12.343119-27.504424-27.510564L107.369891 383.246591l728.259392 0L835.629283 803.895023zM835.629283 355.236654 107.370915 355.236654l0-56.519248c0-15.173584 12.33698-27.510564 27.504424-27.510564L808.125883 271.206842c15.165398 0 27.503401 12.33698 27.503401 27.510564L835.629283 355.236654zM920.166655 131.156132 274.924002 131.156132c-30.608112 0-55.513338 24.905226-55.513338 55.514361l0 28.515451c0 7.734148 6.263657 14.004969 14.005992 14.004969 7.740288 0 14.005992-6.27082 14.005992-14.004969l0-28.515451c0-15.167444 12.33698-27.504424 27.503401-27.504424L920.167678 159.166069c15.165398 0 27.503401 12.33698 27.503401 27.504424l0 519.188726c0 15.167444-12.338003 27.511587-27.503401 27.511587l-28.516474 0c-7.739265 0-14.004969 6.27082-14.004969 14.004969 0 7.736195 6.263657 14.007015 14.004969 14.007015l28.516474 0c30.607088 0 55.512315-24.905226 55.512315-55.521524L975.679993 186.670493C975.67897 156.061358 950.773743 131.156132 920.166655 131.156132zM219.410664 299.216779l-56.019875 0c-7.740288 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.263657 14.011108 14.005992 14.011108l56.019875 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C233.415632 305.487599 227.151975 299.216779 219.410664 299.216779zM331.450413 299.216779l-56.019875 0c-7.741311 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.262634 14.011108 14.005992 14.011108l56.019875 0c7.739265 0 14.004969-6.27082 14.004969-14.011108C345.455381 305.487599 339.191724 299.216779 331.450413 299.216779zM443.490162 299.216779l-56.018851 0c-7.741311 0-14.007015 6.27082-14.007015 13.998829 0 7.740288 6.263657 14.011108 14.007015 14.011108l56.018851 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C457.49513 305.487599 451.231473 299.216779 443.490162 299.216779z" fill="#000000"/></svg>)";
 const char* kRegionSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M960 256V64H768v64H256V64H64v192h64v512H64v192h192v-64h512v64h192V768h-64V256z m-128 512h-64v64H256v-64h-64V256h64v-64h512v64h64z" fill="#000000"/></svg>)";
 const char* kCancelSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M883.8304 41.01546667L512.00213333 412.84693333 140.1696 41.01546667c-27.38026667-27.3792-71.77386667-27.3792-99.1552 0-27.37813333 27.3792-27.37813333 71.77066667 0 99.1552l371.8336 371.83146666L41.0144 883.82933333c-27.37813333 27.38026667-27.37813333 71.776 0 99.15413334 27.38133333 27.38133333 71.776 27.38133333 99.1552 0L512.00213333 611.15733333l371.82933334 371.82613334c27.37813333 27.38133333 71.77386667 27.38133333 99.15306666 0 27.3792-27.37813333 27.3792-71.77386667 0-99.15413334L611.15733333 512.00213333 982.98453333 140.17066667c27.3792-27.38133333 27.3792-71.776 0-99.1552-27.3792-27.38133333-71.7696-27.38133333-99.15413333 0z m0 0" fill="#333333"/></svg>)";
+const char* kSelectArrowSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M827.733333 411.733333L526.933333 712.533333c-8.533333 8.533333-21.333333 8.533333-29.866666 0L196.266667 411.733333c-17.066667-17.066667-17.066667-42.666667 0-59.733333 17.066667-17.066667 42.666667-17.066667 59.733333 0l256 256 256-256c17.066667-17.066667 42.666667-17.066667 59.733333 0s17.066667 42.666667 0 59.733333z"/></svg>)";
 
 QString qString(const std::string& value) {
     return QString::fromStdString(value);
@@ -193,16 +197,19 @@ double maxScreenDevicePixelRatio() {
     return dpr;
 }
 
-QIcon iconFromSvg(const char* svg) {
+QIcon iconFromSvg(const char* svg, int logicalSize = kModeIconSize, double rotationDegrees = 0.0) {
     QSvgRenderer renderer{QByteArray(svg)};
     const double dpr = maxScreenDevicePixelRatio();
-    QPixmap pixmap(QSize(std::max(1, static_cast<int>(std::ceil(kModeIconSize * dpr))),
-                         std::max(1, static_cast<int>(std::ceil(kModeIconSize * dpr)))));
+    QPixmap pixmap(QSize(std::max(1, static_cast<int>(std::ceil(logicalSize * dpr))),
+                         std::max(1, static_cast<int>(std::ceil(logicalSize * dpr)))));
     pixmap.setDevicePixelRatio(dpr);
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    renderer.render(&painter, QRectF(0, 0, kModeIconSize, kModeIconSize));
+    painter.translate(logicalSize / 2.0, logicalSize / 2.0);
+    if (rotationDegrees != 0.0)
+        painter.rotate(rotationDegrees);
+    renderer.render(&painter, QRectF(-logicalSize / 2.0, -logicalSize / 2.0, logicalSize, logicalSize));
     return QIcon(pixmap);
 }
 
@@ -610,6 +617,8 @@ InlineSelect::InlineSelect(QWidget* popupParent, QWidget* parent) : QWidget(pare
     m_button = new QPushButton(this);
     m_button->setCheckable(true);
     m_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    m_button->setLayoutDirection(Qt::RightToLeft);
+    m_button->setIconSize(QSize(kSelectArrowIconSize, kSelectArrowIconSize));
     layout->addWidget(m_button);
     connect(m_button, &QPushButton::clicked, this, [this] {
         if (isPopupVisible())
@@ -627,6 +636,7 @@ InlineSelect::InlineSelect(QWidget* popupParent, QWidget* parent) : QWidget(pare
     m_panelLayout = new QVBoxLayout(m_panel);
     m_panelLayout->setContentsMargins(5, 5, 5, 5);
     m_panelLayout->setSpacing(2);
+    updateButtonIcon();
 }
 
 void InlineSelect::addItems(const QStringList& items) {
@@ -646,7 +656,7 @@ void InlineSelect::addItems(const QStringList& items) {
     int width = 0;
     const auto metrics = m_button->fontMetrics();
     for (const auto& item : m_items)
-        width = std::max(width, metrics.horizontalAdvance(buttonText(item)) + 34);
+        width = std::max(width, metrics.horizontalAdvance(buttonText(item)) + 42);
     m_buttonWidth = width;
     m_button->setMinimumWidth(m_buttonWidth);
     m_panel->setMinimumWidth(width);
@@ -699,6 +709,7 @@ void InlineSelect::setControlVisible(bool visible) {
 void InlineSelect::hidePopup() {
     m_panel->hide();
     m_button->setChecked(false);
+    updateButtonIcon();
     if (g_openSelect == this)
         g_openSelect = nullptr;
 }
@@ -709,8 +720,15 @@ bool InlineSelect::isPopupVisible() const {
 
 QString InlineSelect::buttonText(const QString& text) const {
     if (m_prefix.isEmpty())
-        return text + QStringLiteral("  ▾");
-    return m_prefix + QStringLiteral(": ") + text + QStringLiteral("  ▾");
+        return text;
+    return m_prefix + QStringLiteral(": ") + text;
+}
+
+void InlineSelect::updateButtonIcon() {
+    if (!m_button)
+        return;
+    const double rotationDegrees = isPopupVisible() ? 180.0 : 0.0;
+    m_button->setIcon(iconFromSvg(kSelectArrowSvg, kSelectArrowIconSize, rotationDegrees));
 }
 
 void InlineSelect::showPopup() {
@@ -726,6 +744,7 @@ void InlineSelect::showPopup() {
     m_panel->raise();
     m_panel->show();
     m_button->setChecked(true);
+    updateButtonIcon();
     g_openSelect = this;
 }
 
@@ -947,12 +966,6 @@ void CaptureOverlay::buildToolbar() {
     m_fullscreenScope->setCurrentText(qString(hyprcapture::toString(m_defaults.fullscreenScope)));
     layout->addWidget(m_fullscreenScope);
 
-    m_regionScope = new InlineSelect(this, m_toolbar);
-    m_regionScope->setPrefix("Region");
-    m_regionScope->addItems(QStringList{"global", "current-monitor"});
-    m_regionScope->setCurrentText(qString(hyprcapture::toString(m_defaults.regionScope)));
-    layout->addWidget(m_regionScope);
-
     m_windowBackground = new InlineSelect(this, m_toolbar);
     m_windowBackground->setPrefix("Bg");
     m_windowBackground->addItems(QStringList{"follow-system", "white", "black", "real", "transparent"});
@@ -963,7 +976,7 @@ void CaptureOverlay::buildToolbar() {
     cancel->setFlat(true);
     cancel->setFocusPolicy(Qt::NoFocus);
     cancel->setIcon(iconFromSvg(kCancelSvg));
-    cancel->setIconSize(QSize(kModeIconSize, kModeIconSize));
+    cancel->setIconSize(QSize(kCancelIconSize, kCancelIconSize));
     cancel->setFixedSize(36, 32);
     cancel->setToolTip("Cancel");
     cancel->setAccessibleName("Cancel");
@@ -1041,8 +1054,6 @@ void CaptureOverlay::showEvent(QShowEvent* event) {
 void CaptureOverlay::hideOptionPopups() {
     if (m_fullscreenScope)
         m_fullscreenScope->hidePopup();
-    if (m_regionScope)
-        m_regionScope->hidePopup();
     if (m_windowBackground)
         m_windowBackground->hidePopup();
 }
@@ -1060,11 +1071,6 @@ void CaptureOverlay::updateToolbarControlsForMode() {
     if (m_fullscreenScope) {
         const bool visible = hasMultipleMonitors() && (m_defaults.fushionMode || m_mode == hyprcapture::CaptureMode::Fullscreen);
         m_fullscreenScope->setControlVisible(visible);
-    }
-
-    if (m_regionScope) {
-        const bool visible = m_defaults.fushionMode || m_mode == hyprcapture::CaptureMode::Region;
-        m_regionScope->setControlVisible(visible);
     }
 
     if (m_windowBackground) {
@@ -1090,12 +1096,6 @@ hyprcapture::FullscreenScope CaptureOverlay::currentFullscreenScope() const {
     if (!m_fullscreenScope || !hasMultipleMonitors())
         return hyprcapture::FullscreenScope::All;
     return hyprcapture::parseFullscreenScope(m_fullscreenScope->currentText().toStdString(), m_defaults.fullscreenScope);
-}
-
-hyprcapture::RegionScope CaptureOverlay::currentRegionScope() const {
-    if (!m_regionScope)
-        return m_defaults.regionScope;
-    return hyprcapture::parseRegionScope(m_regionScope->currentText().toStdString(), m_defaults.regionScope);
 }
 
 hyprcapture::WindowBackground CaptureOverlay::currentWindowBackground() const {
@@ -1319,8 +1319,6 @@ QRect CaptureOverlay::fullscreenCaptureRect() const {
 }
 
 QRect CaptureOverlay::regionCaptureBounds() const {
-    if (currentRegionScope() == hyprcapture::RegionScope::CurrentMonitor)
-        return localScreenRectAt(m_dragStart);
     return rect();
 }
 
@@ -1416,8 +1414,7 @@ void CaptureOverlay::updateStatus() {
         return;
     }
 
-    const auto* window = hoveredWindow();
-    m_status->setText(window ? QString("%1").arg(window->appClass.isEmpty() ? window->title : window->appClass) : QString("choose window"));
+    m_status->setText(hoveredWindow() ? QString("window selected") : QString("choose window"));
     relayoutToolbar();
 }
 

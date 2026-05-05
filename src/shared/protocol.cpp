@@ -45,7 +45,6 @@ std::string encodeSessionJson(const CaptureSession& session) {
     out << ",\"defaults\":{";
     out << "\"mode\":" << quote(toString(session.defaults.mode));
     out << ",\"fullscreenScope\":" << quote(toString(session.defaults.fullscreenScope));
-    out << ",\"regionScope\":" << quote(toString(session.defaults.regionScope));
     out << ",\"windowBackground\":" << quote(toString(session.defaults.windowBackground));
     out << ",\"windowBorder\":" << quote(toString(session.defaults.windowBorder));
     out << ",\"windowShadow\":" << quote(toString(session.defaults.windowShadow));

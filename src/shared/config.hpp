@@ -9,7 +9,6 @@ namespace hyprcapture {
 
 enum class CaptureMode { Fullscreen, Region, Window };
 enum class FullscreenScope { All, Current, PerMonitor };
-enum class RegionScope { Global, CurrentMonitor };
 enum class WindowBackground { White, Black, FollowSystem, Real, Transparent };
 enum class DecorationPolicy { Keep, Remove };
 enum class WatermarkPosition { UpLeft, UpMiddle, UpRight, LeftMiddle, Central, RightMiddle, DownLeft, DownMiddle, DownRight };
@@ -17,7 +16,6 @@ enum class WatermarkPosition { UpLeft, UpMiddle, UpRight, LeftMiddle, Central, R
 struct CaptureDefaults {
     CaptureMode      mode = CaptureMode::Region;
     FullscreenScope  fullscreenScope = FullscreenScope::All;
-    RegionScope      regionScope = RegionScope::Global;
     WindowBackground windowBackground = WindowBackground::FollowSystem;
     DecorationPolicy windowBorder = DecorationPolicy::Keep;
     DecorationPolicy windowShadow = DecorationPolicy::Keep;
@@ -38,14 +36,12 @@ struct CaptureDefaults {
 
 CaptureMode parseCaptureMode(std::string_view value, CaptureMode fallback = CaptureMode::Region);
 FullscreenScope parseFullscreenScope(std::string_view value, FullscreenScope fallback = FullscreenScope::All);
-RegionScope parseRegionScope(std::string_view value, RegionScope fallback = RegionScope::Global);
 WindowBackground parseWindowBackground(std::string_view value, WindowBackground fallback = WindowBackground::FollowSystem);
 DecorationPolicy parseDecorationPolicy(std::string_view value, DecorationPolicy fallback = DecorationPolicy::Keep);
 WatermarkPosition parseWatermarkPosition(std::string_view value, WatermarkPosition fallback = WatermarkPosition::Central);
 
 std::string toString(CaptureMode value);
 std::string toString(FullscreenScope value);
-std::string toString(RegionScope value);
 std::string toString(WindowBackground value);
 std::string toString(DecorationPolicy value);
 std::string toString(WatermarkPosition value);

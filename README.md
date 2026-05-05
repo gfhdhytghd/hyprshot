@@ -179,7 +179,6 @@ plugin {
     hyprcapture {
         default_mode = region
         fullscreen_scope = all
-        region_scope = global
         window_background = follow-system
         window_border = keep
         window_shadow = keep
@@ -205,7 +204,6 @@ plugin {
 | --- | --- | --- | --- |
 | `default_mode` | string | `region` | Default mode for `hyprcapture:open` and `hyprcapture:quick`. Supports `region`, `fullscreen`, and `window`. |
 | `fullscreen_scope` | string | `all` | Fullscreen capture scope. Supports `all`, `current`, and `per-monitor`. |
-| `region_scope` | string | `global` | Region selection scope. Supports `global` and `current-monitor`. |
 | `window_background` | string | `follow-system` | Background behind transparent window pixels. Supports `follow-system`, `white`, `black`, `real`, and `transparent`. |
 | `window_border` | string | `keep` | Window border policy. Supports `keep` and `remove`. |
 | `window_shadow` | string | `keep` | Window shadow policy. Supports `keep` and `remove`. |
