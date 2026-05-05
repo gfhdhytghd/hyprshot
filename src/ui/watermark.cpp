@@ -25,7 +25,7 @@ struct Length {
 
 constexpr const char* kActivateLinuxSvg =
     R"SVG(<svg width="340" height="120" viewBox="0 0 340 120" xmlns="http://www.w3.org/2000/svg">
-  <g fill="#c4c4c4" fill-opacity="0.2" font-family="sans-serif">
+  <g fill="#c4c4c4" fill-opacity="0.7" font-family="sans-serif">
     <text x="20" y="52" font-size="24">Activate Linux</text>
     <text x="20" y="76" font-size="16">Go to Settings to activate Linux.</text>
   </g>
