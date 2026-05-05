@@ -271,7 +271,14 @@ QIcon iconFromSvg(const char* svg, int logicalSize = kModeIconSize, double rotat
 
 QColor followSystemColor() {
     const auto scheme = QGuiApplication::styleHints()->colorScheme();
-    return scheme == Qt::ColorScheme::Light ? QColor(245, 245, 245) : QColor(17, 19, 23);
+    if (scheme == Qt::ColorScheme::Light)
+        return QColor(245, 245, 245);
+    if (scheme == Qt::ColorScheme::Dark)
+        return QColor(17, 19, 23);
+
+    const QColor window = QApplication::palette().color(QPalette::Window);
+    const double luminance = 0.2126 * window.redF() + 0.7152 * window.greenF() + 0.0722 * window.blueF();
+    return luminance >= 0.5 ? QColor(245, 245, 245) : QColor(17, 19, 23);
 }
 
 QString cssRgba(QColor color, int alpha = -1) {
