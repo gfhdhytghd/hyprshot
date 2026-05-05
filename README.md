@@ -25,8 +25,7 @@ HyprCapture is a Hyprland-only screenshot tool split into a compositor plugin an
 - macOS-style result thumbnail with open, copy, show in folder, delete, and close actions
 - Thumbnail swipe gestures: swipe right to close, swipe down to delete and restore the previous clipboard snapshot
 
-
-https://github.com/user-attachments/assets/0f9048b6-7b59-4b86-b1d9-ccdc736b371c
+<img width="1464" height="834" alt="image" src="https://github.com/user-attachments/assets/8aa9b11a-e98e-4057-bdf5-dc3bfb6cf8b6" />
 
 
 ## Installation
