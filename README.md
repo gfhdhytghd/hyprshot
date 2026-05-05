@@ -6,7 +6,7 @@ HyprCapture is a Hyprland-only screenshot tool split into a compositor plugin an
 > `hyprpm` builds the compositor plugin and installs the helper to `~/.local/bin/hyprcapture-ui`. Set `plugin:hyprcapture:helper` only when you want to override that default helper path.
 
 > [!WARNING]
-> Hyprland plugins run inside the compositor process. Install plugins only from sources you trust.
+> Hyprland plugins run inside the compositor process and with high permission. Install plugins only from sources you trust.
 
 > [!WARNING]
 > This software is 99% vibe coded with OpenAI CodeX, but have been manual audited, warn in case you mind it.
