@@ -16,6 +16,11 @@ struct Rect {
     double height = 0.0;
 };
 
+struct Point {
+    double x = 0.0;
+    double y = 0.0;
+};
+
 struct MonitorInfo {
     std::string name;
     Rect        logicalGeometry;
@@ -51,6 +56,7 @@ struct WindowInfo {
 struct CaptureSession {
     std::string              id;
     CaptureDefaults          defaults;
+    std::optional<Point>     cursorPosition;
     std::vector<MonitorInfo> monitors;
     std::vector<WindowInfo>  windows;
 };

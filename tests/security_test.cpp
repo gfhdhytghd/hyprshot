@@ -5,6 +5,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include <cstdlib>
 #include <iostream>
@@ -50,6 +52,32 @@ int main(int argc, char** argv) {
     require(hyprcapture::ui::isPrivateRuntimeFile(path, 1024 * 1024), "private png is accepted as private runtime file");
 
     QFile::remove(path);
+
+    hyprcapture::ui::ClipboardSnapshotData snapshot;
+    snapshot.valid = true;
+    snapshot.empty = false;
+    snapshot.text = QStringLiteral("previous clipboard");
+    snapshot.image = image;
+    const QString snapshotPath = hyprcapture::ui::saveClipboardSnapshotData(snapshot);
+    require(!snapshotPath.isEmpty(), "clipboard snapshot save succeeds");
+
+    QFile snapshotFile(snapshotPath);
+    require(snapshotFile.open(QIODevice::ReadOnly), "clipboard snapshot json opens");
+    const auto snapshotDoc = QJsonDocument::fromJson(snapshotFile.readAll());
+    const QString imagePath = snapshotDoc.object().value(QStringLiteral("image")).toString();
+    require(!imagePath.isEmpty() && QFileInfo::exists(imagePath), "clipboard snapshot image exists");
+    hyprcapture::ui::discardClipboardSnapshot(snapshotPath);
+    require(!QFileInfo::exists(snapshotPath), "clipboard snapshot json is discarded");
+    require(!QFileInfo::exists(imagePath), "clipboard snapshot image is discarded");
+
+    hyprcapture::ui::ClipboardSnapshotData oversized;
+    oversized.valid = true;
+    oversized.empty = false;
+    oversized.text = QString(5 * 1024 * 1024, QLatin1Char('x'));
+    require(hyprcapture::ui::saveClipboardSnapshotData(oversized).isEmpty(), "oversized clipboard text is rejected");
+    oversized.text = QString(17 * 1024 * 1024, QLatin1Char('x'));
+    require(hyprcapture::ui::saveClipboardSnapshotData(oversized).isEmpty(), "oversized clipboard snapshot is rejected");
+
     QDir(QFileInfo(info.absolutePath()).absolutePath()).rmdir(QFileInfo(info.absolutePath()).fileName());
 
     std::cout << "hyprcapture security tests passed\n";

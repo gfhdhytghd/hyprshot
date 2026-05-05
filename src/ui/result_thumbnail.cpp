@@ -211,6 +211,8 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
 
 void ResultThumbnail::closeEvent(QCloseEvent* event) {
     QWidget::closeEvent(event);
+    hyprcapture::ui::discardClipboardSnapshot(m_restoreClipboardPath);
+    m_restoreClipboardPath.clear();
     qApp->quit();
 }
 

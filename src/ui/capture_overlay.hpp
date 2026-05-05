@@ -5,6 +5,7 @@
 #include <QImage>
 #include <QMainWindow>
 #include <QPoint>
+#include <QPointF>
 #include <QRect>
 #include <QString>
 #include <functional>
@@ -79,6 +80,8 @@ class CaptureOverlay final : public QMainWindow {
     QRect desktopSourceRectForGlobalRect(const QRect& rect) const;
     QRect localToDesktopSourceRect(const QRect& rect) const;
     QPoint cursorLogicalPosition() const;
+    void rememberCursorPosition(const QPointF& globalPosition);
+    void refreshInitialCursorPosition();
     int monitorCount() const;
     bool hasMultipleMonitors() const;
     void hideOptionPopups();
@@ -108,6 +111,8 @@ class CaptureOverlay final : public QMainWindow {
     double                    m_overlayOpacity = 0.0;
     QPoint                    m_dragStart;
     QPoint                    m_dragEnd;
+    QPoint                    m_cursorLogicalPosition;
+    bool                      m_hasCursorLogicalPosition = false;
 
     QWidget*     m_toolbar = nullptr;
     QGraphicsOpacityEffect* m_toolbarOpacity = nullptr;

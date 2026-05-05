@@ -34,6 +34,7 @@ bool copyImageToClipboard(const QImage& image);
 bool copyImageToClipboardDetached(const QImage& image);
 bool copyImageFileToClipboardDetached(const QString& path);
 bool copyPixmapToClipboard(const QPixmap& pixmap);
+void discardClipboardSnapshot(const QString& path);
 void restoreClipboardSnapshot(const QString& path);
 
 } // namespace hyprcapture::ui

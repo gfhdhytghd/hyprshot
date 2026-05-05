@@ -57,6 +57,7 @@ int main() {
     session.defaults.watermarkPosition = WatermarkPosition::RightMiddle;
     session.defaults.watermarkWidth = "18%";
     session.defaults.watermarkOffset = "-2% 24px";
+    session.cursorPosition = Point{.x = 120, .y = 240};
     session.monitors.push_back({.name = "eDP-1", .logicalGeometry = {.x = 0, .y = 0, .width = 1920, .height = 1080}, .scale = 2.0, .transform = 0});
     session.monitors.back().artifactPath = "/tmp/monitor.rgba";
     session.monitors.back().artifactWidth = 3840;
@@ -85,6 +86,7 @@ int main() {
     require(json.find("\"watermarkPosition\":\"right-middle\"") != std::string::npos, "watermark position json");
     require(json.find("\"watermarkWidth\":\"18%\"") != std::string::npos, "watermark width json");
     require(json.find("\"watermarkOffset\":\"-2% 24px\"") != std::string::npos, "watermark offset json");
+    require(json.find("\"cursorPosition\":{\"x\":120,\"y\":240}") != std::string::npos, "cursor position json");
     require(json.find("\"fullGeometry\"") != std::string::npos, "full geometry json");
     require(json.find("\"rounding\":12") != std::string::npos, "rounding json");
     require(json.find("\"roundingPower\":2.5") != std::string::npos, "rounding power json");

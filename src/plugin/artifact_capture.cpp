@@ -7,6 +7,7 @@
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/pass/PassElement.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -23,6 +24,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fcntl.h>
+#include <limits>
 #include <sstream>
 #include <system_error>
 #include <sys/stat.h>
@@ -37,6 +39,8 @@ namespace {
 
 struct RgbaReadback {
     std::vector<unsigned char> pixels;
+    int                        cropX = 0;
+    int                        cropTopY = 0;
     int                        width = 0;
     int                        height = 0;
 };
@@ -74,6 +78,24 @@ constexpr std::size_t MAX_SESSION_MONITORS = 64;
 constexpr std::size_t MAX_SESSION_WINDOWS = 512;
 constexpr std::size_t MAX_WINDOW_METADATA_BYTES = 4096;
 constexpr std::size_t MAX_SESSION_JSON_BYTES = 8 * 1024 * 1024;
+constexpr int         MAX_RGBA_READBACK_DIMENSION = 32768;
+constexpr std::size_t MAX_RGBA_READBACK_BYTES = 512ULL * 1024ULL * 1024ULL;
+constexpr std::size_t RGBA_BYTES_PER_PIXEL = 4;
+
+struct RgbaReadbackRegion {
+    int         outputCropX = 0;
+    int         outputCropTopY = 0;
+    int         outputWidth = 0;
+    int         outputHeight = 0;
+    int         srcX = 0;
+    int         srcTopY = 0;
+    int         srcWidth = 0;
+    int         srcHeight = 0;
+    int         dstX = 0;
+    int         dstY = 0;
+    std::size_t outputBytes = 0;
+    std::size_t sourceBytes = 0;
+};
 
 Rect toRect(const CBox& box) {
     return {.x = box.x, .y = box.y, .width = box.w, .height = box.h};
@@ -139,6 +161,111 @@ std::string boundedString(const std::string& value, std::size_t maxBytes) {
 
 bool containsPath(const std::vector<std::filesystem::path>& paths, const std::filesystem::path& path) {
     return std::find(paths.begin(), paths.end(), path) != paths.end();
+}
+
+int clampedIntFromDouble(double value) {
+    if (!std::isfinite(value))
+        return value < 0.0 ? std::numeric_limits<int>::min() : std::numeric_limits<int>::max();
+    if (value <= static_cast<double>(std::numeric_limits<int>::min()))
+        return std::numeric_limits<int>::min();
+    if (value >= static_cast<double>(std::numeric_limits<int>::max()))
+        return std::numeric_limits<int>::max();
+    return static_cast<int>(value);
+}
+
+int positiveIntFromDouble(double value) {
+    if (!std::isfinite(value) || value <= 0.0)
+        return 1;
+    if (value >= static_cast<double>(std::numeric_limits<int>::max()))
+        return std::numeric_limits<int>::max();
+    return std::max(1, static_cast<int>(value));
+}
+
+int positiveRoundedIntFromDouble(double value) {
+    if (!std::isfinite(value) || value <= 0.0)
+        return 1;
+    if (value >= static_cast<double>(std::numeric_limits<int>::max()))
+        return std::numeric_limits<int>::max();
+    return std::max(1, static_cast<int>(std::lround(value)));
+}
+
+bool checkedRgbaByteSize(int width, int height, std::size_t& bytes) {
+    bytes = 0;
+    if (width <= 0 || height <= 0 || width > MAX_RGBA_READBACK_DIMENSION || height > MAX_RGBA_READBACK_DIMENSION)
+        return false;
+
+    const auto w = static_cast<std::size_t>(width);
+    const auto h = static_cast<std::size_t>(height);
+    if (w > std::numeric_limits<std::size_t>::max() / h)
+        return false;
+
+    const auto pixels = w * h;
+    if (pixels > std::numeric_limits<std::size_t>::max() / RGBA_BYTES_PER_PIXEL)
+        return false;
+
+    bytes = pixels * RGBA_BYTES_PER_PIXEL;
+    return bytes <= MAX_RGBA_READBACK_BYTES;
+}
+
+int clampToFramebuffer(std::int64_t value, int framebufferExtent) {
+    if (value <= 0)
+        return 0;
+    if (value >= framebufferExtent)
+        return framebufferExtent;
+    return static_cast<int>(value);
+}
+
+bool prepareRgbaReadbackRegion(int framebufferWidth,
+                               int framebufferHeight,
+                               int cropX,
+                               int cropTopY,
+                               int cropWidth,
+                               int cropHeight,
+                               RgbaReadbackRegion& region) {
+    region = {};
+    if (framebufferWidth <= 0 || framebufferHeight <= 0 || cropWidth <= 0 || cropHeight <= 0)
+        return false;
+
+    const auto cropLeft = static_cast<std::int64_t>(cropX);
+    const auto cropTop = static_cast<std::int64_t>(cropTopY);
+    const auto cropRight = cropLeft + static_cast<std::int64_t>(cropWidth);
+    const auto cropBottom = cropTop + static_cast<std::int64_t>(cropHeight);
+
+    region.srcX = clampToFramebuffer(cropLeft, framebufferWidth);
+    region.srcTopY = clampToFramebuffer(cropTop, framebufferHeight);
+    const int srcRight = clampToFramebuffer(cropRight, framebufferWidth);
+    const int srcBottom = clampToFramebuffer(cropBottom, framebufferHeight);
+    region.srcWidth = srcRight - region.srcX;
+    region.srcHeight = srcBottom - region.srcTopY;
+
+    std::size_t requestedBytes = 0;
+    if (checkedRgbaByteSize(cropWidth, cropHeight, requestedBytes)) {
+        region.outputCropX = cropX;
+        region.outputCropTopY = cropTopY;
+        region.outputWidth = cropWidth;
+        region.outputHeight = cropHeight;
+        region.dstX = region.srcX - cropX;
+        region.dstY = region.srcTopY - cropTopY;
+        region.outputBytes = requestedBytes;
+    } else {
+        if (region.srcWidth <= 0 || region.srcHeight <= 0)
+            return false;
+
+        if (!checkedRgbaByteSize(region.srcWidth, region.srcHeight, region.outputBytes))
+            return false;
+
+        region.outputCropX = region.srcX;
+        region.outputCropTopY = region.srcTopY;
+        region.outputWidth = region.srcWidth;
+        region.outputHeight = region.srcHeight;
+        region.dstX = 0;
+        region.dstY = 0;
+    }
+
+    if (region.srcWidth > 0 && region.srcHeight > 0 && !checkedRgbaByteSize(region.srcWidth, region.srcHeight, region.sourceBytes))
+        return false;
+
+    return true;
 }
 
 void rememberParent(std::vector<std::filesystem::path>& parents, const std::filesystem::path& path) {
@@ -217,13 +344,18 @@ RgbaReadback cropReadback(const RgbaReadback& readback, const PixelBounds& bound
         return {};
 
     RgbaReadback cropped;
+    cropped.cropX = readback.cropX + bounds.x;
+    cropped.cropTopY = readback.cropTopY + bounds.y;
     cropped.width = bounds.width;
     cropped.height = bounds.height;
-    cropped.pixels.assign(static_cast<std::size_t>(bounds.width) * static_cast<std::size_t>(bounds.height) * 4U, 0);
+    std::size_t pixelBytes = 0;
+    if (!checkedRgbaByteSize(bounds.width, bounds.height, pixelBytes))
+        return {};
+    cropped.pixels.assign(pixelBytes, 0);
 
-    const std::size_t rowBytes = static_cast<std::size_t>(bounds.width) * 4U;
+    const std::size_t rowBytes = static_cast<std::size_t>(bounds.width) * RGBA_BYTES_PER_PIXEL;
     for (int y = 0; y < bounds.height; ++y) {
-        const auto* src = readback.pixels.data() + (static_cast<std::size_t>(bounds.y + y) * readback.width + bounds.x) * 4U;
+        const auto* src = readback.pixels.data() + (static_cast<std::size_t>(bounds.y + y) * readback.width + bounds.x) * RGBA_BYTES_PER_PIXEL;
         auto*       dst = cropped.pixels.data() + static_cast<std::size_t>(y) * rowBytes;
         std::copy(src, src + rowBytes, dst);
     }
@@ -232,38 +364,34 @@ RgbaReadback cropReadback(const RgbaReadback& readback, const PixelBounds& bound
 }
 
 RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int cropTopY, int cropWidth, int cropHeight, bool directGlY = false) {
-    const int framebufferWidth = static_cast<int>(std::lround(framebuffer.m_size.x));
-    const int framebufferHeight = static_cast<int>(std::lround(framebuffer.m_size.y));
-    if (framebufferWidth <= 0 || framebufferHeight <= 0 || cropWidth <= 0 || cropHeight <= 0)
+    const int framebufferWidth = positiveRoundedIntFromDouble(framebuffer.m_size.x);
+    const int framebufferHeight = positiveRoundedIntFromDouble(framebuffer.m_size.y);
+    RgbaReadbackRegion region;
+    if (!prepareRgbaReadbackRegion(framebufferWidth, framebufferHeight, cropX, cropTopY, cropWidth, cropHeight, region))
         return {};
 
     RgbaReadback readback;
-    readback.width = cropWidth;
-    readback.height = cropHeight;
-    readback.pixels.assign(static_cast<std::size_t>(cropWidth) * static_cast<std::size_t>(cropHeight) * 4U, 0);
-    const int srcX = std::clamp(cropX, 0, framebufferWidth);
-    const int srcTopY = std::clamp(cropTopY, 0, framebufferHeight);
-    const int srcRight = std::clamp(cropX + cropWidth, 0, framebufferWidth);
-    const int srcBottom = std::clamp(cropTopY + cropHeight, 0, framebufferHeight);
-    const int srcWidth = srcRight - srcX;
-    const int srcHeight = srcBottom - srcTopY;
+    readback.cropX = region.outputCropX;
+    readback.cropTopY = region.outputCropTopY;
+    readback.width = region.outputWidth;
+    readback.height = region.outputHeight;
+    readback.pixels.assign(region.outputBytes, 0);
 
-    if (srcWidth > 0 && srcHeight > 0) {
-        std::vector<unsigned char> rows(static_cast<std::size_t>(srcWidth) * static_cast<std::size_t>(srcHeight) * 4U);
+    if (region.srcWidth > 0 && region.srcHeight > 0) {
+        std::vector<unsigned char> rows(region.sourceBytes);
         GLint previousReadFramebuffer = 0;
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer.getFBID());
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        const int readY = directGlY ? srcTopY : framebufferHeight - srcTopY - srcHeight;
-        glReadPixels(srcX, readY, srcWidth, srcHeight, GL_RGBA, GL_UNSIGNED_BYTE, rows.data());
+        const int readY = directGlY ? region.srcTopY : framebufferHeight - region.srcTopY - region.srcHeight;
+        glReadPixels(region.srcX, readY, region.srcWidth, region.srcHeight, GL_RGBA, GL_UNSIGNED_BYTE, rows.data());
         glBindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFramebuffer);
 
-        const int dstX = srcX - cropX;
-        const int dstY = srcTopY - cropTopY;
-        for (int y = 0; y < srcHeight; ++y) {
-            const auto* src = rows.data() + static_cast<std::size_t>(y) * srcWidth * 4U;
-            auto*       dst = readback.pixels.data() + (static_cast<std::size_t>(dstY + y) * cropWidth + dstX) * 4U;
-            std::copy(src, src + static_cast<std::size_t>(srcWidth) * 4U, dst);
+        for (int y = 0; y < region.srcHeight; ++y) {
+            const auto* src = rows.data() + static_cast<std::size_t>(y) * region.srcWidth * RGBA_BYTES_PER_PIXEL;
+            auto*       dst = readback.pixels.data() +
+                (static_cast<std::size_t>(region.dstY + y) * region.outputWidth + region.dstX) * RGBA_BYTES_PER_PIXEL;
+            std::copy(src, src + static_cast<std::size_t>(region.srcWidth) * RGBA_BYTES_PER_PIXEL, dst);
         }
     }
 
@@ -533,8 +661,8 @@ bool writeRgbaFramebuffer(CFramebuffer& framebuffer, const std::filesystem::path
                                       path,
                                       0,
                                       0,
-                                      static_cast<int>(std::lround(framebuffer.m_size.x)),
-                                      static_cast<int>(std::lround(framebuffer.m_size.y)));
+                                      positiveRoundedIntFromDouble(framebuffer.m_size.x),
+                                      positiveRoundedIntFromDouble(framebuffer.m_size.y));
 }
 
 CBox renderedWindowBox(const PHLWINDOW& window, CBox box) {
@@ -602,8 +730,11 @@ bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& fro
     if (!monitor || !monitor->m_activeWorkspace || !g_pHyprRenderer || !g_pHyprOpenGL)
         return false;
 
-    width = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.x)));
-    height = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.y)));
+    width = positiveRoundedIntFromDouble(monitor->m_pixelSize.x);
+    height = positiveRoundedIntFromDouble(monitor->m_pixelSize.y);
+    std::size_t framebufferBytes = 0;
+    if (!checkedRgbaByteSize(width, height, framebufferBytes))
+        return false;
 
     CFramebuffer framebuffer;
     if (!framebuffer.alloc(width, height, monitor->m_output->state->state().drmFormat))
@@ -644,10 +775,13 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     WindowAnimationGoalOverride windowGoal(window);
     const CBox fullBox = renderedWindowBox(window, window->getFullWindowBoundingBox());
     CBox sourceCropBox = fullBox.copy().translate(-monitor->m_position).scale(monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale).round();
-    width = std::max(1, static_cast<int>(sourceCropBox.w));
-    height = std::max(1, static_cast<int>(sourceCropBox.h));
-    const int framebufferWidth = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.x)));
-    const int framebufferHeight = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.y)));
+    width = positiveIntFromDouble(sourceCropBox.w);
+    height = positiveIntFromDouble(sourceCropBox.h);
+    const int framebufferWidth = positiveRoundedIntFromDouble(monitor->m_pixelSize.x);
+    const int framebufferHeight = positiveRoundedIntFromDouble(monitor->m_pixelSize.y);
+    std::size_t framebufferBytes = 0;
+    if (!checkedRgbaByteSize(framebufferWidth, framebufferHeight, framebufferBytes))
+        return false;
     const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
     const int targetCropX = width < framebufferWidth ? (framebufferWidth - width) / 2 : 0;
     const int targetCropY = height < framebufferHeight ? (framebufferHeight - height) / 2 : 0;
@@ -689,25 +823,23 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     if (!renderIntoFramebuffer())
         return false;
 
-    const int cropX = static_cast<int>(renderCropBox.x);
-    const int cropY = static_cast<int>(renderCropBox.y);
+    const int cropX = clampedIntFromDouble(renderCropBox.x);
+    const int cropY = clampedIntFromDouble(renderCropBox.y);
     auto      readback = readRgbaFramebufferRegion(framebuffer, 0, 0, framebufferWidth, framebufferHeight);
     if (readback.pixels.empty())
         return false;
 
-    int actualCropX = cropX;
-    int actualCropY = cropY;
     PixelBounds bounds;
-    if (findAlphaBounds(readback, bounds)) {
+    if (findAlphaBounds(readback, bounds))
         readback = cropReadback(readback, bounds);
-        actualCropX = bounds.x;
-        actualCropY = bounds.y;
-    } else
+    else
         readback = readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height);
+    if (readback.pixels.empty())
+        return false;
 
     width = readback.width;
     height = readback.height;
-    artifactBox = CBox{fullBox.x + (actualCropX - cropX) / scale, fullBox.y + (actualCropY - cropY) / scale, width / scale, height / scale};
+    artifactBox = CBox{fullBox.x + (readback.cropX - cropX) / scale, fullBox.y + (readback.cropTopY - cropY) / scale, width / scale, height / scale};
 
     repairTopTransparentSeam(readback);
     unpremultiplyAlpha(readback);
@@ -745,8 +877,11 @@ void renderRealBackgroundArtifactsForMonitor(const PHLMONITOR& monitor,
     if (!monitor || !monitor->m_activeWorkspace || requests.empty() || !g_pHyprRenderer || !g_pHyprOpenGL)
         return;
 
-    const int framebufferWidth = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.x)));
-    const int framebufferHeight = std::max(1, static_cast<int>(std::lround(monitor->m_pixelSize.y)));
+    const int framebufferWidth = positiveRoundedIntFromDouble(monitor->m_pixelSize.x);
+    const int framebufferHeight = positiveRoundedIntFromDouble(monitor->m_pixelSize.y);
+    std::size_t framebufferBytes = 0;
+    if (!checkedRgbaByteSize(framebufferWidth, framebufferHeight, framebufferBytes))
+        return;
     const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
 
     std::vector<RealBackgroundCaptureState> states;
@@ -758,10 +893,10 @@ void renderRealBackgroundArtifactsForMonitor(const PHLMONITOR& monitor,
         CBox cropBox = request->artifactBox.copy().translate(-monitor->m_position).scale(scale).round();
         RealBackgroundCaptureState state;
         state.window = request->window;
-        state.cropX = static_cast<int>(cropBox.x);
-        state.cropY = static_cast<int>(cropBox.y);
-        state.width = std::max(1, static_cast<int>(cropBox.w));
-        state.height = std::max(1, static_cast<int>(cropBox.h));
+        state.cropX = clampedIntFromDouble(cropBox.x);
+        state.cropY = clampedIntFromDouble(cropBox.y);
+        state.width = positiveIntFromDouble(cropBox.w);
+        state.height = positiveIntFromDouble(cropBox.h);
         states.push_back(std::move(state));
     }
     if (states.empty())
@@ -928,6 +1063,11 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
     CaptureSession session;
     session.id = makeSessionId();
     session.defaults = defaults;
+    if (g_pInputManager) {
+        const auto cursor = g_pInputManager->getMouseCoordsInternal();
+        if (std::isfinite(cursor.x) && std::isfinite(cursor.y))
+            session.cursorPosition = Point{.x = cursor.x, .y = cursor.y};
+    }
     const auto root = artifactRoot(session.id);
     if (root.empty())
         return session;

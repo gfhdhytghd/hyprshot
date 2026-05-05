@@ -38,6 +38,7 @@ add_library(hyprcapture SHARED
 target_include_directories(hyprcapture PRIVATE src ${HYPR_DEPS_INCLUDE_DIRS})
 target_link_directories(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARY_DIRS})
 target_link_libraries(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARIES})
+target_link_options(hyprcapture PRIVATE -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
 
 add_executable(hyprcapture-ui
   src/ui/main.cpp
@@ -51,6 +52,7 @@ add_executable(hyprcapture-ui
 
 target_include_directories(hyprcapture-ui PRIVATE src)
 target_link_libraries(hyprcapture-ui PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg LayerShellQt::Interface)
+target_link_options(hyprcapture-ui PRIVATE -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
 
 if(BUILD_TESTING)
   add_executable(hyprcapture-config-test

@@ -5,16 +5,18 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <optional>
+#include <poll.h>
+#include <spawn.h>
 #include <sstream>
 #include <string_view>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
 
@@ -24,6 +26,7 @@ namespace hyprcapture {
 namespace {
 
 constexpr std::size_t MAX_INLINE_SESSION_JSON_BYTES = 64 * 1024;
+constexpr int EXEC_FAILURE_PIPE_TIMEOUT_MS = 2000;
 
 std::string boolArg(bool value) {
     return value ? "1" : "0";
@@ -147,6 +150,11 @@ bool setCloseOnExec(int fd) {
     return flags >= 0 && fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == 0;
 }
 
+bool setNonBlocking(int fd) {
+    const int flags = fcntl(fd, F_GETFL);
+    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
 struct PipeFds {
     int read = -1;
     int write = -1;
@@ -164,7 +172,7 @@ std::optional<PipeFds> makeExecErrorPipe() {
         return std::nullopt;
 
     PipeFds pipe{.read = fds[0], .write = fds[1]};
-    if (!setCloseOnExec(pipe.read) || !setCloseOnExec(pipe.write)) {
+    if (!setCloseOnExec(pipe.read) || !setCloseOnExec(pipe.write) || !setNonBlocking(pipe.read)) {
         closeFd(pipe.read);
         closeFd(pipe.write);
         return std::nullopt;
@@ -172,34 +180,27 @@ std::optional<PipeFds> makeExecErrorPipe() {
     return pipe;
 }
 
-void closeInheritedFileDescriptors(int keepFd) {
-    long maxFd = sysconf(_SC_OPEN_MAX);
-    if (maxFd < 0)
-        maxFd = 1024;
-
-    for (int fd = 3; fd < maxFd; ++fd) {
-        if (fd != keepFd)
-            close(fd);
-    }
-}
-
-void writeExecFailure(int fd, int error) {
-    const auto* data = reinterpret_cast<const char*>(&error);
-    std::size_t written = 0;
-    while (written < sizeof(error)) {
-        const ssize_t chunk = write(fd, data + written, sizeof(error) - written);
-        if (chunk < 0) {
-            if (errno == EINTR)
-                continue;
-            return;
-        }
-        if (chunk == 0)
-            return;
-        written += static_cast<std::size_t>(chunk);
-    }
-}
-
 std::optional<int> readExecFailure(int fd) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(EXEC_FAILURE_PIPE_TIMEOUT_MS);
+    auto       remainingTimeout = [&]() -> int {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+        return remaining.count() <= 0 ? 0 : static_cast<int>(remaining.count());
+    };
+
+    pollfd pfd{.fd = fd, .events = POLLIN | POLLHUP | POLLERR, .revents = 0};
+    while (true) {
+        const int timeoutMs = remainingTimeout();
+        const int ready = poll(&pfd, 1, timeoutMs);
+        if (ready > 0)
+            break;
+        if (ready == 0)
+            return std::nullopt;
+        if (errno != EINTR)
+            return errno;
+        if (remainingTimeout() == 0)
+            return std::nullopt;
+    }
+
     int         error = 0;
     auto*       data = reinterpret_cast<char*>(&error);
     std::size_t bytes = 0;
@@ -208,6 +209,8 @@ std::optional<int> readExecFailure(int fd) {
         if (chunk < 0) {
             if (errno == EINTR)
                 continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                return std::nullopt;
             return errno;
         }
         if (chunk == 0)
@@ -217,10 +220,63 @@ std::optional<int> readExecFailure(int fd) {
     return error;
 }
 
-void reapChild(pid_t pid) {
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+struct SpawnFileActions {
+    posix_spawn_file_actions_t value {};
+    bool                       initialized = false;
+
+    ~SpawnFileActions() {
+        if (initialized)
+            posix_spawn_file_actions_destroy(&value);
     }
+};
+
+struct SpawnAttributes {
+    posix_spawnattr_t value {};
+    bool              initialized = false;
+
+    ~SpawnAttributes() {
+        if (initialized)
+            posix_spawnattr_destroy(&value);
+    }
+};
+
+std::optional<int> initSpawnFileActions(SpawnFileActions& actions) {
+    const int error = posix_spawn_file_actions_init(&actions.value);
+    if (error != 0)
+        return error;
+    actions.initialized = true;
+    return std::nullopt;
+}
+
+std::optional<int> initSpawnAttributes(SpawnAttributes& attrs) {
+    const int error = posix_spawnattr_init(&attrs.value);
+    if (error != 0)
+        return error;
+    attrs.initialized = true;
+    return std::nullopt;
+}
+
+std::optional<int> configureSpawnFileDescriptorPolicy(SpawnFileActions& actions, SpawnAttributes& attrs) {
+#if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
+    const int error = posix_spawnattr_setflags(&attrs.value, POSIX_SPAWN_CLOEXEC_DEFAULT);
+    if (error != 0)
+        return error;
+#elif defined(__GLIBC__) && defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 34)
+    const int error = posix_spawn_file_actions_addclosefrom_np(&actions.value, 3);
+    if (error != 0)
+        return error;
+#else
+    long maxFd = sysconf(_SC_OPEN_MAX);
+    if (maxFd < 0)
+        maxFd = 1024;
+
+    for (int fd = 3; fd < maxFd; ++fd) {
+        const int error = posix_spawn_file_actions_addclose(&actions.value, fd);
+        if (error != 0)
+            return error;
+    }
+#endif
+    return std::nullopt;
 }
 
 } // namespace
@@ -229,10 +285,6 @@ LaunchResult launchHelper(const LaunchRequest& request) {
     const auto helper = firstRunnableHelper(request.defaults.helper);
     if (!helper)
         return {.success = false, .error = "no trusted hyprcapture-ui helper found"};
-
-    auto execErrorPipe = makeExecErrorPipe();
-    if (!execErrorPipe)
-        return {.success = false, .error = std::string("pipe failed: ") + std::strerror(errno)};
 
     CaptureSession session = captureCompositorArtifacts(request.defaults);
     session.defaults.mode = request.requestedMode;
@@ -243,94 +295,110 @@ LaunchResult launchHelper(const LaunchRequest& request) {
     const bool useSessionJsonFile = !sessionJsonFile.empty();
     if (!useSessionJsonFile && (sessionHasArtifacts || sessionJson.size() > MAX_INLINE_SESSION_JSON_BYTES)) {
         cleanupCompositorArtifacts(session);
-        closeFd(execErrorPipe->read);
-        closeFd(execErrorPipe->write);
         return {.success = false, .error = "failed to write bounded session metadata"};
     }
 
-    const pid_t pid = fork();
-    if (pid < 0) {
+    std::vector<std::string> args;
+    args.push_back(*helper);
+    args.push_back("--mode");
+    args.push_back(toString(request.requestedMode));
+    args.push_back("--fullscreen-scope");
+    args.push_back(toString(request.defaults.fullscreenScope));
+    args.push_back("--window-background");
+    args.push_back(toString(request.defaults.windowBackground));
+    args.push_back("--window-border");
+    args.push_back(toString(request.defaults.windowBorder));
+    args.push_back("--window-shadow");
+    args.push_back(toString(request.defaults.windowShadow));
+    args.push_back("--save");
+    args.push_back(boolArg(request.defaults.save));
+    args.push_back("--clipboard");
+    args.push_back(boolArg(request.defaults.clipboard));
+    args.push_back("--thumbnail");
+    args.push_back(boolArg(request.defaults.showThumbnail));
+    args.push_back("--include-cursor");
+    args.push_back(boolArg(request.defaults.includeCursor));
+    args.push_back("--fushion-mode");
+    args.push_back(boolArg(request.defaults.fushionMode));
+    args.push_back("--save-dir");
+    args.push_back(request.defaults.saveDir);
+    args.push_back("--filename-template");
+    args.push_back(request.defaults.filenameTemplate);
+    args.push_back("--thumbnail-timeout-ms");
+    args.push_back(std::to_string(request.defaults.thumbnailTimeoutMs));
+    args.push_back("--watermark");
+    args.push_back(request.defaults.watermark);
+    args.push_back("--watermark-position");
+    args.push_back(toString(request.defaults.watermarkPosition));
+    args.push_back("--watermark-width");
+    args.push_back(request.defaults.watermarkWidth);
+    args.push_back("--watermark-offset");
+    args.push_back(request.defaults.watermarkOffset);
+    if (request.quick)
+        args.push_back("--quick");
+    if (useSessionJsonFile) {
+        args.push_back("--session-json-file");
+        args.push_back(sessionJsonFile);
+    } else {
+        args.push_back("--session-json");
+        args.push_back(sessionJson);
+    }
+
+    std::vector<char*> argv;
+    argv.reserve(args.size() + 1);
+    for (auto& arg : args)
+        argv.push_back(arg.data());
+    argv.push_back(nullptr);
+
+    auto childEnv = childEnvironment();
+    std::vector<char*> envp;
+    envp.reserve(childEnv.size() + 1);
+    for (auto& env : childEnv)
+        envp.push_back(env.data());
+    envp.push_back(nullptr);
+
+    auto execErrorPipe = makeExecErrorPipe();
+    if (!execErrorPipe) {
+        cleanupCompositorArtifacts(session);
+        return {.success = false, .error = std::string("pipe failed: ") + std::strerror(errno)};
+    }
+
+    SpawnFileActions fileActions;
+    if (const auto error = initSpawnFileActions(fileActions)) {
         cleanupCompositorArtifacts(session);
         closeFd(execErrorPipe->read);
         closeFd(execErrorPipe->write);
-        return {.success = false, .error = std::string("fork failed: ") + std::strerror(errno)};
+        return {.success = false, .error = std::string("spawn setup failed: ") + std::strerror(*error)};
     }
 
-    if (pid == 0) {
+    SpawnAttributes attrs;
+    if (const auto error = initSpawnAttributes(attrs)) {
+        cleanupCompositorArtifacts(session);
         closeFd(execErrorPipe->read);
-
-        std::vector<std::string> args;
-        args.push_back(*helper);
-        args.push_back("--mode");
-        args.push_back(toString(request.requestedMode));
-        args.push_back("--fullscreen-scope");
-        args.push_back(toString(request.defaults.fullscreenScope));
-        args.push_back("--window-background");
-        args.push_back(toString(request.defaults.windowBackground));
-        args.push_back("--window-border");
-        args.push_back(toString(request.defaults.windowBorder));
-        args.push_back("--window-shadow");
-        args.push_back(toString(request.defaults.windowShadow));
-        args.push_back("--save");
-        args.push_back(boolArg(request.defaults.save));
-        args.push_back("--clipboard");
-        args.push_back(boolArg(request.defaults.clipboard));
-        args.push_back("--thumbnail");
-        args.push_back(boolArg(request.defaults.showThumbnail));
-        args.push_back("--include-cursor");
-        args.push_back(boolArg(request.defaults.includeCursor));
-        args.push_back("--fushion-mode");
-        args.push_back(boolArg(request.defaults.fushionMode));
-        args.push_back("--save-dir");
-        args.push_back(request.defaults.saveDir);
-        args.push_back("--filename-template");
-        args.push_back(request.defaults.filenameTemplate);
-        args.push_back("--thumbnail-timeout-ms");
-        args.push_back(std::to_string(request.defaults.thumbnailTimeoutMs));
-        args.push_back("--watermark");
-        args.push_back(request.defaults.watermark);
-        args.push_back("--watermark-position");
-        args.push_back(toString(request.defaults.watermarkPosition));
-        args.push_back("--watermark-width");
-        args.push_back(request.defaults.watermarkWidth);
-        args.push_back("--watermark-offset");
-        args.push_back(request.defaults.watermarkOffset);
-        if (request.quick)
-            args.push_back("--quick");
-        if (useSessionJsonFile) {
-            args.push_back("--session-json-file");
-            args.push_back(sessionJsonFile);
-        } else {
-            args.push_back("--session-json");
-            args.push_back(sessionJson);
-        }
-
-        std::vector<char*> argv;
-        argv.reserve(args.size() + 1);
-        for (auto& arg : args)
-            argv.push_back(arg.data());
-        argv.push_back(nullptr);
-
-        auto childEnv = childEnvironment();
-        std::vector<char*> envp;
-        envp.reserve(childEnv.size() + 1);
-        for (auto& env : childEnv)
-            envp.push_back(env.data());
-        envp.push_back(nullptr);
-
-        closeInheritedFileDescriptors(execErrorPipe->write);
-        execve(argv[0], argv.data(), envp.data());
-        const int execError = errno;
-        writeExecFailure(execErrorPipe->write, execError);
-        _exit(127);
+        closeFd(execErrorPipe->write);
+        return {.success = false, .error = std::string("spawn setup failed: ") + std::strerror(*error)};
     }
 
+    if (const auto error = configureSpawnFileDescriptorPolicy(fileActions, attrs)) {
+        cleanupCompositorArtifacts(session);
+        closeFd(execErrorPipe->read);
+        closeFd(execErrorPipe->write);
+        return {.success = false, .error = std::string("spawn setup failed: ") + std::strerror(*error)};
+    }
+
+    pid_t     pid = -1;
+    const int spawnError = posix_spawn(&pid, argv[0], &fileActions.value, &attrs.value, argv.data(), envp.data());
     closeFd(execErrorPipe->write);
+    if (spawnError != 0) {
+        cleanupCompositorArtifacts(session);
+        closeFd(execErrorPipe->read);
+        return {.success = false, .error = std::string("exec failed: ") + std::strerror(spawnError)};
+    }
+
     const auto execFailure = readExecFailure(execErrorPipe->read);
     closeFd(execErrorPipe->read);
     if (execFailure) {
         cleanupCompositorArtifacts(session);
-        reapChild(pid);
         return {.success = false, .error = std::string("exec failed: ") + std::strerror(*execFailure)};
     }
 

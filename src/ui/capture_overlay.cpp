@@ -47,6 +47,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <utility>
 
 class InlineSelect final : public QWidget {
@@ -91,6 +92,7 @@ constexpr int kCancelIconSize = 16;
 constexpr int kSelectArrowIconSize = 12;
 constexpr int kMaxArtifactDimension = 32768;
 constexpr qint64 kMaxArtifactBytes = 512LL * 1024LL * 1024LL;
+constexpr int kMaxLogicalCoordinate = 1'000'000;
 constexpr int kMaxSessionMonitors = 64;
 constexpr int kMaxSessionWindows = 512;
 
@@ -143,7 +145,10 @@ bool savePng(const QImage& image, const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly))
         return false;
-    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    if (!file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
+        file.remove();
+        return false;
+    }
 
     QImageWriter writer(&file, "PNG");
     writer.setQuality(75);
@@ -329,9 +334,79 @@ QString popupStyleSheet(const QPalette& palette) {
         .arg(cssRgba(window, 246), cssRgba(border, 150), cssRgba(text), cssRgba(hover, 210), cssRgba(highlightedText), cssRgba(highlight));
 }
 
+bool imageSizeWithinBounds(const QSize& size) {
+    if (size.isEmpty() || size.width() <= 0 || size.height() <= 0 || size.width() > kMaxArtifactDimension || size.height() > kMaxArtifactDimension)
+        return false;
+
+    const auto width = static_cast<qint64>(size.width());
+    const auto height = static_cast<qint64>(size.height());
+    if (width > std::numeric_limits<qint64>::max() / height)
+        return false;
+    const auto pixels = width * height;
+    if (pixels > std::numeric_limits<qint64>::max() / 4)
+        return false;
+    return pixels * 4 <= kMaxArtifactBytes;
+}
+
+QImage boundedImage(const QSize& size, QImage::Format format) {
+    if (!imageSizeWithinBounds(size))
+        return {};
+    return QImage(size, format);
+}
+
+QSize boundedScaledSize(int width, int height, double scaleX, double scaleY) {
+    if (width <= 0 || height <= 0 || !std::isfinite(scaleX) || !std::isfinite(scaleY) || scaleX <= 0.0 || scaleY <= 0.0)
+        return {};
+
+    const double scaledWidth = std::ceil(width * scaleX);
+    const double scaledHeight = std::ceil(height * scaleY);
+    if (!std::isfinite(scaledWidth) || !std::isfinite(scaledHeight) || scaledWidth < 1.0 || scaledHeight < 1.0 ||
+        scaledWidth > kMaxArtifactDimension || scaledHeight > kMaxArtifactDimension)
+        return {};
+
+    const QSize size(static_cast<int>(scaledWidth), static_cast<int>(scaledHeight));
+    return imageSizeWithinBounds(size) ? size : QSize{};
+}
+
+bool boundedDoubleToInt(double value, int minimum, int maximum, bool ceilValue, int& out) {
+    if (!std::isfinite(value))
+        return false;
+    const double rounded = ceilValue ? std::ceil(value) : std::floor(value);
+    if (rounded < minimum || rounded > maximum)
+        return false;
+    out = static_cast<int>(rounded);
+    return true;
+}
+
 QRect jsonRect(const QJsonObject& obj) {
-    return QRect(QPoint(static_cast<int>(std::floor(obj.value("x").toDouble())), static_cast<int>(std::floor(obj.value("y").toDouble()))),
-                 QSize(std::max(1, static_cast<int>(std::ceil(obj.value("width").toDouble()))), std::max(1, static_cast<int>(std::ceil(obj.value("height").toDouble())))));
+    if (!obj.contains("x") || !obj.contains("y") || !obj.contains("width") || !obj.contains("height"))
+        return {};
+
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    if (!boundedDoubleToInt(obj.value("x").toDouble(), -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, x) ||
+        !boundedDoubleToInt(obj.value("y").toDouble(), -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, y) ||
+        !boundedDoubleToInt(obj.value("width").toDouble(), 1, kMaxArtifactDimension, true, width) ||
+        !boundedDoubleToInt(obj.value("height").toDouble(), 1, kMaxArtifactDimension, true, height))
+        return {};
+
+    return QRect(QPoint(x, y), QSize(width, height));
+}
+
+bool jsonPoint(const QJsonObject& obj, QPoint& point) {
+    if (!obj.contains("x") || !obj.contains("y"))
+        return false;
+
+    int x = 0;
+    int y = 0;
+    if (!boundedDoubleToInt(obj.value("x").toDouble(), -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, x) ||
+        !boundedDoubleToInt(obj.value("y").toDouble(), -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, y))
+        return false;
+
+    point = QPoint(x, y);
+    return true;
 }
 
 bool artifactTopDown(const QJsonObject& obj) {
@@ -855,6 +930,12 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
         return;
 
     const auto root = doc.object();
+    QPoint cursorPosition;
+    if (jsonPoint(root.value("cursorPosition").toObject(), cursorPosition)) {
+        m_cursorLogicalPosition = cursorPosition;
+        m_hasCursorLogicalPosition = true;
+    }
+
     const auto defaultValues = root.value("defaults").toObject();
     if (defaultValues.contains("fushionMode"))
         m_defaults.fushionMode = defaultValues.value("fushionMode").toBool(m_defaults.fushionMode);
@@ -938,9 +1019,10 @@ void CaptureOverlay::captureScreensBeforeOverlay() {
             }
         }
 
-        const QSize imageSize(std::max(1, static_cast<int>(std::ceil(m_desktopGeometry.width() * scaleX))),
-                              std::max(1, static_cast<int>(std::ceil(m_desktopGeometry.height() * scaleY))));
-        m_desktopImage = QImage(imageSize, QImage::Format_RGBA8888);
+        const QSize imageSize = boundedScaledSize(m_desktopGeometry.width(), m_desktopGeometry.height(), scaleX, scaleY);
+        m_desktopImage = boundedImage(imageSize, QImage::Format_RGBA8888);
+        if (m_desktopImage.isNull())
+            return;
         m_desktopImage.fill(QColor(30, 34, 38));
 
         QPainter painter(&m_desktopImage);
@@ -961,15 +1043,19 @@ void CaptureOverlay::captureScreensBeforeOverlay() {
     if (grim.waitForFinished(1500) && grim.exitStatus() == QProcess::NormalExit && grim.exitCode() == 0) {
         QImage grimImage;
         if (grimImage.loadFromData(grim.readAllStandardOutput(), "PNG") && !grimImage.isNull()) {
-            m_desktopImage = grimImage.convertToFormat(QImage::Format_RGBA8888);
-            return;
+            const QImage converted = grimImage.convertToFormat(QImage::Format_RGBA8888);
+            if (imageSizeWithinBounds(converted.size())) {
+                m_desktopImage = converted;
+                return;
+            }
         }
     }
 
     const double scale = maxScreenDevicePixelRatio();
-    const QSize imageSize(std::max(1, static_cast<int>(std::ceil(m_desktopGeometry.width() * scale))),
-                          std::max(1, static_cast<int>(std::ceil(m_desktopGeometry.height() * scale))));
-    m_desktopImage = QImage(imageSize, QImage::Format_RGBA8888);
+    const QSize imageSize = boundedScaledSize(m_desktopGeometry.width(), m_desktopGeometry.height(), scale, scale);
+    m_desktopImage = boundedImage(imageSize, QImage::Format_RGBA8888);
+    if (m_desktopImage.isNull())
+        return;
     m_desktopImage.fill(QColor(30, 34, 38));
 
     QPainter painter(&m_desktopImage);
@@ -1117,6 +1203,7 @@ void CaptureOverlay::showEvent(QShowEvent* event) {
     QMainWindow::showEvent(event);
     if (!m_fadeOutStarted && m_overlayOpacity < 1.0)
         startFadeIn();
+    QTimer::singleShot(0, this, &CaptureOverlay::refreshInitialCursorPosition);
 }
 
 void CaptureOverlay::hideOptionPopups() {
@@ -1253,6 +1340,7 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
 }
 
 void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
+    rememberCursorPosition(event->globalPosition());
     if (m_toolbar->geometry().contains(event->pos()))
         return;
     hideOptionPopups();
@@ -1284,6 +1372,7 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
 }
 
 void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
+    rememberCursorPosition(event->globalPosition());
     if (m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen) {
         if (m_dragging)
             m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
@@ -1304,6 +1393,7 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event) {
+    rememberCursorPosition(event->globalPosition());
     if (event->button() != Qt::LeftButton)
         return;
 
@@ -1382,7 +1472,7 @@ QRect CaptureOverlay::captureRectForMode() const {
 
 QRect CaptureOverlay::fullscreenCaptureRect() const {
     if (currentFullscreenScope() == hyprcapture::FullscreenScope::Current)
-        return localScreenRectAt(mapFromGlobal(QCursor::pos()));
+        return localScreenRectAt(mapFromGlobal(cursorLogicalPosition()));
     return rect();
 }
 
@@ -1393,7 +1483,7 @@ QRect CaptureOverlay::regionCaptureBounds() const {
 QRect CaptureOverlay::localScreenRectAt(const QPoint& localPos) const {
     QScreen* screen = QGuiApplication::screenAt(mapToGlobal(localPos));
     if (!screen)
-        screen = QGuiApplication::screenAt(QCursor::pos());
+        screen = QGuiApplication::screenAt(cursorLogicalPosition());
     if (!screen)
         screen = QGuiApplication::primaryScreen();
     return screen ? globalToLocalRect(screen->geometry()).intersected(rect()) : rect();
@@ -1427,7 +1517,27 @@ QRect CaptureOverlay::localToDesktopSourceRect(const QRect& rect) const {
 }
 
 QPoint CaptureOverlay::cursorLogicalPosition() const {
+    if (m_hasCursorLogicalPosition)
+        return m_cursorLogicalPosition;
     return mapToGlobal(mapFromGlobal(QCursor::pos()));
+}
+
+void CaptureOverlay::rememberCursorPosition(const QPointF& globalPosition) {
+    int x = 0;
+    int y = 0;
+    if (!boundedDoubleToInt(globalPosition.x(), -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, x) ||
+        !boundedDoubleToInt(globalPosition.y(), -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, y))
+        return;
+
+    m_cursorLogicalPosition = QPoint(x, y);
+    m_hasCursorLogicalPosition = true;
+}
+
+void CaptureOverlay::refreshInitialCursorPosition() {
+    if (!m_hasCursorLogicalPosition)
+        rememberCursorPosition(QCursor::pos());
+    updateStatus();
+    update();
 }
 
 QRect CaptureOverlay::windowFrameGeometry(const WindowArtifact& window) const {
@@ -1538,9 +1648,10 @@ QImage CaptureOverlay::renderDesktopRectAtDisplayResolution(const QRect& globalR
     if (scaleX <= 0.0 || scaleY <= 0.0)
         return {};
 
-    const QSize outputSize(std::max(1, static_cast<int>(std::ceil(globalRect.width() * scaleX))),
-                           std::max(1, static_cast<int>(std::ceil(globalRect.height() * scaleY))));
-    QImage image(outputSize, QImage::Format_ARGB32_Premultiplied);
+    const QSize outputSize = boundedScaledSize(globalRect.width(), globalRect.height(), scaleX, scaleY);
+    QImage image = boundedImage(outputSize, QImage::Format_ARGB32_Premultiplied);
+    if (image.isNull())
+        return {};
     image.fill(QColor(30, 34, 38));
 
     QPainter painter(&image);
@@ -1584,11 +1695,15 @@ QImage CaptureOverlay::renderResultImage() const {
         QImage repairedArtifact = windowArtifact->image;
         repairMissingWindowTail(repairedArtifact, windowArtifact->fullGeometry, windowArtifact->visibleGeometry, m_desktopImage, m_desktopGeometry);
 
-        QImage image(artifactSource.size().expandedTo(QSize(1, 1)), QImage::Format_ARGB32_Premultiplied);
+        QImage image = boundedImage(artifactSource.size().expandedTo(QSize(1, 1)), QImage::Format_ARGB32_Premultiplied);
+        if (image.isNull())
+            return {};
         image.fill(Qt::transparent);
 
         QPainter painter(&image);
-        QImage background(image.size(), QImage::Format_RGBA8888);
+        QImage background = boundedImage(image.size(), QImage::Format_RGBA8888);
+        if (background.isNull())
+            return {};
         background.fill(Qt::transparent);
         const QRect logicalSource = artifactRectToLogicalRect(artifactSource, repairedArtifact.size(), windowArtifact->fullGeometry);
         const QRect desktopSource = desktopSourceRectForGlobalRect(logicalSource);
@@ -1628,7 +1743,9 @@ QImage CaptureOverlay::renderResultImage() const {
 
     const QRect desktopSource = localToDesktopSourceRect(cap);
     const QSize outputSize = desktopSource.isValid() ? desktopSource.size() : cap.size();
-    QImage image(outputSize.expandedTo(QSize(1, 1)), QImage::Format_ARGB32_Premultiplied);
+    QImage image = boundedImage(outputSize.expandedTo(QSize(1, 1)), QImage::Format_ARGB32_Premultiplied);
+    if (image.isNull())
+        return {};
     image.fill(Qt::transparent);
 
     QPainter painter(&image);

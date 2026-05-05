@@ -36,6 +36,10 @@ void appendRect(std::ostringstream& out, const Rect& rect) {
     out << "{\"x\":" << rect.x << ",\"y\":" << rect.y << ",\"width\":" << rect.width << ",\"height\":" << rect.height << "}";
 }
 
+void appendPoint(std::ostringstream& out, const Point& point) {
+    out << "{\"x\":" << point.x << ",\"y\":" << point.y << "}";
+}
+
 } // namespace
 
 std::string makeSessionId() {
@@ -68,7 +72,12 @@ std::string encodeSessionJson(const CaptureSession& session) {
     out << ",\"watermarkPosition\":" << quote(toString(session.defaults.watermarkPosition));
     out << ",\"watermarkWidth\":" << quote(session.defaults.watermarkWidth);
     out << ",\"watermarkOffset\":" << quote(session.defaults.watermarkOffset);
-    out << "},\"monitors\":[";
+    out << "}";
+    if (session.cursorPosition) {
+        out << ",\"cursorPosition\":";
+        appendPoint(out, *session.cursorPosition);
+    }
+    out << ",\"monitors\":[";
     for (std::size_t i = 0; i < session.monitors.size(); ++i) {
         if (i)
             out << ',';

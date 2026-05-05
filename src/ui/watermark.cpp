@@ -11,11 +11,16 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 
 namespace hyprcapture::ui {
 namespace {
 
 enum class BuiltinWatermark { None, Hypercam2, ActivateLinux };
+
+constexpr qint64 kMaxWatermarkFileBytes = 16 * 1024 * 1024;
+constexpr qint64 kMaxWatermarkBytes = 128 * 1024 * 1024;
+constexpr int kMaxWatermarkDimension = 32768;
 
 struct Length {
     double value = 0.0;
@@ -213,6 +218,32 @@ Length parseLength(QString token) {
 
 double resolveLength(const Length& length, double reference) { return length.percent ? reference * length.value / 100.0 : length.value; }
 
+bool imageSizeWithinBounds(const QSize& size) {
+    if (size.isEmpty() || size.width() <= 0 || size.height() <= 0 || size.width() > kMaxWatermarkDimension || size.height() > kMaxWatermarkDimension)
+        return false;
+
+    const auto width = static_cast<qint64>(size.width());
+    const auto height = static_cast<qint64>(size.height());
+    if (width > std::numeric_limits<qint64>::max() / height)
+        return false;
+    const auto pixels = width * height;
+    if (pixels > std::numeric_limits<qint64>::max() / 4)
+        return false;
+    return pixels * 4 <= kMaxWatermarkBytes;
+}
+
+QSize scaledWatermarkSize(const QSize& sourceSize, int targetWidth) {
+    if (sourceSize.isEmpty() || sourceSize.width() <= 0 || sourceSize.height() <= 0 || targetWidth <= 0 || targetWidth > kMaxWatermarkDimension)
+        return {};
+
+    const double targetHeight = std::round(static_cast<double>(targetWidth) * sourceSize.height() / sourceSize.width());
+    if (!std::isfinite(targetHeight) || targetHeight < 1.0 || targetHeight > kMaxWatermarkDimension)
+        return {};
+
+    const QSize size(targetWidth, std::max(1, static_cast<int>(targetHeight)));
+    return imageSizeWithinBounds(size) ? size : QSize{};
+}
+
 std::array<Length, 2> parseVec2(QString value) {
     std::array<Length, 2> result{Length{}, Length{}};
     static const QRegularExpression tokenPattern(QStringLiteral(R"([-+]?(?:\d+(?:\.\d*)?|\.\d+)\s*(?:%|px)?)"));
@@ -231,7 +262,7 @@ int targetWatermarkWidth(const QImage& target, const CaptureDefaults& defaults, 
     if (pixels <= 0.0 || !std::isfinite(pixels))
         return 0;
 
-    const int maxWidth = std::max(1, target.width() * 4);
+    const int maxWidth = target.width() > kMaxWatermarkDimension / 4 ? kMaxWatermarkDimension : std::clamp(target.width() * 4, 1, kMaxWatermarkDimension);
     int targetWidth = std::clamp(static_cast<int>(std::round(pixels)), 1, maxWidth);
     if (builtin == BuiltinWatermark::Hypercam2 && isDefaultWatermarkWidth(defaults.watermarkWidth)) {
         constexpr double kHypercamAspect = 480.0 / 46.0;
@@ -246,11 +277,14 @@ QImage scaledRasterWatermark(QImage image, int targetWidth) {
     if (image.isNull() || targetWidth <= 0 || image.width() <= 0 || image.height() <= 0)
         return {};
 
+    const QSize targetSize = scaledWatermarkSize(image.size(), targetWidth);
+    if (targetSize.isEmpty())
+        return {};
+
     image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    const int targetHeight = std::max(1, static_cast<int>(std::round(static_cast<double>(targetWidth) * image.height() / image.width())));
-    if (image.width() == targetWidth && image.height() == targetHeight)
+    if (image.size() == targetSize)
         return image;
-    return image.scaled(QSize(targetWidth, targetHeight), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    return image.scaled(targetSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
 }
 
 QImage renderSvgWatermark(const QByteArray& svg, int targetWidth) {
@@ -262,14 +296,17 @@ QImage renderSvgWatermark(const QByteArray& svg, int targetWidth) {
     if (!sourceSize.isValid() || sourceSize.isEmpty())
         sourceSize = QSize(340, 120);
 
-    const int targetHeight = std::max(1, static_cast<int>(std::round(static_cast<double>(targetWidth) * sourceSize.height() / sourceSize.width())));
-    QImage image(QSize(targetWidth, targetHeight), QImage::Format_ARGB32_Premultiplied);
+    const QSize targetSize = scaledWatermarkSize(sourceSize, targetWidth);
+    if (targetSize.isEmpty())
+        return {};
+
+    QImage image(targetSize, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
 
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
-    renderer.render(&painter, QRectF(0, 0, targetWidth, targetHeight));
+    renderer.render(&painter, QRectF(0, 0, targetSize.width(), targetSize.height()));
     return image;
 }
 
@@ -291,6 +328,10 @@ QImage loadFileWatermark(const std::string& configuredPath, int targetWidth) {
     if (path.isEmpty() || !QFileInfo::exists(path))
         return {};
 
+    const QFileInfo info(path);
+    if (!info.isFile() || info.size() < 0 || info.size() > kMaxWatermarkFileBytes)
+        return {};
+
     const auto suffix = QFileInfo(path).suffix().toLower();
     if (suffix == QLatin1String("svg")) {
         QFile file(path);
@@ -301,7 +342,16 @@ QImage loadFileWatermark(const std::string& configuredPath, int targetWidth) {
 
     QImageReader reader(path);
     reader.setAutoTransform(true);
-    return scaledRasterWatermark(reader.read(), targetWidth);
+    const QSize targetSize = scaledWatermarkSize(reader.size(), targetWidth);
+    if (targetSize.isEmpty())
+        return {};
+
+    const int previousAllocationLimit = QImageReader::allocationLimit();
+    QImageReader::setAllocationLimit(static_cast<int>(kMaxWatermarkBytes / (1024 * 1024)));
+    reader.setScaledSize(targetSize);
+    const QImage image = reader.read();
+    QImageReader::setAllocationLimit(previousAllocationLimit);
+    return scaledRasterWatermark(image, targetWidth);
 }
 
 QImage loadWatermark(const CaptureDefaults& defaults, int targetWidth, BuiltinWatermark builtin) {
