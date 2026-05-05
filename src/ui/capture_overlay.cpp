@@ -2,6 +2,7 @@
 
 #include "ui/clipboard_utils.hpp"
 #include "ui/result_thumbnail.hpp"
+#include "ui/watermark.hpp"
 
 #include <LayerShellQt/Window>
 
@@ -785,6 +786,16 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
         m_defaults.fushionMode = defaultValues.value("fushionMode").toBool(m_defaults.fushionMode);
     if (defaultValues.contains("fusionMode"))
         m_defaults.fushionMode = defaultValues.value("fusionMode").toBool(m_defaults.fushionMode);
+    if (defaultValues.contains("watermark"))
+        m_defaults.watermark = defaultValues.value("watermark").toString(QString::fromStdString(m_defaults.watermark)).toStdString();
+    if (defaultValues.contains("watermarkPosition"))
+        m_defaults.watermarkPosition =
+            hyprcapture::parseWatermarkPosition(defaultValues.value("watermarkPosition").toString(QString::fromStdString(hyprcapture::toString(m_defaults.watermarkPosition))).toStdString(),
+                                                m_defaults.watermarkPosition);
+    if (defaultValues.contains("watermarkWidth"))
+        m_defaults.watermarkWidth = defaultValues.value("watermarkWidth").toString(QString::fromStdString(m_defaults.watermarkWidth)).toStdString();
+    if (defaultValues.contains("watermarkOffset"))
+        m_defaults.watermarkOffset = defaultValues.value("watermarkOffset").toString(QString::fromStdString(m_defaults.watermarkOffset)).toStdString();
 
     const auto monitors = root.value("monitors").toArray();
     const auto windows = root.value("windows").toArray();
@@ -1556,13 +1567,18 @@ void CaptureOverlay::finishCapture() {
 
     QElapsedTimer renderTimer;
     renderTimer.start();
-    const auto image = renderResultImage();
+    auto image = renderResultImage();
     traceTiming(QStringLiteral("render_result"), renderTimer.elapsed());
     if (image.isNull()) {
         m_finishing = false;
         updateStatus();
         return;
     }
+
+    QElapsedTimer watermarkTimer;
+    watermarkTimer.start();
+    hyprcapture::ui::applyWatermark(image, m_defaults);
+    traceTiming(QStringLiteral("apply_watermark"), watermarkTimer.elapsed());
 
     hyprcapture::ui::ClipboardSnapshotData clipboardSnapshot;
     if (m_defaults.clipboard && m_defaults.showThumbnail) {

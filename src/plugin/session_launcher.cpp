@@ -101,6 +101,14 @@ LaunchResult launchHelper(const LaunchRequest& request) {
         args.push_back(request.defaults.filenameTemplate);
         args.push_back("--thumbnail-timeout-ms");
         args.push_back(std::to_string(request.defaults.thumbnailTimeoutMs));
+        args.push_back("--watermark");
+        args.push_back(request.defaults.watermark);
+        args.push_back("--watermark-position");
+        args.push_back(toString(request.defaults.watermarkPosition));
+        args.push_back("--watermark-width");
+        args.push_back(request.defaults.watermarkWidth);
+        args.push_back("--watermark-offset");
+        args.push_back(request.defaults.watermarkOffset);
         if (request.quick)
             args.push_back("--quick");
         args.push_back("--session-json");

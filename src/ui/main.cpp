@@ -53,6 +53,10 @@ int main(int argc, char** argv) {
         {"save-dir", "Save directory.", "path", "~/Pictures/Screenshots"},
         {"filename-template", "Filename strftime template.", "template", "Screenshot-%Y-%m-%d-%H%M%S.png"},
         {"thumbnail-timeout-ms", "Thumbnail timeout.", "ms", "5000"},
+        {"watermark", "Watermark image path or built-in id.", "path|id", ""},
+        {"watermark-position", "Watermark position.", "position", "central"},
+        {"watermark-width", "Watermark width in pixels or screenshot-width percent.", "width", "20%"},
+        {"watermark-offset", "Watermark x/y offset in pixels or percent.", "vec2", "0 0"},
         {"session-json", "Compositor session metadata.", "json", "{}"},
         {"thumbnail-window", "Show a normal thumbnail window for an image path.", "path"},
         {"restore-clipboard", "Clipboard snapshot to restore when deleting the thumbnail image.", "path"},
@@ -84,6 +88,10 @@ int main(int argc, char** argv) {
     defaults.saveDir = parser.value("save-dir").toStdString();
     defaults.filenameTemplate = parser.value("filename-template").toStdString();
     defaults.thumbnailTimeoutMs = parser.value("thumbnail-timeout-ms").toLongLong();
+    defaults.watermark = parser.value("watermark").toStdString();
+    defaults.watermarkPosition = hyprcapture::parseWatermarkPosition(parser.value("watermark-position").toStdString(), defaults.watermarkPosition);
+    defaults.watermarkWidth = parser.value("watermark-width").toStdString();
+    defaults.watermarkOffset = parser.value("watermark-offset").toStdString();
 
     CaptureOverlay overlay(defaults, parser.isSet("quick"), parser.value("session-json"));
     overlay.show();

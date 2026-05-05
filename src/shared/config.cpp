@@ -1,6 +1,7 @@
 #include "shared/config.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
@@ -77,6 +78,29 @@ DecorationPolicy parseDecorationPolicy(std::string_view value, DecorationPolicy 
     return fallback;
 }
 
+WatermarkPosition parseWatermarkPosition(std::string_view value, WatermarkPosition fallback) {
+    const auto v = normalized(value);
+    if (v == "up-left" || v == "top-left" || v == "upper-left")
+        return WatermarkPosition::UpLeft;
+    if (v == "up-middle" || v == "up-center" || v == "top-middle" || v == "top-center" || v == "upper-middle" || v == "upper-center")
+        return WatermarkPosition::UpMiddle;
+    if (v == "up-right" || v == "top-right" || v == "upper-right")
+        return WatermarkPosition::UpRight;
+    if (v == "left-middle" || v == "middle-left" || v == "left-center" || v == "center-left")
+        return WatermarkPosition::LeftMiddle;
+    if (v == "central" || v == "center" || v == "middle" || v == "middle-middle" || v == "center-center")
+        return WatermarkPosition::Central;
+    if (v == "right-middle" || v == "right-meddle" || v == "middle-right" || v == "right-center" || v == "center-right")
+        return WatermarkPosition::RightMiddle;
+    if (v == "down-left" || v == "bottom-left" || v == "lower-left")
+        return WatermarkPosition::DownLeft;
+    if (v == "down-middle" || v == "down-center" || v == "bottom-middle" || v == "bottom-center" || v == "lower-middle" || v == "lower-center")
+        return WatermarkPosition::DownMiddle;
+    if (v == "down-right" || v == "bottom-right" || v == "lower-right")
+        return WatermarkPosition::DownRight;
+    return fallback;
+}
+
 std::string toString(CaptureMode value) {
     switch (value) {
         case CaptureMode::Fullscreen: return "fullscreen";
@@ -120,6 +144,21 @@ std::string toString(DecorationPolicy value) {
         case DecorationPolicy::Remove: return "remove";
     }
     return "keep";
+}
+
+std::string toString(WatermarkPosition value) {
+    switch (value) {
+        case WatermarkPosition::UpLeft: return "up-left";
+        case WatermarkPosition::UpMiddle: return "up-middle";
+        case WatermarkPosition::UpRight: return "up-right";
+        case WatermarkPosition::LeftMiddle: return "left-middle";
+        case WatermarkPosition::Central: return "central";
+        case WatermarkPosition::RightMiddle: return "right-middle";
+        case WatermarkPosition::DownLeft: return "down-left";
+        case WatermarkPosition::DownMiddle: return "down-middle";
+        case WatermarkPosition::DownRight: return "down-right";
+    }
+    return "central";
 }
 
 std::filesystem::path expandUserPath(std::string_view path) {

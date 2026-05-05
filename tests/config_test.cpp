@@ -20,10 +20,15 @@ int main() {
     assert(parseWindowBackground("follow_system") == WindowBackground::FollowSystem);
     assert(parseWindowBackground("transparent") == WindowBackground::Transparent);
     assert(parseDecorationPolicy("strip") == DecorationPolicy::Remove);
+    assert(parseWatermarkPosition("central") == WatermarkPosition::Central);
+    assert(parseWatermarkPosition("right-meddle") == WatermarkPosition::RightMiddle);
+    assert(parseWatermarkPosition("top_center") == WatermarkPosition::UpMiddle);
+    assert(parseWatermarkPosition("bad", WatermarkPosition::DownRight) == WatermarkPosition::DownRight);
 
     assert(toString(CaptureMode::Fullscreen) == "fullscreen");
     assert(toString(FullscreenScope::PerMonitor) == "per-monitor");
     assert(toString(WindowBackground::FollowSystem) == "follow-system");
+    assert(toString(WatermarkPosition::DownMiddle) == "down-middle");
 
     const auto expanded = expandUserPath("~/Pictures/Screenshots").string();
     assert(expanded.find("Pictures/Screenshots") != std::string::npos);
@@ -34,6 +39,10 @@ int main() {
     session.defaults.mode = CaptureMode::Window;
     session.defaults.fushionMode = true;
     session.defaults.windowBackground = WindowBackground::FollowSystem;
+    session.defaults.watermark = "activate-linux";
+    session.defaults.watermarkPosition = WatermarkPosition::RightMiddle;
+    session.defaults.watermarkWidth = "18%";
+    session.defaults.watermarkOffset = "-2% 24px";
     session.monitors.push_back({.name = "eDP-1", .logicalGeometry = {.x = 0, .y = 0, .width = 1920, .height = 1080}, .scale = 2.0, .transform = 0});
     session.monitors.back().artifactPath = "/tmp/monitor.rgba";
     session.monitors.back().artifactWidth = 3840;
@@ -57,6 +66,10 @@ int main() {
     const auto json = encodeSessionJson(session);
     assert(json.find("\"fushionMode\":true") != std::string::npos);
     assert(json.find("\"windowBackground\":\"follow-system\"") != std::string::npos);
+    assert(json.find("\"watermark\":\"activate-linux\"") != std::string::npos);
+    assert(json.find("\"watermarkPosition\":\"right-middle\"") != std::string::npos);
+    assert(json.find("\"watermarkWidth\":\"18%\"") != std::string::npos);
+    assert(json.find("\"watermarkOffset\":\"-2% 24px\"") != std::string::npos);
     assert(json.find("\"fullGeometry\"") != std::string::npos);
     assert(json.find("\"rounding\":12") != std::string::npos);
     assert(json.find("\"roundingPower\":2.5") != std::string::npos);

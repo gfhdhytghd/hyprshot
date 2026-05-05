@@ -65,6 +65,11 @@ hyprcapture::CaptureDefaults readDefaults() {
     defaults.filenameTemplate = configString("filename_template", defaults.filenameTemplate);
     defaults.helper = configString("helper", defaults.helper);
     defaults.thumbnailTimeoutMs = configInt("thumbnail_timeout_ms", defaults.thumbnailTimeoutMs);
+    defaults.watermark = configString("watermark", defaults.watermark);
+    defaults.watermarkPosition =
+        hyprcapture::parseWatermarkPosition(configString("watermark_position", hyprcapture::toString(defaults.watermarkPosition)), defaults.watermarkPosition);
+    defaults.watermarkWidth = configString("watermark_width", defaults.watermarkWidth);
+    defaults.watermarkOffset = configString("watermark_offset", defaults.watermarkOffset);
     return defaults;
 }
 
@@ -128,6 +133,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:filename_template", Hyprlang::STRING{"Screenshot-%Y-%m-%d-%H%M%S.png"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:thumbnail_timeout_ms", Hyprlang::INT{5000});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:helper", Hyprlang::STRING{""});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:watermark", Hyprlang::STRING{""});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:watermark_position", Hyprlang::STRING{"central"});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:watermark_width", Hyprlang::STRING{"20%"});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:watermark_offset", Hyprlang::STRING{"0 0"});
 
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:open", dispatchOpen);
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:quick", dispatchQuick);

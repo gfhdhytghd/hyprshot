@@ -57,6 +57,10 @@ std::string encodeSessionJson(const CaptureSession& session) {
     out << ",\"saveDir\":" << quote(session.defaults.saveDir);
     out << ",\"filenameTemplate\":" << quote(session.defaults.filenameTemplate);
     out << ",\"thumbnailTimeoutMs\":" << session.defaults.thumbnailTimeoutMs;
+    out << ",\"watermark\":" << quote(session.defaults.watermark);
+    out << ",\"watermarkPosition\":" << quote(toString(session.defaults.watermarkPosition));
+    out << ",\"watermarkWidth\":" << quote(session.defaults.watermarkWidth);
+    out << ",\"watermarkOffset\":" << quote(session.defaults.watermarkOffset);
     out << "},\"monitors\":[";
     for (std::size_t i = 0; i < session.monitors.size(); ++i) {
         if (i)

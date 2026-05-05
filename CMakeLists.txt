@@ -44,6 +44,7 @@ add_executable(hyprcapture-ui
   src/ui/clipboard_utils.cpp
   src/ui/capture_overlay.cpp
   src/ui/result_thumbnail.cpp
+  src/ui/watermark.cpp
   src/shared/config.cpp
   src/shared/protocol.cpp
 )
@@ -59,6 +60,15 @@ if(BUILD_TESTING)
   )
   target_include_directories(hyprcapture-config-test PRIVATE src)
   add_test(NAME hyprcapture-config-test COMMAND hyprcapture-config-test)
+
+  add_executable(hyprcapture-watermark-test
+    tests/watermark_test.cpp
+    src/ui/watermark.cpp
+    src/shared/config.cpp
+  )
+  target_include_directories(hyprcapture-watermark-test PRIVATE src)
+  target_link_libraries(hyprcapture-watermark-test PRIVATE Qt6::Gui Qt6::Svg)
+  add_test(NAME hyprcapture-watermark-test COMMAND hyprcapture-watermark-test)
 endif()
 
 install(TARGETS hyprcapture LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})

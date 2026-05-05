@@ -19,6 +19,7 @@ HyprCapture is a Hyprland-only screenshot tool split into a compositor plugin an
 - Compositor-side window artifacts, including windows that are occluded or partly off-screen
 - Window output backgrounds: follow system, white, black, real background, or transparent
 - Optional window border and shadow removal
+- Optional image watermarks from PNG, JPG/JPEG, SVG, or built-in presets
 - Save-to-file and clipboard output
 - Stable Wayland clipboard writes through `wl-copy` when available, with Qt clipboard fallback
 - macOS-style result thumbnail with open, copy, show in folder, delete, and close actions
@@ -190,6 +191,10 @@ plugin {
         filename_template = Screenshot-%Y-%m-%d-%H%M%S.png
         include_cursor = 0
         thumbnail_timeout_ms = 5000
+        watermark =
+        watermark_position = central
+        watermark_width = 20%
+        watermark_offset = 0 0
     }
 }
 ```
@@ -205,7 +210,7 @@ plugin {
 | `window_border` | string | `keep` | Window border policy. Supports `keep` and `remove`. |
 | `window_shadow` | string | `keep` | Window shadow policy. Supports `keep` and `remove`. |
 | `include_cursor` | bool | `0` | Parsed and forwarded by the plugin/helper; cursor compositing is not currently rendered into the output. |
-| `fushion_mode` | bool | `0` | Fuse region and window interactions in one overlay: drag to capture a region, or single-click a window to capture that window. The toolbar keeps the fullscreen action and shows all capture controls; fullscreen multi-monitor scope is shown only when multiple monitors are present. |
+| `fushion_mode` | bool | `0` | Fuse region and window interactions in one overlay: drag to capture a region, or single-click a window to capture that window. The toolbar keeps the fullscreen action and configuration controls; fullscreen multi-monitor scope is shown only when multiple monitors are present. |
 
 ### Output options
 
@@ -218,6 +223,15 @@ plugin {
 | `filename_template` | string | `Screenshot-%Y-%m-%d-%H%M%S.png` | `strftime` template for saved screenshot filenames. |
 | `thumbnail_timeout_ms` | int | `5000` | Thumbnail auto-close timeout in milliseconds. Use `0` to keep it open until user action. |
 | `helper` | string | empty | Optional helper override. By default the plugin tries `HYPRCAPTURE_HELPER`, then `$HOME/.local/bin/hyprcapture-ui`, then `hyprcapture-ui` from `PATH`. |
+
+### Watermark options
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `watermark` | string | empty | Disabled when empty. Set to a PNG, JPG/JPEG, or SVG path, or use built-in `activate-linux` / `hypercam2`. Transparency is preserved for PNG/SVG. |
+| `watermark_position` | string | `central` | Supports `up-left`, `up-middle`, `up-right`, `left-middle`, `central`, `right-middle`, `down-left`, `down-middle`, and `down-right`. Common aliases like `center`, `top-center`, and `right-meddle` are accepted. |
+| `watermark_width` | string | `20%` | Watermark width. Use pixels like `320` / `320px`, or screenshot-width percent like `18%`. |
+| `watermark_offset` | string | `0 0` | X/Y offset from the selected position. Vec2-like values such as `12 -8`, `2% -4%`, or `12px, -8px` are accepted. Percent X is relative to screenshot width; percent Y is relative to screenshot height. |
 
 ## Development
 
