@@ -1,14 +1,18 @@
 #include "shared/config.hpp"
 #include "ui/capture_overlay.hpp"
+#include "ui/clipboard_utils.hpp"
 #include "ui/result_thumbnail.hpp"
 
 #include <LayerShellQt/Shell>
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QFile>
 #include <QPixmap>
 
 namespace {
+
+constexpr qint64 MAX_SESSION_JSON_BYTES = 8 * 1024 * 1024;
 
 bool flagValue(const QCommandLineParser& parser, const QString& name, bool fallback) {
     const auto value = parser.value(name);
@@ -57,6 +61,7 @@ int main(int argc, char** argv) {
         {"watermark-width", "Watermark width in pixels or screenshot-width percent.", "width", "20%"},
         {"watermark-offset", "Watermark x/y offset in pixels or percent.", "vec2", "0 0"},
         {"session-json", "Compositor session metadata.", "json", "{}"},
+        {"session-json-file", "Private compositor session metadata file.", "path"},
         {"thumbnail-window", "Show a normal thumbnail window for an image path.", "path"},
         {"restore-clipboard", "Clipboard snapshot to restore when deleting the thumbnail image.", "path"},
         {"quick", "Capture immediately."},
@@ -91,7 +96,17 @@ int main(int argc, char** argv) {
     defaults.watermarkWidth = parser.value("watermark-width").toStdString();
     defaults.watermarkOffset = parser.value("watermark-offset").toStdString();
 
-    CaptureOverlay overlay(defaults, parser.isSet("quick"), parser.value("session-json"));
+    QString sessionJson = parser.value("session-json");
+    if (parser.isSet("session-json-file")) {
+        const QString path = parser.value("session-json-file");
+        QFile         file(path);
+        if (hyprcapture::ui::isPrivateRuntimeFile(path, MAX_SESSION_JSON_BYTES) && file.open(QIODevice::ReadOnly))
+            sessionJson = QString::fromUtf8(file.readAll());
+        if (hyprcapture::ui::isPrivateRuntimePath(path))
+            QFile::remove(path);
+    }
+
+    CaptureOverlay overlay(defaults, parser.isSet("quick"), sessionJson);
     overlay.show();
     overlay.activateWindow();
     overlay.raise();

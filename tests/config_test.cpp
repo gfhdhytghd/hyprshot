@@ -1,40 +1,52 @@
 #include "shared/config.hpp"
 #include "shared/protocol.hpp"
 
-#include <cassert>
 #include <cstdlib>
 #include <iostream>
+#include <string>
+
+namespace {
+
+void require(bool condition, const char* message) {
+    if (condition)
+        return;
+
+    std::cerr << "config test failed: " << message << '\n';
+    std::exit(1);
+}
+
+} // namespace
 
 int main() {
     using namespace hyprcapture;
 
-    assert(parseCaptureMode("full") == CaptureMode::Fullscreen);
-    assert(parseCaptureMode("selection") == CaptureMode::Region);
-    assert(parseCaptureMode("window") == CaptureMode::Window);
-    assert(parseCaptureMode("bad", CaptureMode::Window) == CaptureMode::Window);
+    require(parseCaptureMode("full") == CaptureMode::Fullscreen, "full mode parse");
+    require(parseCaptureMode("selection") == CaptureMode::Region, "selection mode parse");
+    require(parseCaptureMode("window") == CaptureMode::Window, "window mode parse");
+    require(parseCaptureMode("bad", CaptureMode::Window) == CaptureMode::Window, "mode fallback");
 
-    assert(parseFullscreenScope("all-monitors") == FullscreenScope::All);
-    assert(parseFullscreenScope("current-monitor") == FullscreenScope::Current);
-    assert(parseFullscreenScope("per_monitor") == FullscreenScope::PerMonitor);
+    require(parseFullscreenScope("all-monitors") == FullscreenScope::All, "all monitor scope parse");
+    require(parseFullscreenScope("current-monitor") == FullscreenScope::Current, "current monitor scope parse");
+    require(parseFullscreenScope("per_monitor") == FullscreenScope::PerMonitor, "per monitor scope parse");
 
-    assert(parseWindowBackground("follow_system") == WindowBackground::FollowSystem);
-    assert(parseWindowBackground("transparent") == WindowBackground::Transparent);
-    assert(parseDecorationPolicy("strip") == DecorationPolicy::Remove);
-    assert(parseWatermarkPosition("central") == WatermarkPosition::Central);
-    assert(parseWatermarkPosition("right-meddle") == WatermarkPosition::RightMiddle);
-    assert(parseWatermarkPosition("top_center") == WatermarkPosition::UpMiddle);
-    assert(parseWatermarkPosition("bad", WatermarkPosition::DownRight) == WatermarkPosition::DownRight);
+    require(parseWindowBackground("follow_system") == WindowBackground::FollowSystem, "follow system background parse");
+    require(parseWindowBackground("transparent") == WindowBackground::Transparent, "transparent background parse");
+    require(parseDecorationPolicy("strip") == DecorationPolicy::Remove, "decoration policy parse");
+    require(parseWatermarkPosition("central") == WatermarkPosition::Central, "central watermark position parse");
+    require(parseWatermarkPosition("right-meddle") == WatermarkPosition::RightMiddle, "legacy watermark position alias");
+    require(parseWatermarkPosition("top_center") == WatermarkPosition::UpMiddle, "top center watermark position parse");
+    require(parseWatermarkPosition("bad", WatermarkPosition::DownRight) == WatermarkPosition::DownRight, "watermark position fallback");
 
-    assert(toString(CaptureMode::Fullscreen) == "fullscreen");
-    assert(toString(FullscreenScope::PerMonitor) == "per-monitor");
-    assert(toString(WindowBackground::FollowSystem) == "follow-system");
-    assert(toString(WatermarkPosition::DownMiddle) == "down-middle");
+    require(toString(CaptureMode::Fullscreen) == "fullscreen", "fullscreen stringify");
+    require(toString(FullscreenScope::PerMonitor) == "per-monitor", "per monitor stringify");
+    require(toString(WindowBackground::FollowSystem) == "follow-system", "follow system stringify");
+    require(toString(WatermarkPosition::DownMiddle) == "down-middle", "down middle stringify");
 
     const auto expanded = expandUserPath("~/Pictures/Screenshots").string();
-    assert(expanded.find("Pictures/Screenshots") != std::string::npos);
-    assert(makeTimestampedFilename("Screenshot-%Y.png").ends_with(".png"));
-    assert(makeTimestampedFilename("../escape.png") == "escape.png");
-    assert(makeTimestampedFilename("..") == "Screenshot.png");
+    require(expanded.find("Pictures/Screenshots") != std::string::npos, "home path expansion");
+    require(makeTimestampedFilename("Screenshot-%Y.png").ends_with(".png"), "timestamp filename suffix");
+    require(makeTimestampedFilename("../escape.png") == "escape.png", "filename basename clamp");
+    require(makeTimestampedFilename("..") == "Screenshot.png", "invalid filename fallback");
 
     CaptureSession session;
     session.id = "test-session";
@@ -65,21 +77,23 @@ int main() {
     session.windows.back().realBackgroundPath = "/tmp/window-real.rgba";
     session.windows.back().realBackgroundWidth = 200;
     session.windows.back().realBackgroundHeight = 100;
+    session.windows.back().title = std::string("Title") + '\x01';
     const auto json = encodeSessionJson(session);
-    assert(json.find("\"fushionMode\":true") != std::string::npos);
-    assert(json.find("\"windowBackground\":\"follow-system\"") != std::string::npos);
-    assert(json.find("\"watermark\":\"activate-linux\"") != std::string::npos);
-    assert(json.find("\"watermarkPosition\":\"right-middle\"") != std::string::npos);
-    assert(json.find("\"watermarkWidth\":\"18%\"") != std::string::npos);
-    assert(json.find("\"watermarkOffset\":\"-2% 24px\"") != std::string::npos);
-    assert(json.find("\"fullGeometry\"") != std::string::npos);
-    assert(json.find("\"rounding\":12") != std::string::npos);
-    assert(json.find("\"roundingPower\":2.5") != std::string::npos);
-    assert(json.find("\"borderSize\":2") != std::string::npos);
-    assert(json.find("\"artifactPath\":\"/tmp/window.rgba\"") != std::string::npos);
-    assert(json.find("\"artifactTopDown\":true") != std::string::npos);
-    assert(json.find("\"realBackgroundPath\":\"/tmp/window-real.rgba\"") != std::string::npos);
-    assert(json.find("\"realBackgroundWidth\":200") != std::string::npos);
+    require(json.find("\"fushionMode\":true") != std::string::npos, "fushion mode json");
+    require(json.find("\"windowBackground\":\"follow-system\"") != std::string::npos, "window background json");
+    require(json.find("\"watermark\":\"activate-linux\"") != std::string::npos, "watermark json");
+    require(json.find("\"watermarkPosition\":\"right-middle\"") != std::string::npos, "watermark position json");
+    require(json.find("\"watermarkWidth\":\"18%\"") != std::string::npos, "watermark width json");
+    require(json.find("\"watermarkOffset\":\"-2% 24px\"") != std::string::npos, "watermark offset json");
+    require(json.find("\"fullGeometry\"") != std::string::npos, "full geometry json");
+    require(json.find("\"rounding\":12") != std::string::npos, "rounding json");
+    require(json.find("\"roundingPower\":2.5") != std::string::npos, "rounding power json");
+    require(json.find("\"borderSize\":2") != std::string::npos, "border size json");
+    require(json.find("\"artifactPath\":\"/tmp/window.rgba\"") != std::string::npos, "artifact path json");
+    require(json.find("\"artifactTopDown\":true") != std::string::npos, "artifact orientation json");
+    require(json.find("\"realBackgroundPath\":\"/tmp/window-real.rgba\"") != std::string::npos, "real background path json");
+    require(json.find("\"realBackgroundWidth\":200") != std::string::npos, "real background width json");
+    require(json.find("Title\\u0001") != std::string::npos, "control byte json escaping");
 
     std::cout << "hyprcapture config tests passed\n";
     return 0;

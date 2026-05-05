@@ -6,7 +6,7 @@
 #include <QRect>
 
 #include <algorithm>
-#include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 
@@ -29,6 +29,14 @@ QRect diffBounds(const QImage& a, const QImage& b) {
     return bounds;
 }
 
+void require(bool condition, const char* message) {
+    if (condition)
+        return;
+
+    std::cerr << "watermark test failed: " << message << '\n';
+    std::exit(1);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -49,7 +57,7 @@ int main(int argc, char** argv) {
 
     auto activate = base;
     ui::applyWatermark(activate, defaults);
-    assert(imageDiffers(base, activate));
+    require(imageDiffers(base, activate), "activate-linux changes image");
 
     defaults.watermark = "hypercam2";
     defaults.watermarkPosition = WatermarkPosition::DownRight;
@@ -58,18 +66,18 @@ int main(int argc, char** argv) {
 
     auto hypercam = base;
     ui::applyWatermark(hypercam, defaults);
-    assert(imageDiffers(base, hypercam));
-    assert(diffBounds(base, hypercam).height() >= 32);
+    require(imageDiffers(base, hypercam), "hypercam changes image");
+    require(diffBounds(base, hypercam).height() >= 32, "hypercam minimum rendered height");
 
     defaults.watermark = "/missing/unregistered hypercam 2.jpg";
     auto hypercamPathAlias = base;
     ui::applyWatermark(hypercamPathAlias, defaults);
-    assert(imageDiffers(base, hypercamPathAlias));
+    require(imageDiffers(base, hypercamPathAlias), "hypercam filename alias");
 
     defaults.watermark.clear();
     auto disabled = base;
     ui::applyWatermark(disabled, defaults);
-    assert(!imageDiffers(base, disabled));
+    require(!imageDiffers(base, disabled), "disabled watermark leaves image unchanged");
 
     std::cout << "hyprcapture watermark tests passed\n";
     return 0;

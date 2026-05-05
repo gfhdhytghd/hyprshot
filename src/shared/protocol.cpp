@@ -10,14 +10,22 @@ namespace {
 
 std::string quote(std::string_view value) {
     std::string out = "\"";
-    for (const char c : value) {
+    constexpr char hex[] = "0123456789abcdef";
+    for (const unsigned char c : value) {
         switch (c) {
             case '\\': out += "\\\\"; break;
             case '"': out += "\\\""; break;
             case '\n': out += "\\n"; break;
             case '\r': out += "\\r"; break;
             case '\t': out += "\\t"; break;
-            default: out += c; break;
+            default:
+                if (c < 0x20) {
+                    out += "\\u00";
+                    out += hex[(c >> 4U) & 0x0FU];
+                    out += hex[c & 0x0FU];
+                } else
+                    out += static_cast<char>(c);
+                break;
         }
     }
     out += "\"";

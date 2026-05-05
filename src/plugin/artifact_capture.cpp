@@ -70,6 +70,10 @@ struct PendingRealBackgroundCapture {
 };
 
 constexpr int WINDOW_ARTIFACT_CROP_PADDING = 128;
+constexpr std::size_t MAX_SESSION_MONITORS = 64;
+constexpr std::size_t MAX_SESSION_WINDOWS = 512;
+constexpr std::size_t MAX_WINDOW_METADATA_BYTES = 4096;
+constexpr std::size_t MAX_SESSION_JSON_BYTES = 8 * 1024 * 1024;
 
 Rect toRect(const CBox& box) {
     return {.x = box.x, .y = box.y, .width = box.w, .height = box.h};
@@ -114,6 +118,33 @@ std::filesystem::path artifactRoot(const std::string& sessionId) {
     }
 
     return {};
+}
+
+std::vector<std::filesystem::path> artifactRootCandidates(const std::string& sessionId) {
+    const auto rootName = "hyprcapture-" + std::to_string(static_cast<unsigned long long>(geteuid()));
+    std::vector<std::filesystem::path> roots;
+    for (const auto& base : {std::filesystem::path{"/dev/shm"}, std::filesystem::path{"/tmp"}, std::filesystem::temp_directory_path()}) {
+        const auto root = base / rootName / sessionId;
+        if (std::find(roots.begin(), roots.end(), root) == roots.end())
+            roots.push_back(root);
+    }
+    return roots;
+}
+
+std::string boundedString(const std::string& value, std::size_t maxBytes) {
+    if (value.size() <= maxBytes)
+        return value;
+    return value.substr(0, maxBytes);
+}
+
+bool containsPath(const std::vector<std::filesystem::path>& paths, const std::filesystem::path& path) {
+    return std::find(paths.begin(), paths.end(), path) != paths.end();
+}
+
+void rememberParent(std::vector<std::filesystem::path>& parents, const std::filesystem::path& path) {
+    const auto parent = path.parent_path();
+    if (!parent.empty() && !containsPath(parents, parent))
+        parents.push_back(parent);
 }
 
 bool writeRgbaFile(const std::filesystem::path& path, const std::vector<unsigned char>& pixels) {
@@ -905,6 +936,8 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
 
     int monitorIndex = 0;
     for (const auto& monitor : g_pCompositor->m_monitors) {
+        if (session.monitors.size() >= MAX_SESSION_MONITORS)
+            break;
         if (!monitor)
             continue;
         MonitorInfo info;
@@ -921,6 +954,8 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
     int z = 0;
     std::vector<PendingRealBackgroundCapture> pendingRealBackgrounds;
     for (const auto& window : windowsInRenderOrder()) {
+        if (session.windows.size() >= MAX_SESSION_WINDOWS)
+            break;
         const CBox fullBox = renderedWindowBox(window, window->getFullWindowBoundingBox());
         const Rect full = toRect(fullBox);
         auto monitor = window->m_monitor.lock();
@@ -935,8 +970,8 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
 
         WindowInfo info;
         info.address = "0x" + pointerId(window.get());
-        info.title = window->m_title;
-        info.appClass = window->m_class;
+        info.title = boundedString(window->m_title, MAX_WINDOW_METADATA_BYTES);
+        info.appClass = boundedString(window->m_class, MAX_WINDOW_METADATA_BYTES);
         info.zIndex = z++;
         const bool dontRound = window->isEffectiveInternalFSMode(FSMODE_FULLSCREEN);
         info.rounding = dontRound ? 0.0 : std::max(0.0F, window->rounding());
@@ -974,6 +1009,57 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
     }
 
     return session;
+}
+
+std::string writeCompositorSessionJsonFile(const CaptureSession& session, std::string_view json) {
+    if (json.empty() || json.size() > MAX_SESSION_JSON_BYTES)
+        return {};
+
+    const auto root = artifactRoot(session.id);
+    if (root.empty())
+        return {};
+
+    const auto path = root / "session.json";
+    std::vector<unsigned char> bytes(json.begin(), json.end());
+    if (!writeRgbaFile(path, bytes))
+        return {};
+
+    return path.string();
+}
+
+void cleanupCompositorArtifacts(const CaptureSession& session) {
+    std::vector<std::filesystem::path> parents;
+    const auto removeArtifact = [&](const std::string& rawPath) {
+        if (rawPath.empty())
+            return;
+
+        const std::filesystem::path path(rawPath);
+        std::error_code             ec;
+        std::filesystem::remove(path, ec);
+        rememberParent(parents, path);
+    };
+
+    for (const auto& monitor : session.monitors)
+        removeArtifact(monitor.artifactPath);
+
+    for (const auto& window : session.windows) {
+        removeArtifact(window.artifactPath);
+        removeArtifact(window.realBackgroundPath);
+    }
+
+    for (const auto& root : artifactRootCandidates(session.id)) {
+        removeArtifact((root / "session.json").string());
+        rememberParent(parents, root);
+    }
+
+    std::sort(parents.begin(), parents.end(), [](const auto& left, const auto& right) {
+        return left.native().size() > right.native().size();
+    });
+
+    for (const auto& parent : parents) {
+        std::error_code ec;
+        std::filesystem::remove(parent, ec);
+    }
 }
 
 } // namespace hyprcapture

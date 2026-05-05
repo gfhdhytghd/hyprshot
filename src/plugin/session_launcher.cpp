@@ -7,12 +7,14 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <filesystem>
 #include <optional>
 #include <sstream>
 #include <string_view>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
 
@@ -20,6 +22,8 @@ extern char** environ;
 
 namespace hyprcapture {
 namespace {
+
+constexpr std::size_t MAX_INLINE_SESSION_JSON_BYTES = 64 * 1024;
 
 std::string boolArg(bool value) {
     return value ? "1" : "0";
@@ -126,6 +130,99 @@ std::vector<std::string> childEnvironment() {
     return env;
 }
 
+bool hasCompositorArtifactPaths(const CaptureSession& session) {
+    for (const auto& monitor : session.monitors) {
+        if (!monitor.artifactPath.empty())
+            return true;
+    }
+    for (const auto& window : session.windows) {
+        if (!window.artifactPath.empty() || !window.realBackgroundPath.empty())
+            return true;
+    }
+    return false;
+}
+
+bool setCloseOnExec(int fd) {
+    const int flags = fcntl(fd, F_GETFD);
+    return flags >= 0 && fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == 0;
+}
+
+struct PipeFds {
+    int read = -1;
+    int write = -1;
+};
+
+void closeFd(int& fd) {
+    if (fd >= 0)
+        close(fd);
+    fd = -1;
+}
+
+std::optional<PipeFds> makeExecErrorPipe() {
+    int fds[2] = {-1, -1};
+    if (pipe(fds) != 0)
+        return std::nullopt;
+
+    PipeFds pipe{.read = fds[0], .write = fds[1]};
+    if (!setCloseOnExec(pipe.read) || !setCloseOnExec(pipe.write)) {
+        closeFd(pipe.read);
+        closeFd(pipe.write);
+        return std::nullopt;
+    }
+    return pipe;
+}
+
+void closeInheritedFileDescriptors(int keepFd) {
+    long maxFd = sysconf(_SC_OPEN_MAX);
+    if (maxFd < 0)
+        maxFd = 1024;
+
+    for (int fd = 3; fd < maxFd; ++fd) {
+        if (fd != keepFd)
+            close(fd);
+    }
+}
+
+void writeExecFailure(int fd, int error) {
+    const auto* data = reinterpret_cast<const char*>(&error);
+    std::size_t written = 0;
+    while (written < sizeof(error)) {
+        const ssize_t chunk = write(fd, data + written, sizeof(error) - written);
+        if (chunk < 0) {
+            if (errno == EINTR)
+                continue;
+            return;
+        }
+        if (chunk == 0)
+            return;
+        written += static_cast<std::size_t>(chunk);
+    }
+}
+
+std::optional<int> readExecFailure(int fd) {
+    int         error = 0;
+    auto*       data = reinterpret_cast<char*>(&error);
+    std::size_t bytes = 0;
+    while (bytes < sizeof(error)) {
+        const ssize_t chunk = read(fd, data + bytes, sizeof(error) - bytes);
+        if (chunk < 0) {
+            if (errno == EINTR)
+                continue;
+            return errno;
+        }
+        if (chunk == 0)
+            return bytes == 0 ? std::nullopt : std::optional<int>{EIO};
+        bytes += static_cast<std::size_t>(chunk);
+    }
+    return error;
+}
+
+void reapChild(pid_t pid) {
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+    }
+}
+
 } // namespace
 
 LaunchResult launchHelper(const LaunchRequest& request) {
@@ -133,15 +230,35 @@ LaunchResult launchHelper(const LaunchRequest& request) {
     if (!helper)
         return {.success = false, .error = "no trusted hyprcapture-ui helper found"};
 
+    auto execErrorPipe = makeExecErrorPipe();
+    if (!execErrorPipe)
+        return {.success = false, .error = std::string("pipe failed: ") + std::strerror(errno)};
+
     CaptureSession session = captureCompositorArtifacts(request.defaults);
     session.defaults.mode = request.requestedMode;
 
     const auto sessionJson = encodeSessionJson(session);
+    const bool sessionHasArtifacts = hasCompositorArtifactPaths(session);
+    const auto sessionJsonFile = writeCompositorSessionJsonFile(session, sessionJson);
+    const bool useSessionJsonFile = !sessionJsonFile.empty();
+    if (!useSessionJsonFile && (sessionHasArtifacts || sessionJson.size() > MAX_INLINE_SESSION_JSON_BYTES)) {
+        cleanupCompositorArtifacts(session);
+        closeFd(execErrorPipe->read);
+        closeFd(execErrorPipe->write);
+        return {.success = false, .error = "failed to write bounded session metadata"};
+    }
+
     const pid_t pid = fork();
-    if (pid < 0)
+    if (pid < 0) {
+        cleanupCompositorArtifacts(session);
+        closeFd(execErrorPipe->read);
+        closeFd(execErrorPipe->write);
         return {.success = false, .error = std::string("fork failed: ") + std::strerror(errno)};
+    }
 
     if (pid == 0) {
+        closeFd(execErrorPipe->read);
+
         std::vector<std::string> args;
         args.push_back(*helper);
         args.push_back("--mode");
@@ -180,8 +297,13 @@ LaunchResult launchHelper(const LaunchRequest& request) {
         args.push_back(request.defaults.watermarkOffset);
         if (request.quick)
             args.push_back("--quick");
-        args.push_back("--session-json");
-        args.push_back(sessionJson);
+        if (useSessionJsonFile) {
+            args.push_back("--session-json-file");
+            args.push_back(sessionJsonFile);
+        } else {
+            args.push_back("--session-json");
+            args.push_back(sessionJson);
+        }
 
         std::vector<char*> argv;
         argv.reserve(args.size() + 1);
@@ -196,8 +318,20 @@ LaunchResult launchHelper(const LaunchRequest& request) {
             envp.push_back(env.data());
         envp.push_back(nullptr);
 
+        closeInheritedFileDescriptors(execErrorPipe->write);
         execve(argv[0], argv.data(), envp.data());
+        const int execError = errno;
+        writeExecFailure(execErrorPipe->write, execError);
         _exit(127);
+    }
+
+    closeFd(execErrorPipe->write);
+    const auto execFailure = readExecFailure(execErrorPipe->read);
+    closeFd(execErrorPipe->read);
+    if (execFailure) {
+        cleanupCompositorArtifacts(session);
+        reapChild(pid);
+        return {.success = false, .error = std::string("exec failed: ") + std::strerror(*execFailure)};
     }
 
     return {.success = true};
