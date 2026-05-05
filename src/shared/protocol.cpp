@@ -1,43 +1,235 @@
 #include "shared/protocol.hpp"
 
+#include <algorithm>
 #include <chrono>
-#include <charconv>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+#include <nlohmann/json.hpp>
 #include <random>
 #include <sstream>
+#include <utility>
 
 namespace hyprcapture {
 namespace {
 
-std::string quote(std::string_view value) {
-    std::string out = "\"";
-    constexpr char hex[] = "0123456789abcdef";
-    for (const unsigned char c : value) {
-        switch (c) {
-            case '\\': out += "\\\\"; break;
-            case '"': out += "\\\""; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (c < 0x20) {
-                    out += "\\u00";
-                    out += hex[(c >> 4U) & 0x0FU];
-                    out += hex[c & 0x0FU];
-                } else
-                    out += static_cast<char>(c);
-                break;
-        }
-    }
-    out += "\"";
-    return out;
+using Json = nlohmann::ordered_json;
+
+constexpr std::size_t MAX_SESSION_JSON_BYTES = 8ULL * 1024ULL * 1024ULL;
+constexpr std::size_t MAX_SESSION_MONITORS = 64;
+constexpr std::size_t MAX_SESSION_WINDOWS = 512;
+constexpr std::size_t MAX_METADATA_STRING_BYTES = 4096;
+constexpr std::size_t MAX_PATH_BYTES = 4096;
+constexpr int         MAX_ARTIFACT_DIMENSION = 32768;
+constexpr double      MAX_LOGICAL_COORDINATE = 1'000'000.0;
+
+std::string boundedString(const std::string& value, std::size_t maxBytes) {
+    if (value.size() <= maxBytes)
+        return value;
+    return value.substr(0, maxBytes);
 }
 
-void appendRect(std::ostringstream& out, const Rect& rect) {
-    out << "{\"x\":" << rect.x << ",\"y\":" << rect.y << ",\"width\":" << rect.width << ",\"height\":" << rect.height << "}";
+double boundedDouble(double value, double minimum, double maximum, double fallback = 0.0) {
+    if (!std::isfinite(value))
+        return fallback;
+    return std::clamp(value, minimum, maximum);
 }
 
-void appendPoint(std::ostringstream& out, const Point& point) {
-    out << "{\"x\":" << point.x << ",\"y\":" << point.y << "}";
+int boundedDimension(int value) {
+    return value > 0 && value <= MAX_ARTIFACT_DIMENSION ? value : 0;
+}
+
+Json rectJson(const Rect& rect) {
+    return Json{
+        {"x", boundedDouble(rect.x, -MAX_LOGICAL_COORDINATE, MAX_LOGICAL_COORDINATE)},
+        {"y", boundedDouble(rect.y, -MAX_LOGICAL_COORDINATE, MAX_LOGICAL_COORDINATE)},
+        {"width", boundedDouble(rect.width, 0.0, MAX_LOGICAL_COORDINATE)},
+        {"height", boundedDouble(rect.height, 0.0, MAX_LOGICAL_COORDINATE)},
+    };
+}
+
+Json pointJson(const Point& point) {
+    return Json{
+        {"x", boundedDouble(point.x, -MAX_LOGICAL_COORDINATE, MAX_LOGICAL_COORDINATE)},
+        {"y", boundedDouble(point.y, -MAX_LOGICAL_COORDINATE, MAX_LOGICAL_COORDINATE)},
+    };
+}
+
+bool stringValue(const Json& obj, const char* key, std::string& out, std::size_t maxBytes, bool required = true) {
+    const auto it = obj.find(key);
+    if (it == obj.end())
+        return !required;
+    if (!it->is_string())
+        return false;
+    out = it->get<std::string>();
+    if (out.size() > maxBytes)
+        return false;
+    return true;
+}
+
+bool boolValue(const Json& obj, const char* key, bool& out, bool required = true) {
+    const auto it = obj.find(key);
+    if (it == obj.end())
+        return !required;
+    if (!it->is_boolean())
+        return false;
+    out = it->get<bool>();
+    return true;
+}
+
+bool intValue(const Json& obj, const char* key, int& out, int minimum, int maximum, bool required = true) {
+    const auto it = obj.find(key);
+    if (it == obj.end())
+        return !required;
+    if (!it->is_number_integer())
+        return false;
+    const auto value = it->get<long long>();
+    if (value < minimum || value > maximum)
+        return false;
+    out = static_cast<int>(value);
+    return true;
+}
+
+bool int64Value(const Json& obj, const char* key, std::int64_t& out, std::int64_t minimum, std::int64_t maximum, bool required = true) {
+    const auto it = obj.find(key);
+    if (it == obj.end())
+        return !required;
+    if (!it->is_number_integer())
+        return false;
+    const auto value = it->get<std::int64_t>();
+    if (value < minimum || value > maximum)
+        return false;
+    out = value;
+    return true;
+}
+
+bool doubleValue(const Json& obj, const char* key, double& out, double minimum, double maximum, bool required = true) {
+    const auto it = obj.find(key);
+    if (it == obj.end())
+        return !required;
+    if (!it->is_number())
+        return false;
+    const double value = it->get<double>();
+    if (!std::isfinite(value) || value < minimum || value > maximum)
+        return false;
+    out = value;
+    return true;
+}
+
+bool rectValue(const Json& obj, const char* key, Rect& out) {
+    const auto it = obj.find(key);
+    if (it == obj.end() || !it->is_object())
+        return false;
+    Rect rect;
+    if (!doubleValue(*it, "x", rect.x, -MAX_LOGICAL_COORDINATE, MAX_LOGICAL_COORDINATE) ||
+        !doubleValue(*it, "y", rect.y, -MAX_LOGICAL_COORDINATE, MAX_LOGICAL_COORDINATE) ||
+        !doubleValue(*it, "width", rect.width, 1.0, MAX_LOGICAL_COORDINATE) ||
+        !doubleValue(*it, "height", rect.height, 1.0, MAX_LOGICAL_COORDINATE))
+        return false;
+    out = rect;
+    return true;
+}
+
+bool pointValue(const Json& obj, const char* key, Point& out) {
+    const auto it = obj.find(key);
+    if (it == obj.end())
+        return true;
+    if (!it->is_object())
+        return false;
+    Point point;
+    if (!doubleValue(*it, "x", point.x, -MAX_LOGICAL_COORDINATE, MAX_LOGICAL_COORDINATE) ||
+        !doubleValue(*it, "y", point.y, -MAX_LOGICAL_COORDINATE, MAX_LOGICAL_COORDINATE))
+        return false;
+    out = point;
+    return true;
+}
+
+bool parseDefaults(const Json& obj, CaptureDefaults& defaults) {
+    if (!obj.is_object())
+        return false;
+
+    std::string value;
+    if (stringValue(obj, "mode", value, MAX_METADATA_STRING_BYTES, false))
+        defaults.mode = parseCaptureMode(value, defaults.mode);
+    else
+        return false;
+    if (stringValue(obj, "fullscreenScope", value, MAX_METADATA_STRING_BYTES, false))
+        defaults.fullscreenScope = parseFullscreenScope(value, defaults.fullscreenScope);
+    else
+        return false;
+    if (stringValue(obj, "windowBackground", value, MAX_METADATA_STRING_BYTES, false))
+        defaults.windowBackground = parseWindowBackground(value, defaults.windowBackground);
+    else
+        return false;
+    if (stringValue(obj, "windowBorder", value, MAX_METADATA_STRING_BYTES, false))
+        defaults.windowBorder = parseDecorationPolicy(value, defaults.windowBorder);
+    else
+        return false;
+    if (stringValue(obj, "windowShadow", value, MAX_METADATA_STRING_BYTES, false))
+        defaults.windowShadow = parseDecorationPolicy(value, defaults.windowShadow);
+    else
+        return false;
+
+    return boolValue(obj, "save", defaults.save, false) && boolValue(obj, "clipboard", defaults.clipboard, false) &&
+        boolValue(obj, "showThumbnail", defaults.showThumbnail, false) && boolValue(obj, "includeCursor", defaults.includeCursor, false) &&
+        boolValue(obj, "allowQuick", defaults.allowQuick, false) && boolValue(obj, "fushionMode", defaults.fushionMode, false) &&
+        stringValue(obj, "saveDir", defaults.saveDir, MAX_PATH_BYTES, false) &&
+        stringValue(obj, "filenameTemplate", defaults.filenameTemplate, MAX_METADATA_STRING_BYTES, false) &&
+        int64Value(obj, "thumbnailTimeoutMs", defaults.thumbnailTimeoutMs, 0, 60 * 60 * 1000, false) &&
+        stringValue(obj, "watermark", defaults.watermark, MAX_PATH_BYTES, false) &&
+        stringValue(obj, "watermarkWidth", defaults.watermarkWidth, MAX_METADATA_STRING_BYTES, false) &&
+        stringValue(obj, "watermarkOffset", defaults.watermarkOffset, MAX_METADATA_STRING_BYTES, false) &&
+        (!obj.contains("watermarkPosition") ||
+         (stringValue(obj, "watermarkPosition", value, MAX_METADATA_STRING_BYTES, false) &&
+          (defaults.watermarkPosition = parseWatermarkPosition(value, defaults.watermarkPosition), true)));
+}
+
+bool monitorValue(const Json& obj, MonitorInfo& out) {
+    if (!obj.is_object())
+        return false;
+
+    MonitorInfo monitor;
+    if (!stringValue(obj, "name", monitor.name, MAX_METADATA_STRING_BYTES) || !rectValue(obj, "geometry", monitor.logicalGeometry) ||
+        !doubleValue(obj, "scale", monitor.scale, 0.01, 100.0) || !intValue(obj, "transform", monitor.transform, 0, 7) ||
+        !stringValue(obj, "artifactPath", monitor.artifactPath, MAX_PATH_BYTES, false) ||
+        !intValue(obj, "artifactWidth", monitor.artifactWidth, 0, MAX_ARTIFACT_DIMENSION, false) ||
+        !intValue(obj, "artifactHeight", monitor.artifactHeight, 0, MAX_ARTIFACT_DIMENSION, false) ||
+        !boolValue(obj, "artifactTopDown", monitor.artifactTopDown, false))
+        return false;
+
+    if (!monitor.artifactPath.empty() && (monitor.artifactWidth <= 0 || monitor.artifactHeight <= 0))
+        return false;
+    out = std::move(monitor);
+    return true;
+}
+
+bool windowValue(const Json& obj, WindowInfo& out) {
+    if (!obj.is_object())
+        return false;
+
+    WindowInfo window;
+    if (!stringValue(obj, "address", window.address, MAX_METADATA_STRING_BYTES) || !stringValue(obj, "title", window.title, MAX_METADATA_STRING_BYTES) ||
+        !stringValue(obj, "class", window.appClass, MAX_METADATA_STRING_BYTES) || !rectValue(obj, "visibleGeometry", window.visibleGeometry) ||
+        !rectValue(obj, "fullGeometry", window.fullGeometry) || !doubleValue(obj, "rounding", window.rounding, 0.0, MAX_LOGICAL_COORDINATE, false) ||
+        !doubleValue(obj, "roundingPower", window.roundingPower, 1.0, 10.0, false) ||
+        !doubleValue(obj, "borderSize", window.borderSize, 0.0, MAX_LOGICAL_COORDINATE, false) ||
+        !stringValue(obj, "artifactPath", window.artifactPath, MAX_PATH_BYTES, false) ||
+        !intValue(obj, "artifactWidth", window.artifactWidth, 0, MAX_ARTIFACT_DIMENSION, false) ||
+        !intValue(obj, "artifactHeight", window.artifactHeight, 0, MAX_ARTIFACT_DIMENSION, false) ||
+        !boolValue(obj, "artifactTopDown", window.artifactTopDown, false) ||
+        !stringValue(obj, "realBackgroundPath", window.realBackgroundPath, MAX_PATH_BYTES, false) ||
+        !intValue(obj, "realBackgroundWidth", window.realBackgroundWidth, 0, MAX_ARTIFACT_DIMENSION, false) ||
+        !intValue(obj, "realBackgroundHeight", window.realBackgroundHeight, 0, MAX_ARTIFACT_DIMENSION, false) ||
+        !boolValue(obj, "realBackgroundTopDown", window.realBackgroundTopDown, false) || !intValue(obj, "zIndex", window.zIndex, 0, MAX_SESSION_WINDOWS) ||
+        !boolValue(obj, "selectable", window.selectable, false))
+        return false;
+
+    if (!window.artifactPath.empty() && (window.artifactWidth <= 0 || window.artifactHeight <= 0))
+        return false;
+    if (!window.realBackgroundPath.empty() && (window.realBackgroundWidth <= 0 || window.realBackgroundHeight <= 0))
+        return false;
+    out = std::move(window);
+    return true;
 }
 
 } // namespace
@@ -52,68 +244,116 @@ std::string makeSessionId() {
 }
 
 std::string encodeSessionJson(const CaptureSession& session) {
-    std::ostringstream out;
-    out << "{\"id\":" << quote(session.id);
-    out << ",\"defaults\":{";
-    out << "\"mode\":" << quote(toString(session.defaults.mode));
-    out << ",\"fullscreenScope\":" << quote(toString(session.defaults.fullscreenScope));
-    out << ",\"windowBackground\":" << quote(toString(session.defaults.windowBackground));
-    out << ",\"windowBorder\":" << quote(toString(session.defaults.windowBorder));
-    out << ",\"windowShadow\":" << quote(toString(session.defaults.windowShadow));
-    out << ",\"save\":" << (session.defaults.save ? "true" : "false");
-    out << ",\"clipboard\":" << (session.defaults.clipboard ? "true" : "false");
-    out << ",\"showThumbnail\":" << (session.defaults.showThumbnail ? "true" : "false");
-    out << ",\"includeCursor\":" << (session.defaults.includeCursor ? "true" : "false");
-    out << ",\"fushionMode\":" << (session.defaults.fushionMode ? "true" : "false");
-    out << ",\"saveDir\":" << quote(session.defaults.saveDir);
-    out << ",\"filenameTemplate\":" << quote(session.defaults.filenameTemplate);
-    out << ",\"thumbnailTimeoutMs\":" << session.defaults.thumbnailTimeoutMs;
-    out << ",\"watermark\":" << quote(session.defaults.watermark);
-    out << ",\"watermarkPosition\":" << quote(toString(session.defaults.watermarkPosition));
-    out << ",\"watermarkWidth\":" << quote(session.defaults.watermarkWidth);
-    out << ",\"watermarkOffset\":" << quote(session.defaults.watermarkOffset);
-    out << "}";
-    if (session.cursorPosition) {
-        out << ",\"cursorPosition\":";
-        appendPoint(out, *session.cursorPosition);
+    Json root;
+    root["id"] = boundedString(session.id, MAX_METADATA_STRING_BYTES);
+    root["defaults"] = Json{
+        {"mode", toString(session.defaults.mode)},
+        {"fullscreenScope", toString(session.defaults.fullscreenScope)},
+        {"windowBackground", toString(session.defaults.windowBackground)},
+        {"windowBorder", toString(session.defaults.windowBorder)},
+        {"windowShadow", toString(session.defaults.windowShadow)},
+        {"save", session.defaults.save},
+        {"clipboard", session.defaults.clipboard},
+        {"showThumbnail", session.defaults.showThumbnail},
+        {"includeCursor", session.defaults.includeCursor},
+        {"allowQuick", session.defaults.allowQuick},
+        {"fushionMode", session.defaults.fushionMode},
+        {"saveDir", boundedString(session.defaults.saveDir, MAX_PATH_BYTES)},
+        {"filenameTemplate", boundedString(session.defaults.filenameTemplate, MAX_METADATA_STRING_BYTES)},
+        {"thumbnailTimeoutMs", std::clamp<std::int64_t>(session.defaults.thumbnailTimeoutMs, 0, 60 * 60 * 1000)},
+        {"watermark", boundedString(session.defaults.watermark, MAX_PATH_BYTES)},
+        {"watermarkPosition", toString(session.defaults.watermarkPosition)},
+        {"watermarkWidth", boundedString(session.defaults.watermarkWidth, MAX_METADATA_STRING_BYTES)},
+        {"watermarkOffset", boundedString(session.defaults.watermarkOffset, MAX_METADATA_STRING_BYTES)},
+    };
+    if (session.cursorPosition)
+        root["cursorPosition"] = pointJson(*session.cursorPosition);
+
+    root["monitors"] = Json::array();
+    for (const auto& mon : session.monitors) {
+        if (root["monitors"].size() >= MAX_SESSION_MONITORS)
+            break;
+        root["monitors"].push_back(Json{
+            {"name", boundedString(mon.name, MAX_METADATA_STRING_BYTES)},
+            {"geometry", rectJson(mon.logicalGeometry)},
+            {"scale", boundedDouble(mon.scale, 0.01, 100.0, 1.0)},
+            {"transform", std::clamp(mon.transform, 0, 7)},
+            {"artifactPath", boundedString(mon.artifactPath, MAX_PATH_BYTES)},
+            {"artifactWidth", boundedDimension(mon.artifactWidth)},
+            {"artifactHeight", boundedDimension(mon.artifactHeight)},
+            {"artifactTopDown", mon.artifactTopDown},
+        });
     }
-    out << ",\"monitors\":[";
-    for (std::size_t i = 0; i < session.monitors.size(); ++i) {
-        if (i)
-            out << ',';
-        const auto& mon = session.monitors[i];
-        out << "{\"name\":" << quote(mon.name) << ",\"geometry\":";
-        appendRect(out, mon.logicalGeometry);
-        out << ",\"scale\":" << mon.scale << ",\"transform\":" << mon.transform << ",\"artifactPath\":" << quote(mon.artifactPath)
-            << ",\"artifactWidth\":" << mon.artifactWidth << ",\"artifactHeight\":" << mon.artifactHeight
-            << ",\"artifactTopDown\":" << (mon.artifactTopDown ? "true" : "false") << "}";
+
+    root["windows"] = Json::array();
+    for (const auto& win : session.windows) {
+        if (root["windows"].size() >= MAX_SESSION_WINDOWS)
+            break;
+        root["windows"].push_back(Json{
+            {"address", boundedString(win.address, MAX_METADATA_STRING_BYTES)},
+            {"title", boundedString(win.title, MAX_METADATA_STRING_BYTES)},
+            {"class", boundedString(win.appClass, MAX_METADATA_STRING_BYTES)},
+            {"visibleGeometry", rectJson(win.visibleGeometry)},
+            {"fullGeometry", rectJson(win.fullGeometry)},
+            {"rounding", boundedDouble(win.rounding, 0.0, MAX_LOGICAL_COORDINATE)},
+            {"roundingPower", boundedDouble(win.roundingPower, 1.0, 10.0, 2.0)},
+            {"borderSize", boundedDouble(win.borderSize, 0.0, MAX_LOGICAL_COORDINATE)},
+            {"artifactPath", boundedString(win.artifactPath, MAX_PATH_BYTES)},
+            {"artifactWidth", boundedDimension(win.artifactWidth)},
+            {"artifactHeight", boundedDimension(win.artifactHeight)},
+            {"artifactTopDown", win.artifactTopDown},
+            {"realBackgroundPath", boundedString(win.realBackgroundPath, MAX_PATH_BYTES)},
+            {"realBackgroundWidth", boundedDimension(win.realBackgroundWidth)},
+            {"realBackgroundHeight", boundedDimension(win.realBackgroundHeight)},
+            {"realBackgroundTopDown", win.realBackgroundTopDown},
+            {"zIndex", std::clamp(win.zIndex, 0, static_cast<int>(MAX_SESSION_WINDOWS))},
+            {"selectable", win.selectable},
+        });
     }
-    out << "],\"windows\":[";
-    for (std::size_t i = 0; i < session.windows.size(); ++i) {
-        if (i)
-            out << ',';
-        const auto& win = session.windows[i];
-        out << "{\"address\":" << quote(win.address) << ",\"title\":" << quote(win.title) << ",\"class\":" << quote(win.appClass) << ",\"visibleGeometry\":";
-        appendRect(out, win.visibleGeometry);
-        out << ",\"fullGeometry\":";
-        appendRect(out, win.fullGeometry);
-        out << ",\"rounding\":" << win.rounding << ",\"roundingPower\":" << win.roundingPower << ",\"borderSize\":" << win.borderSize;
-        out << ",\"artifactPath\":" << quote(win.artifactPath) << ",\"artifactWidth\":" << win.artifactWidth << ",\"artifactHeight\":" << win.artifactHeight
-            << ",\"artifactTopDown\":" << (win.artifactTopDown ? "true" : "false") << ",\"realBackgroundPath\":" << quote(win.realBackgroundPath)
-            << ",\"realBackgroundWidth\":" << win.realBackgroundWidth << ",\"realBackgroundHeight\":" << win.realBackgroundHeight
-            << ",\"realBackgroundTopDown\":" << (win.realBackgroundTopDown ? "true" : "false")
-            << ",\"zIndex\":" << win.zIndex << ",\"selectable\":" << (win.selectable ? "true" : "false") << "}";
-    }
-    out << "]}";
-    return out.str();
+
+    return root.dump(-1, ' ', false, Json::error_handler_t::replace);
 }
 
 std::optional<CaptureSession> decodeSessionJson(const std::string& json) {
-    if (json.empty() || json.front() != '{')
+    if (json.empty() || json.size() > MAX_SESSION_JSON_BYTES || json.front() != '{')
+        return std::nullopt;
+
+    const auto root = Json::parse(json, nullptr, false);
+    if (root.is_discarded() || !root.is_object())
         return std::nullopt;
 
     CaptureSession session;
-    session.id = makeSessionId();
+    if (!stringValue(root, "id", session.id, MAX_METADATA_STRING_BYTES) || session.id.empty())
+        return std::nullopt;
+    if (!root.contains("defaults") || !parseDefaults(root.value("defaults", Json{}), session.defaults))
+        return std::nullopt;
+
+    Point cursorPosition;
+    if (!pointValue(root, "cursorPosition", cursorPosition))
+        return std::nullopt;
+    if (root.contains("cursorPosition"))
+        session.cursorPosition = cursorPosition;
+
+    const auto monitors = root.find("monitors");
+    const auto windows = root.find("windows");
+    if (monitors == root.end() || windows == root.end() || !monitors->is_array() || !windows->is_array() ||
+        monitors->size() > MAX_SESSION_MONITORS || windows->size() > MAX_SESSION_WINDOWS)
+        return std::nullopt;
+
+    for (const auto& value : *monitors) {
+        MonitorInfo monitor;
+        if (!monitorValue(value, monitor))
+            return std::nullopt;
+        session.monitors.push_back(std::move(monitor));
+    }
+
+    for (const auto& value : *windows) {
+        WindowInfo window;
+        if (!windowValue(value, window))
+            return std::nullopt;
+        session.windows.push_back(std::move(window));
+    }
+
     return session;
 }
 

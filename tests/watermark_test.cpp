@@ -1,9 +1,11 @@
 #include "shared/config.hpp"
 #include "ui/watermark.hpp"
 
+#include <QFile>
 #include <QGuiApplication>
 #include <QImage>
 #include <QRect>
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <cstdlib>
@@ -73,6 +75,19 @@ int main(int argc, char** argv) {
     auto hypercamPathAlias = base;
     ui::applyWatermark(hypercamPathAlias, defaults);
     require(imageDiffers(base, hypercamPathAlias), "hypercam filename alias");
+
+    QTemporaryDir tempDir;
+    require(tempDir.isValid(), "temporary watermark dir");
+    const QString svgPath = tempDir.filePath(QStringLiteral("external.svg"));
+    QFile         svg(svgPath);
+    require(svg.open(QIODevice::WriteOnly), "external svg opens");
+    svg.write(R"(<svg width="20" height="20" xmlns="http://www.w3.org/2000/svg"><rect width="20" height="20" fill="red"/></svg>)");
+    svg.close();
+
+    defaults.watermark = svgPath.toStdString();
+    auto externalSvg = base;
+    ui::applyWatermark(externalSvg, defaults);
+    require(!imageDiffers(base, externalSvg), "external svg watermark is ignored");
 
     defaults.watermark.clear();
     auto disabled = base;

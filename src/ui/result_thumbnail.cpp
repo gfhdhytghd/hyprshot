@@ -103,6 +103,10 @@ QPointF wheelGestureDelta(QWheelEvent* event) {
     return delta;
 }
 
+bool canDeleteThumbnailPath(const QString& path) {
+    return !path.isEmpty() && hyprcapture::ui::isPrivateRuntimePath(path) && QFileInfo::exists(path);
+}
+
 } // namespace
 
 ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString restoreClipboardPath, int timeoutMs, QWidget* parent)
@@ -162,7 +166,8 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
         if (!m_path.isEmpty())
             openPath(QFileInfo(m_path).absolutePath());
     });
-    addAction("Delete", [this] { deleteAndClose(); });
+    if (canDeleteThumbnailPath(m_path))
+        addAction("Delete", [this] { deleteAndClose(); });
     addAction("Close", [this] { close(); });
     m_menuPanel->hide();
     layout->addWidget(m_menuPanel, 0, Qt::AlignRight);
@@ -274,7 +279,7 @@ void ResultThumbnail::wheelEvent(QWheelEvent* event) {
 
     if (m_swipeOffset.x() >= std::min(kSwipeCloseThreshold, imageWidth * 0.55))
         animateSwipeOut(SwipeAction::Close);
-    else if (m_swipeOffset.y() >= std::min(kSwipeDeleteThreshold, imageHeight * 0.55))
+    else if (canDeleteThumbnailPath(m_path) && m_swipeOffset.y() >= std::min(kSwipeDeleteThreshold, imageHeight * 0.55))
         animateSwipeOut(SwipeAction::Delete);
     else
         m_swipeResetTimer.start(180);
@@ -358,7 +363,9 @@ void ResultThumbnail::animateSwipeOut(SwipeAction action) {
 }
 
 void ResultThumbnail::deleteAndClose() {
-    if (!m_path.isEmpty() && QFileInfo::exists(m_path) && !QFile::remove(m_path))
+    if (!canDeleteThumbnailPath(m_path))
+        return;
+    if (!QFile::remove(m_path))
         return;
 
     restoreClipboard();

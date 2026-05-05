@@ -8,11 +8,20 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QFile>
+#include <QFileInfo>
+#include <QImageReader>
 #include <QPixmap>
+
+#include <algorithm>
 
 namespace {
 
-constexpr qint64 MAX_SESSION_JSON_BYTES = 8 * 1024 * 1024;
+constexpr qint64 MAX_SESSION_JSON_BYTES = 8LL * 1024LL * 1024LL;
+constexpr qint64 MAX_THUMBNAIL_SOURCE_BYTES = 128LL * 1024LL * 1024LL;
+constexpr int    MAX_THUMBNAIL_DIMENSION = 32768;
+constexpr int    THUMBNAIL_DECODE_MAX_WIDTH = 360;
+constexpr int    THUMBNAIL_DECODE_MAX_HEIGHT = 240;
+constexpr int    MAX_THUMBNAIL_TIMEOUT_MS = 60 * 60 * 1000;
 
 bool flagValue(const QCommandLineParser& parser, const QString& name, bool fallback) {
     const auto value = parser.value(name);
@@ -27,6 +36,33 @@ bool hasArgument(int argc, char** argv, const char* name) {
             return true;
     }
     return false;
+}
+
+int boundedInt(QString value, int fallback, int minimum, int maximum) {
+    bool ok = false;
+    const int parsed = value.toInt(&ok);
+    if (!ok)
+        return fallback;
+    return std::clamp(parsed, minimum, maximum);
+}
+
+QPixmap loadThumbnailPixmap(const QString& path) {
+    const QFileInfo info(path);
+    if (path.isEmpty() || !info.exists() || !info.isFile() || !info.isReadable() || info.size() < 0 || info.size() > MAX_THUMBNAIL_SOURCE_BYTES)
+        return {};
+
+    QImageReader reader(path);
+    reader.setAutoTransform(true);
+    const QSize sourceSize = reader.size();
+    if (sourceSize.isEmpty() || sourceSize.width() <= 0 || sourceSize.height() <= 0 || sourceSize.width() > MAX_THUMBNAIL_DIMENSION ||
+        sourceSize.height() > MAX_THUMBNAIL_DIMENSION)
+        return {};
+
+    reader.setScaledSize(sourceSize.scaled(THUMBNAIL_DECODE_MAX_WIDTH, THUMBNAIL_DECODE_MAX_HEIGHT, Qt::KeepAspectRatio));
+    const QImage image = reader.read();
+    if (image.isNull())
+        return {};
+    return QPixmap::fromImage(image);
 }
 
 } // namespace
@@ -69,10 +105,14 @@ int main(int argc, char** argv) {
     parser.process(app);
 
     if (hasArgument(argc, argv, "--thumbnail-window")) {
-        ResultThumbnail thumbnail(QPixmap(parser.value("thumbnail-window")),
-                                  parser.value("thumbnail-window"),
+        const QString thumbnailPath = parser.value("thumbnail-window");
+        const QPixmap pixmap = loadThumbnailPixmap(thumbnailPath);
+        if (pixmap.isNull())
+            return 1;
+        ResultThumbnail thumbnail(pixmap,
+                                  thumbnailPath,
                                   parser.value("restore-clipboard"),
-                                  parser.value("thumbnail-timeout-ms").toInt());
+                                  boundedInt(parser.value("thumbnail-timeout-ms"), 5000, 0, MAX_THUMBNAIL_TIMEOUT_MS));
         thumbnail.show();
         return app.exec();
     }
@@ -90,7 +130,7 @@ int main(int argc, char** argv) {
     defaults.fushionMode = flagValue(parser, "fushion-mode", defaults.fushionMode);
     defaults.saveDir = parser.value("save-dir").toStdString();
     defaults.filenameTemplate = parser.value("filename-template").toStdString();
-    defaults.thumbnailTimeoutMs = parser.value("thumbnail-timeout-ms").toLongLong();
+    defaults.thumbnailTimeoutMs = boundedInt(parser.value("thumbnail-timeout-ms"), defaults.thumbnailTimeoutMs, 0, MAX_THUMBNAIL_TIMEOUT_MS);
     defaults.watermark = parser.value("watermark").toStdString();
     defaults.watermarkPosition = hyprcapture::parseWatermarkPosition(parser.value("watermark-position").toStdString(), defaults.watermarkPosition);
     defaults.watermarkWidth = parser.value("watermark-width").toStdString();

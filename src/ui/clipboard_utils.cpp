@@ -34,6 +34,7 @@ constexpr qint64 kMaxClipboardSnapshotBytes = 16 * 1024 * 1024;
 constexpr qint64 kMaxClipboardImageBytes = 128 * 1024 * 1024;
 constexpr qint64 kMaxClipboardTextBytes = 4 * 1024 * 1024;
 constexpr qint64 kMaxClipboardUrlBytes = 1024 * 1024;
+constexpr int    kMaxClipboardUrls = 128;
 
 bool isTrustedOwner(uid_t uid) {
     return uid == 0 || uid == geteuid();
@@ -154,6 +155,9 @@ bool savedFileWithinLimit(const QString& path, qint64 maxBytes) {
 }
 
 bool urlsWithinLimit(const QList<QUrl>& urls) {
+    if (urls.size() > kMaxClipboardUrls)
+        return false;
+
     qint64 totalBytes = 0;
     for (const auto& url : urls) {
         const qint64 urlBytes = url.toString().toUtf8().size();
@@ -185,7 +189,6 @@ bool allowEnvironmentName(const QString& name) {
         QStringLiteral("QT_AUTO_SCREEN_SCALE_FACTOR"),
         QStringLiteral("QT_ENABLE_HIGHDPI_SCALING"),
         QStringLiteral("HYPRCAPTURE_TIMING"),
-        QStringLiteral("HYPRCAPTURE_TIMING_FILE"),
     };
     return allowed.contains(name) || name.startsWith(QStringLiteral("LC_"));
 }
@@ -233,7 +236,7 @@ bool copyBytesWithWlCopy(const QByteArray& bytes, const QString& mimeType) {
 }
 
 bool copyFileWithWlCopyDetached(const QString& path, const QString& mimeType, bool removeAfterCopy) {
-    if (path.isEmpty() || !QFileInfo::exists(path))
+    if (path.isEmpty() || !QFileInfo::exists(path) || !savedFileWithinLimit(path, kMaxClipboardImageBytes))
         return false;
     if (removeAfterCopy && !pathIsInPrivateRuntimeRoot(path))
         return false;
@@ -334,6 +337,59 @@ void removeSnapshotFiles(const QJsonObject& obj, const QString& path) {
     }
     if (pathIsInPrivateRuntimeRoot(path))
         QFile::remove(path);
+}
+
+bool snapshotStringValue(const QJsonObject& obj, const QString& key, QString& out) {
+    if (!obj.contains(key))
+        return true;
+    const auto value = obj.value(key);
+    if (!value.isString())
+        return false;
+    out = value.toString();
+    return utf8WithinLimit(out, kMaxClipboardTextBytes);
+}
+
+bool snapshotUrlsValue(const QJsonObject& obj, QList<QUrl>& out) {
+    if (!obj.contains("urls"))
+        return true;
+    const auto value = obj.value("urls");
+    if (!value.isArray())
+        return false;
+
+    QList<QUrl> urls;
+    for (const auto urlValue : value.toArray()) {
+        if (!urlValue.isString())
+            return false;
+        urls.push_back(QUrl(urlValue.toString()));
+        if (!urlsWithinLimit(urls))
+            return false;
+    }
+
+    out = std::move(urls);
+    return true;
+}
+
+bool snapshotColorValue(const QJsonObject& obj, QColor& out) {
+    if (!obj.contains("color"))
+        return true;
+    const auto value = obj.value("color");
+    if (!value.isString())
+        return false;
+    const QColor color(value.toString());
+    if (!color.isValid())
+        return false;
+    out = color;
+    return true;
+}
+
+bool snapshotImageValue(const QJsonObject& obj, QString& out) {
+    if (!obj.contains("image"))
+        return true;
+    const auto value = obj.value("image");
+    if (!value.isString())
+        return false;
+    out = value.toString();
+    return privateRuntimeFileExists(out, kMaxClipboardImageBytes);
 }
 
 } // namespace
@@ -518,10 +574,11 @@ QString saveClipboardSnapshot() {
 }
 
 bool copyImageToClipboard(const QImage& image) {
-    if (image.isNull())
+    if (!imageWithinLimit(image, kMaxClipboardImageBytes))
         return false;
 
-    if (copyBytesWithWlCopy(pngBytes(image), QStringLiteral("image/png")))
+    const QByteArray bytes = pngBytes(image);
+    if (!bytes.isEmpty() && bytes.size() <= kMaxClipboardImageBytes && copyBytesWithWlCopy(bytes, QStringLiteral("image/png")))
         return true;
 
     return copyImageToQtClipboard(image);
@@ -533,7 +590,7 @@ bool copyImageToClipboardDetached(const QImage& image) {
 
     const QString path = runtimeFile("clipboard-copy", ".png");
     if (savePng(image, path)) {
-        if (copyFileWithWlCopyDetached(path, QStringLiteral("image/png"), true))
+        if (savedFileWithinLimit(path, kMaxClipboardImageBytes) && copyFileWithWlCopyDetached(path, QStringLiteral("image/png"), true))
             return true;
         QFile::remove(path);
     }
@@ -582,6 +639,22 @@ void restoreClipboardSnapshot(const QString& path) {
         return;
 
     const auto obj = doc.object();
+    if (obj.contains("empty") && !obj.value("empty").isBool()) {
+        removeSnapshotFiles(obj, path);
+        return;
+    }
+
+    QString     text;
+    QString     html;
+    QList<QUrl> urls;
+    QColor      color;
+    QString     imagePath;
+    if (!snapshotStringValue(obj, QStringLiteral("text"), text) || !snapshotStringValue(obj, QStringLiteral("html"), html) ||
+        !snapshotUrlsValue(obj, urls) || !snapshotColorValue(obj, color) || !snapshotImageValue(obj, imagePath)) {
+        removeSnapshotFiles(obj, path);
+        return;
+    }
+
     if (obj.value("empty").toBool(false)) {
         if (!clearWithWlCopy()) {
             auto* clipboard = QGuiApplication::clipboard();
@@ -592,31 +665,31 @@ void restoreClipboardSnapshot(const QString& path) {
         return;
     }
 
-    if (obj.contains("image")) {
-        const QString imagePath = obj.value("image").toString();
-        QFile         imageFile(imagePath);
-        if (privateRuntimeFileExists(imagePath, kMaxClipboardImageBytes) && imageFile.open(QIODevice::ReadOnly) &&
+    if (!imagePath.isEmpty()) {
+        QFile imageFile(imagePath);
+        if (imageFile.open(QIODevice::ReadOnly) && imageFile.size() <= kMaxClipboardImageBytes &&
             copyBytesWithWlCopy(imageFile.readAll(), QStringLiteral("image/png"))) {
             removeSnapshotFiles(obj, path);
             return;
         }
     }
 
-    if (obj.contains("text") && copyBytesWithWlCopy(obj.value("text").toString().toUtf8(), QStringLiteral("text/plain"))) {
+    if (!text.isEmpty() && copyBytesWithWlCopy(text.toUtf8(), QStringLiteral("text/plain"))) {
         removeSnapshotFiles(obj, path);
         return;
     }
 
-    if (obj.contains("html") && copyBytesWithWlCopy(obj.value("html").toString().toUtf8(), QStringLiteral("text/html"))) {
+    if (!html.isEmpty() && copyBytesWithWlCopy(html.toUtf8(), QStringLiteral("text/html"))) {
         removeSnapshotFiles(obj, path);
         return;
     }
 
-    if (obj.contains("urls")) {
+    if (!urls.isEmpty()) {
         QString uriList;
-        for (const auto value : obj.value("urls").toArray())
-            uriList += value.toString() + QStringLiteral("\r\n");
-        if (copyBytesWithWlCopy(uriList.toUtf8(), QStringLiteral("text/uri-list"))) {
+        for (const auto& url : urls)
+            uriList += url.toString() + QStringLiteral("\r\n");
+        const QByteArray bytes = uriList.toUtf8();
+        if (bytes.size() <= kMaxClipboardUrlBytes && copyBytesWithWlCopy(bytes, QStringLiteral("text/uri-list"))) {
             removeSnapshotFiles(obj, path);
             return;
         }
@@ -627,27 +700,14 @@ void restoreClipboardSnapshot(const QString& path) {
         return;
 
     auto* mime = new QMimeData;
-    if (obj.contains("text"))
-        mime->setText(obj.value("text").toString());
-    if (obj.contains("html"))
-        mime->setHtml(obj.value("html").toString());
-    if (obj.contains("urls")) {
-        QList<QUrl> urls;
-        for (const auto value : obj.value("urls").toArray())
-            urls.push_back(QUrl(value.toString()));
+    if (!text.isEmpty())
+        mime->setText(text);
+    if (!html.isEmpty())
+        mime->setHtml(html);
+    if (!urls.isEmpty())
         mime->setUrls(urls);
-    }
-    if (obj.contains("color")) {
-        const QColor color(obj.value("color").toString());
-        if (color.isValid())
-            mime->setColorData(color);
-    }
-    if (obj.contains("image")) {
-        const QString imagePath = obj.value("image").toString();
-        QImage        image(privateRuntimeFileExists(imagePath, kMaxClipboardImageBytes) ? imagePath : QString{});
-        if (!image.isNull())
-            mime->setImageData(image);
-    }
+    if (color.isValid())
+        mime->setColorData(color);
     clipboard->setMimeData(mime);
     removeSnapshotFiles(obj, path);
 }

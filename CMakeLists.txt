@@ -26,6 +26,7 @@ pkg_check_modules(HYPR_DEPS REQUIRED hyprland)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg)
 find_package(LayerShellQt REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 add_library(hyprcapture SHARED
   src/plugin/main.cpp
@@ -37,7 +38,7 @@ add_library(hyprcapture SHARED
 
 target_include_directories(hyprcapture PRIVATE src ${HYPR_DEPS_INCLUDE_DIRS})
 target_link_directories(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARY_DIRS})
-target_link_libraries(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARIES})
+target_link_libraries(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARIES} nlohmann_json::nlohmann_json)
 target_link_options(hyprcapture PRIVATE -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
 
 add_executable(hyprcapture-ui
@@ -51,7 +52,7 @@ add_executable(hyprcapture-ui
 )
 
 target_include_directories(hyprcapture-ui PRIVATE src)
-target_link_libraries(hyprcapture-ui PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg LayerShellQt::Interface)
+target_link_libraries(hyprcapture-ui PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg LayerShellQt::Interface nlohmann_json::nlohmann_json)
 target_link_options(hyprcapture-ui PRIVATE -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
 
 if(BUILD_TESTING)
@@ -61,6 +62,7 @@ if(BUILD_TESTING)
     src/shared/protocol.cpp
   )
   target_include_directories(hyprcapture-config-test PRIVATE src)
+  target_link_libraries(hyprcapture-config-test PRIVATE nlohmann_json::nlohmann_json)
   add_test(NAME hyprcapture-config-test COMMAND hyprcapture-config-test)
 
   add_executable(hyprcapture-watermark-test

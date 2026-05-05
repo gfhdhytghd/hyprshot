@@ -3,6 +3,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <string>
 
 namespace {
@@ -51,6 +52,7 @@ int main() {
     CaptureSession session;
     session.id = "test-session";
     session.defaults.mode = CaptureMode::Window;
+    session.defaults.allowQuick = true;
     session.defaults.fushionMode = true;
     session.defaults.windowBackground = WindowBackground::FollowSystem;
     session.defaults.watermark = "activate-linux";
@@ -81,12 +83,13 @@ int main() {
     session.windows.back().title = std::string("Title") + '\x01';
     const auto json = encodeSessionJson(session);
     require(json.find("\"fushionMode\":true") != std::string::npos, "fushion mode json");
+    require(json.find("\"allowQuick\":true") != std::string::npos, "allow quick json");
     require(json.find("\"windowBackground\":\"follow-system\"") != std::string::npos, "window background json");
     require(json.find("\"watermark\":\"activate-linux\"") != std::string::npos, "watermark json");
     require(json.find("\"watermarkPosition\":\"right-middle\"") != std::string::npos, "watermark position json");
     require(json.find("\"watermarkWidth\":\"18%\"") != std::string::npos, "watermark width json");
     require(json.find("\"watermarkOffset\":\"-2% 24px\"") != std::string::npos, "watermark offset json");
-    require(json.find("\"cursorPosition\":{\"x\":120,\"y\":240}") != std::string::npos, "cursor position json");
+    require(json.find("\"cursorPosition\"") != std::string::npos, "cursor position json");
     require(json.find("\"fullGeometry\"") != std::string::npos, "full geometry json");
     require(json.find("\"rounding\":12") != std::string::npos, "rounding json");
     require(json.find("\"roundingPower\":2.5") != std::string::npos, "rounding power json");
@@ -96,6 +99,26 @@ int main() {
     require(json.find("\"realBackgroundPath\":\"/tmp/window-real.rgba\"") != std::string::npos, "real background path json");
     require(json.find("\"realBackgroundWidth\":200") != std::string::npos, "real background width json");
     require(json.find("Title\\u0001") != std::string::npos, "control byte json escaping");
+    const auto decoded = decodeSessionJson(json);
+    require(decoded.has_value(), "encoded session decodes");
+    require(decoded->id == "test-session", "decoded id");
+    require(decoded->defaults.mode == CaptureMode::Window, "decoded mode");
+    require(decoded->defaults.allowQuick, "decoded allow quick");
+    require(decoded->defaults.fushionMode, "decoded fushion mode");
+    require(decoded->cursorPosition.has_value() && decoded->cursorPosition->x == 120 && decoded->cursorPosition->y == 240, "decoded cursor position");
+    require(decoded->monitors.size() == 1 && decoded->windows.size() == 1, "decoded object counts");
+    require(decoded->windows.front().artifactPath == "/tmp/window.rgba", "decoded artifact path");
+
+    require(!decodeSessionJson("{not json").has_value(), "malformed json is rejected");
+    require(!decodeSessionJson("{}").has_value(), "missing required protocol fields rejected");
+
+    session.windows.front().fullGeometry.width = std::numeric_limits<double>::infinity();
+    const auto finiteJson = encodeSessionJson(session);
+    require(finiteJson.find("inf") == std::string::npos && finiteJson.find("nan") == std::string::npos, "non-finite values not serialized");
+
+    session.windows.front().fullGeometry.width = 200;
+    session.windows.front().title = std::string("bad utf8 ") + static_cast<char>(0xff);
+    require(decodeSessionJson(encodeSessionJson(session)).has_value(), "invalid utf8 metadata is replaced during encoding");
 
     std::cout << "hyprcapture config tests passed\n";
     return 0;

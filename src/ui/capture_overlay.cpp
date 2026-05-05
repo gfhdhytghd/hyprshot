@@ -3,10 +3,12 @@
 #include "ui/clipboard_utils.hpp"
 #include "ui/result_thumbnail.hpp"
 #include "ui/watermark.hpp"
+#include "shared/protocol.hpp"
 
 #include <LayerShellQt/Window>
 
 #include <QApplication>
+#include <QByteArray>
 #include <QButtonGroup>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -20,9 +22,6 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QImageWriter>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
@@ -92,6 +91,7 @@ constexpr int kCancelIconSize = 16;
 constexpr int kSelectArrowIconSize = 12;
 constexpr int kMaxArtifactDimension = 32768;
 constexpr qint64 kMaxArtifactBytes = 512LL * 1024LL * 1024LL;
+constexpr qint64 kMaxSessionArtifactBytes = 768LL * 1024LL * 1024LL;
 constexpr int kMaxLogicalCoordinate = 1'000'000;
 constexpr int kMaxSessionMonitors = 64;
 constexpr int kMaxSessionWindows = 512;
@@ -133,7 +133,7 @@ void traceTiming(const QString& event, qint64 elapsedMs = -1) {
     const QString path = qEnvironmentVariable("HYPRCAPTURE_TIMING_FILE");
     if (!path.isEmpty()) {
         QFile file(path);
-        if (file.open(QIODevice::WriteOnly | QIODevice::Append))
+        if (hyprcapture::ui::isPrivateRuntimePath(path) && file.open(QIODevice::WriteOnly | QIODevice::Append))
             file.write(line.toUtf8());
         return;
     }
@@ -378,50 +378,39 @@ bool boundedDoubleToInt(double value, int minimum, int maximum, bool ceilValue, 
     return true;
 }
 
-QRect jsonRect(const QJsonObject& obj) {
-    if (!obj.contains("x") || !obj.contains("y") || !obj.contains("width") || !obj.contains("height"))
-        return {};
-
+QRect protocolRect(const hyprcapture::Rect& rect) {
     int x = 0;
     int y = 0;
     int width = 0;
     int height = 0;
-    if (!boundedDoubleToInt(obj.value("x").toDouble(), -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, x) ||
-        !boundedDoubleToInt(obj.value("y").toDouble(), -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, y) ||
-        !boundedDoubleToInt(obj.value("width").toDouble(), 1, kMaxArtifactDimension, true, width) ||
-        !boundedDoubleToInt(obj.value("height").toDouble(), 1, kMaxArtifactDimension, true, height))
+    if (!boundedDoubleToInt(rect.x, -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, x) ||
+        !boundedDoubleToInt(rect.y, -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, y) ||
+        !boundedDoubleToInt(rect.width, 1, kMaxArtifactDimension, true, width) ||
+        !boundedDoubleToInt(rect.height, 1, kMaxArtifactDimension, true, height))
         return {};
 
     return QRect(QPoint(x, y), QSize(width, height));
 }
 
-bool jsonPoint(const QJsonObject& obj, QPoint& point) {
-    if (!obj.contains("x") || !obj.contains("y"))
-        return false;
-
+bool protocolPoint(const hyprcapture::Point& input, QPoint& point) {
     int x = 0;
     int y = 0;
-    if (!boundedDoubleToInt(obj.value("x").toDouble(), -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, x) ||
-        !boundedDoubleToInt(obj.value("y").toDouble(), -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, y))
+    if (!boundedDoubleToInt(input.x, -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, x) ||
+        !boundedDoubleToInt(input.y, -kMaxLogicalCoordinate, kMaxLogicalCoordinate, false, y))
         return false;
 
     point = QPoint(x, y);
     return true;
 }
 
-bool artifactTopDown(const QJsonObject& obj) {
-    // Older plugin builds emitted raw GL readback without orientation metadata.
-    // The observed legacy artifact layout is bottom-up.
-    return obj.contains("artifactTopDown") ? obj.value("artifactTopDown").toBool(true) : false;
-}
-
-QImage loadRawRgba(const QString& path, int width, int height, bool topDown) {
+QImage loadRawRgba(const QString& path, int width, int height, bool topDown, qint64& remainingSessionBytes) {
     QFile file(path);
     if (path.isEmpty() || width <= 0 || height <= 0 || width > kMaxArtifactDimension || height > kMaxArtifactDimension)
         return {};
 
     const qint64 expected = static_cast<qint64>(width) * static_cast<qint64>(height) * 4;
-    if (expected <= 0 || expected > kMaxArtifactBytes || !hyprcapture::ui::isPrivateRuntimeFile(path, expected) || !file.open(QIODevice::ReadOnly))
+    if (expected <= 0 || expected > kMaxArtifactBytes || expected > remainingSessionBytes || !hyprcapture::ui::isPrivateRuntimeFile(path, expected) ||
+        !file.open(QIODevice::ReadOnly))
         return {};
 
     const QByteArray bytes = file.readAll();
@@ -430,6 +419,7 @@ QImage loadRawRgba(const QString& path, int width, int height, bool topDown) {
 
     QImage image(reinterpret_cast<const uchar*>(bytes.constData()), width, height, width * 4, QImage::Format_RGBA8888);
     QImage copy = image.copy();
+    remainingSessionBytes -= expected;
     return topDown ? copy : copy.flipped(Qt::Vertical);
 }
 
@@ -925,47 +915,33 @@ CaptureOverlay::CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick
 }
 
 void CaptureOverlay::parseSessionJson(const QString& json) {
-    const auto doc = QJsonDocument::fromJson(json.toUtf8());
-    if (!doc.isObject())
+    const QByteArray encoded = json.toUtf8();
+    const auto       decoded = hyprcapture::decodeSessionJson(std::string(encoded.constData(), static_cast<std::size_t>(encoded.size())));
+    if (!decoded)
         return;
 
-    const auto root = doc.object();
-    QPoint cursorPosition;
-    if (jsonPoint(root.value("cursorPosition").toObject(), cursorPosition)) {
-        m_cursorLogicalPosition = cursorPosition;
-        m_hasCursorLogicalPosition = true;
+    m_defaults = decoded->defaults;
+    m_mode = m_defaults.mode;
+    if (decoded->cursorPosition) {
+        QPoint cursorPosition;
+        if (protocolPoint(*decoded->cursorPosition, cursorPosition)) {
+            m_cursorLogicalPosition = cursorPosition;
+            m_hasCursorLogicalPosition = true;
+        }
     }
 
-    const auto defaultValues = root.value("defaults").toObject();
-    if (defaultValues.contains("fushionMode"))
-        m_defaults.fushionMode = defaultValues.value("fushionMode").toBool(m_defaults.fushionMode);
-    if (defaultValues.contains("fusionMode"))
-        m_defaults.fushionMode = defaultValues.value("fusionMode").toBool(m_defaults.fushionMode);
-    if (defaultValues.contains("watermark"))
-        m_defaults.watermark = defaultValues.value("watermark").toString(QString::fromStdString(m_defaults.watermark)).toStdString();
-    if (defaultValues.contains("watermarkPosition"))
-        m_defaults.watermarkPosition =
-            hyprcapture::parseWatermarkPosition(defaultValues.value("watermarkPosition").toString(QString::fromStdString(hyprcapture::toString(m_defaults.watermarkPosition))).toStdString(),
-                                                m_defaults.watermarkPosition);
-    if (defaultValues.contains("watermarkWidth"))
-        m_defaults.watermarkWidth = defaultValues.value("watermarkWidth").toString(QString::fromStdString(m_defaults.watermarkWidth)).toStdString();
-    if (defaultValues.contains("watermarkOffset"))
-        m_defaults.watermarkOffset = defaultValues.value("watermarkOffset").toString(QString::fromStdString(m_defaults.watermarkOffset)).toStdString();
-
-    const auto monitors = root.value("monitors").toArray();
-    const auto windows = root.value("windows").toArray();
-    m_sessionMonitorCount = std::min(static_cast<int>(monitors.size()), kMaxSessionMonitors);
-    m_sessionWindowCount = std::min(static_cast<int>(windows.size()), kMaxSessionWindows);
+    m_sessionMonitorCount = std::min(static_cast<int>(decoded->monitors.size()), kMaxSessionMonitors);
+    m_sessionWindowCount = std::min(static_cast<int>(decoded->windows.size()), kMaxSessionWindows);
     QStringList artifactFiles;
+    qint64 remainingArtifactBytes = kMaxSessionArtifactBytes;
 
-    for (qsizetype i = 0; i < monitors.size() && i < kMaxSessionMonitors; ++i) {
-        const auto value = monitors.at(i);
-        const auto obj = value.toObject();
+    for (std::size_t i = 0; i < decoded->monitors.size() && i < kMaxSessionMonitors; ++i) {
+        const auto& info = decoded->monitors[i];
         MonitorArtifact artifact;
-        artifact.name = obj.value("name").toString();
-        artifact.logicalGeometry = jsonRect(obj.value("geometry").toObject());
-        const QString artifactPath = obj.value("artifactPath").toString();
-        artifact.image = loadRawRgba(artifactPath, obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt(), artifactTopDown(obj));
+        artifact.name = qString(info.name);
+        artifact.logicalGeometry = protocolRect(info.logicalGeometry);
+        const QString artifactPath = qString(info.artifactPath);
+        artifact.image = loadRawRgba(artifactPath, info.artifactWidth, info.artifactHeight, info.artifactTopDown, remainingArtifactBytes);
         artifactFiles.push_back(artifactPath);
         if (!artifact.logicalGeometry.isValid())
             continue;
@@ -974,24 +950,21 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
             m_monitorArtifacts.push_back(std::move(artifact));
     }
 
-    for (qsizetype i = 0; i < windows.size() && i < kMaxSessionWindows; ++i) {
-        const auto value = windows.at(i);
-        const auto obj = value.toObject();
+    for (std::size_t i = 0; i < decoded->windows.size() && i < kMaxSessionWindows; ++i) {
+        const auto& info = decoded->windows[i];
         WindowArtifact artifact;
-        artifact.title = obj.value("title").toString();
-        artifact.appClass = obj.value("class").toString();
-        artifact.visibleGeometry = jsonRect(obj.value("visibleGeometry").toObject());
-        artifact.fullGeometry = jsonRect(obj.value("fullGeometry").toObject());
-        artifact.rounding = obj.contains("rounding") ? obj.value("rounding").toDouble(0.0) : kWindowFrameFallbackRadius;
-        artifact.roundingPower = obj.value("roundingPower").toDouble(2.0);
-        artifact.borderSize = obj.value("borderSize").toDouble(0.0);
-        const QString artifactPath = obj.value("artifactPath").toString();
-        const QString realBackgroundPath = obj.value("realBackgroundPath").toString();
-        artifact.image = loadRawRgba(artifactPath, obj.value("artifactWidth").toInt(), obj.value("artifactHeight").toInt(), artifactTopDown(obj));
-        artifact.realBackground = loadRawRgba(realBackgroundPath,
-                                              obj.value("realBackgroundWidth").toInt(),
-                                              obj.value("realBackgroundHeight").toInt(),
-                                              obj.contains("realBackgroundTopDown") ? obj.value("realBackgroundTopDown").toBool(true) : artifactTopDown(obj));
+        artifact.title = qString(info.title);
+        artifact.appClass = qString(info.appClass);
+        artifact.visibleGeometry = protocolRect(info.visibleGeometry);
+        artifact.fullGeometry = protocolRect(info.fullGeometry);
+        artifact.rounding = info.rounding;
+        artifact.roundingPower = info.roundingPower;
+        artifact.borderSize = info.borderSize;
+        const QString artifactPath = qString(info.artifactPath);
+        const QString realBackgroundPath = qString(info.realBackgroundPath);
+        artifact.image = loadRawRgba(artifactPath, info.artifactWidth, info.artifactHeight, info.artifactTopDown, remainingArtifactBytes);
+        artifact.realBackground =
+            loadRawRgba(realBackgroundPath, info.realBackgroundWidth, info.realBackgroundHeight, info.realBackgroundTopDown, remainingArtifactBytes);
         artifactFiles.push_back(artifactPath);
         artifactFiles.push_back(realBackgroundPath);
         if (artifact.fullGeometry.isValid() && !artifact.image.isNull())

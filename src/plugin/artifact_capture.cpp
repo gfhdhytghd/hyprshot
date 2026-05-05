@@ -18,6 +18,8 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -80,7 +82,9 @@ constexpr std::size_t MAX_WINDOW_METADATA_BYTES = 4096;
 constexpr std::size_t MAX_SESSION_JSON_BYTES = 8 * 1024 * 1024;
 constexpr int         MAX_RGBA_READBACK_DIMENSION = 32768;
 constexpr std::size_t MAX_RGBA_READBACK_BYTES = 512ULL * 1024ULL * 1024ULL;
+constexpr std::size_t MAX_SESSION_ARTIFACT_BYTES = 768ULL * 1024ULL * 1024ULL;
 constexpr std::size_t RGBA_BYTES_PER_PIXEL = 4;
+constexpr auto        STALE_ARTIFACT_MAX_AGE = std::chrono::minutes(10);
 
 struct RgbaReadbackRegion {
     int         outputCropX = 0;
@@ -95,6 +99,21 @@ struct RgbaReadbackRegion {
     int         dstY = 0;
     std::size_t outputBytes = 0;
     std::size_t sourceBytes = 0;
+};
+
+struct ArtifactBudget {
+    std::size_t remaining = MAX_SESSION_ARTIFACT_BYTES;
+
+    bool canFit(std::size_t bytes) const {
+        return bytes > 0 && bytes <= remaining;
+    }
+
+    bool consume(std::size_t bytes) {
+        if (!canFit(bytes))
+            return false;
+        remaining -= bytes;
+        return true;
+    }
 };
 
 Rect toRect(const CBox& box) {
@@ -127,12 +146,44 @@ bool ensurePrivateDirectory(const std::filesystem::path& path) {
     return true;
 }
 
+bool isGeneratedSessionRootName(const std::string& name) {
+    const auto dash = name.find('-');
+    if (dash == std::string::npos || dash == 0 || dash + 1 >= name.size() || name.find('-', dash + 1) != std::string::npos)
+        return false;
+
+    return std::all_of(name.begin(), name.end(), [](unsigned char ch) {
+        return ch == '-' || std::isxdigit(ch);
+    });
+}
+
+void cleanupStaleArtifactRoots(const std::filesystem::path& userRoot) {
+    std::error_code ec;
+    const auto      now = std::filesystem::file_time_type::clock::now();
+    for (std::filesystem::directory_iterator it(userRoot, ec), end; !ec && it != end; it.increment(ec)) {
+        const auto path = it->path();
+        if (!isGeneratedSessionRootName(path.filename().string()))
+            continue;
+
+        std::error_code entryEc;
+        const auto      status = it->symlink_status(entryEc);
+        if (entryEc || !std::filesystem::is_directory(status))
+            continue;
+
+        const auto modified = std::filesystem::last_write_time(path, entryEc);
+        if (entryEc || now - modified < STALE_ARTIFACT_MAX_AGE)
+            continue;
+
+        std::filesystem::remove_all(path, entryEc);
+    }
+}
+
 std::filesystem::path artifactRoot(const std::string& sessionId) {
     const auto rootName = "hyprcapture-" + std::to_string(static_cast<unsigned long long>(geteuid()));
     for (const auto& base : {std::filesystem::path{"/dev/shm"}, std::filesystem::path{"/tmp"}, std::filesystem::temp_directory_path()}) {
         const auto userRoot = base / rootName;
         if (!ensurePrivateDirectory(userRoot))
             continue;
+        cleanupStaleArtifactRoots(userRoot);
 
         const auto root = userRoot / sessionId;
         if (ensurePrivateDirectory(root))
@@ -274,7 +325,10 @@ void rememberParent(std::vector<std::filesystem::path>& parents, const std::file
         parents.push_back(parent);
 }
 
-bool writeRgbaFile(const std::filesystem::path& path, const std::vector<unsigned char>& pixels) {
+bool writeRgbaFile(const std::filesystem::path& path, const std::vector<unsigned char>& pixels, ArtifactBudget* budget = nullptr) {
+    if (budget && !budget->consume(pixels.size()))
+        return false;
+
     const auto native = path.string();
     const int  fd = open(native.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0)
@@ -651,18 +705,25 @@ void unpremultiplyAlpha(RgbaReadback& readback) {
     }
 }
 
-bool writeRgbaFramebufferRegion(CFramebuffer& framebuffer, const std::filesystem::path& path, int cropX, int cropTopY, int cropWidth, int cropHeight) {
+bool writeRgbaFramebufferRegion(CFramebuffer& framebuffer,
+                                const std::filesystem::path& path,
+                                int cropX,
+                                int cropTopY,
+                                int cropWidth,
+                                int cropHeight,
+                                ArtifactBudget& budget) {
     auto readback = readRgbaFramebufferRegion(framebuffer, cropX, cropTopY, cropWidth, cropHeight);
-    return !readback.pixels.empty() && writeRgbaFile(path, readback.pixels);
+    return !readback.pixels.empty() && writeRgbaFile(path, readback.pixels, &budget);
 }
 
-bool writeRgbaFramebuffer(CFramebuffer& framebuffer, const std::filesystem::path& path) {
+bool writeRgbaFramebuffer(CFramebuffer& framebuffer, const std::filesystem::path& path, ArtifactBudget& budget) {
     return writeRgbaFramebufferRegion(framebuffer,
                                       path,
                                       0,
                                       0,
                                       positiveRoundedIntFromDouble(framebuffer.m_size.x),
-                                      positiveRoundedIntFromDouble(framebuffer.m_size.y));
+                                      positiveRoundedIntFromDouble(framebuffer.m_size.y),
+                                      budget);
 }
 
 CBox renderedWindowBox(const PHLWINDOW& window, CBox box) {
@@ -726,7 +787,7 @@ class WindowAnimationGoalOverride {
     bool      m_active = false;
 };
 
-bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& frozenTime, const std::filesystem::path& path, int& width, int& height) {
+bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& frozenTime, const std::filesystem::path& path, int& width, int& height, ArtifactBudget& budget) {
     if (!monitor || !monitor->m_activeWorkspace || !g_pHyprRenderer || !g_pHyprOpenGL)
         return false;
 
@@ -734,6 +795,8 @@ bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& fro
     height = positiveRoundedIntFromDouble(monitor->m_pixelSize.y);
     std::size_t framebufferBytes = 0;
     if (!checkedRgbaByteSize(width, height, framebufferBytes))
+        return false;
+    if (!budget.canFit(framebufferBytes))
         return false;
 
     CFramebuffer framebuffer;
@@ -758,7 +821,7 @@ bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& fro
     g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
     g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
 
-    return writeRgbaFramebuffer(framebuffer, path);
+    return writeRgbaFramebuffer(framebuffer, path, budget);
 }
 
 bool renderWindowArtifact(const PHLWINDOW& window,
@@ -768,7 +831,8 @@ bool renderWindowArtifact(const PHLWINDOW& window,
                           const std::filesystem::path& path,
                           int& width,
                           int& height,
-                          CBox& artifactBox) {
+                          CBox& artifactBox,
+                          ArtifactBudget& budget) {
     if (!window || !monitor || !g_pHyprRenderer || !g_pHyprOpenGL)
         return false;
 
@@ -782,6 +846,12 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     std::size_t framebufferBytes = 0;
     if (!checkedRgbaByteSize(framebufferWidth, framebufferHeight, framebufferBytes))
         return false;
+    std::size_t cropBytes = 0;
+    if (!checkedRgbaByteSize(width, height, cropBytes))
+        return false;
+    if (!budget.consume(std::max(framebufferBytes, cropBytes)))
+        return false;
+
     const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
     const int targetCropX = width < framebufferWidth ? (framebufferWidth - width) / 2 : 0;
     const int targetCropY = height < framebufferHeight ? (framebufferHeight - height) / 2 : 0;
@@ -855,7 +925,7 @@ void* findFunctionByDemangledName(const std::string& lookupName, const std::stri
 
     if (it != matches.end())
         return it->address;
-    return matches.empty() ? nullptr : matches.front().address;
+    return nullptr;
 }
 
 void* findRenderWindowFunction() {
@@ -873,7 +943,8 @@ void* findRenderTextureWithBlurInternalFunction() {
 void renderRealBackgroundArtifactsForMonitor(const PHLMONITOR& monitor,
                                              const Time::steady_tp& frozenTime,
                                              const std::vector<PendingRealBackgroundCapture*>& requests,
-                                             CaptureSession& session) {
+                                             CaptureSession& session,
+                                             ArtifactBudget& budget) {
     if (!monitor || !monitor->m_activeWorkspace || requests.empty() || !g_pHyprRenderer || !g_pHyprOpenGL)
         return;
 
@@ -1005,7 +1076,7 @@ void renderRealBackgroundArtifactsForMonitor(const PHLMONITOR& monitor,
         if (!request || request->windowIndex >= session.windows.size())
             continue;
 
-        if (!writeRgbaFile(request->path, state.readback.pixels))
+        if (!writeRgbaFile(request->path, state.readback.pixels, &budget))
             continue;
 
         auto& info = session.windows[request->windowIndex];
@@ -1059,7 +1130,7 @@ std::vector<PHLWINDOW> windowsInRenderOrder() {
 
 } // namespace
 
-CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
+CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool quick) {
     CaptureSession session;
     session.id = makeSessionId();
     session.defaults = defaults;
@@ -1073,6 +1144,9 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         return session;
     const auto frozenTime = Time::steadyNow();
     const bool renderDecorations = defaults.fushionMode || defaults.windowBorder == DecorationPolicy::Keep || defaults.windowShadow == DecorationPolicy::Keep;
+    const bool captureMonitorArtifacts = quick || defaults.mode == CaptureMode::Window || defaults.fushionMode;
+    const bool captureWindowArtifacts = defaults.mode == CaptureMode::Window || (defaults.fushionMode && defaults.mode != CaptureMode::Fullscreen);
+    ArtifactBudget artifactBudget;
 
     int monitorIndex = 0;
     for (const auto& monitor : g_pCompositor->m_monitors) {
@@ -1086,10 +1160,13 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         info.scale = monitor->m_scale;
         info.transform = static_cast<int>(monitor->m_transform);
         const auto path = root / ("monitor-" + std::to_string(monitorIndex++) + ".rgba");
-        if (renderMonitorArtifact(monitor, frozenTime, path, info.artifactWidth, info.artifactHeight))
+        if (captureMonitorArtifacts && renderMonitorArtifact(monitor, frozenTime, path, info.artifactWidth, info.artifactHeight, artifactBudget))
             info.artifactPath = path.string();
         session.monitors.push_back(std::move(info));
     }
+
+    if (!captureWindowArtifacts)
+        return session;
 
     int z = 0;
     std::vector<PendingRealBackgroundCapture> pendingRealBackgrounds;
@@ -1120,7 +1197,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
         const auto path = root / ("window-" + pointerId(window.get()) + ".rgba");
         CBox artifactBox;
         const std::size_t windowIndex = session.windows.size();
-        if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, artifactBox)) {
+        if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, artifactBox, artifactBudget)) {
             info.artifactPath = path.string();
             info.fullGeometry = toRect(artifactBox);
             pendingRealBackgrounds.push_back({
@@ -1145,7 +1222,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults) {
             if (request.monitor && request.monitor.get() == monitor.get())
                 monitorRequests.push_back(&request);
         }
-        renderRealBackgroundArtifactsForMonitor(monitor, frozenTime, monitorRequests, session);
+        renderRealBackgroundArtifactsForMonitor(monitor, frozenTime, monitorRequests, session, artifactBudget);
     }
 
     return session;

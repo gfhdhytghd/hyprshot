@@ -1,4 +1,5 @@
 #include <any>
+#include <chrono>
 #include <string>
 
 #include <hyprland/src/Compositor.hpp>
@@ -15,6 +16,10 @@ inline HANDLE g_pluginHandle = nullptr;
 namespace {
 
 constexpr const char* kOverlayLayerRuleName = "hyprcapture-ui-no-compositor-anim";
+constexpr auto        kMinDispatchInterval = std::chrono::milliseconds(750);
+
+std::chrono::steady_clock::time_point g_lastCaptureDispatch {};
+std::chrono::steady_clock::time_point g_lastQuickRejectNotification {};
 
 template <typename T>
 T configValue(const std::string& name, T fallback) {
@@ -59,6 +64,7 @@ hyprcapture::CaptureDefaults readDefaults() {
     defaults.clipboard = configInt("clipboard", defaults.clipboard ? 1 : 0) != 0;
     defaults.showThumbnail = configInt("show_thumbnail", defaults.showThumbnail ? 1 : 0) != 0;
     defaults.includeCursor = configInt("include_cursor", defaults.includeCursor ? 1 : 0) != 0;
+    defaults.allowQuick = configInt("allow_quick", defaults.allowQuick ? 1 : 0) != 0;
     defaults.fushionMode = configInt("fushion_mode", defaults.fushionMode ? 1 : 0) != 0;
     defaults.saveDir = configString("save_dir", defaults.saveDir);
     defaults.filenameTemplate = configString("filename_template", defaults.filenameTemplate);
@@ -84,15 +90,32 @@ void installOverlayLayerRule() {
 }
 
 SDispatchResult openCapture(const std::string& args, bool quick) {
-    installOverlayLayerRule();
+    const auto now = std::chrono::steady_clock::now();
+    if (g_lastCaptureDispatch.time_since_epoch().count() != 0 && now - g_lastCaptureDispatch < kMinDispatchInterval) {
+        const std::string error = "capture dispatch rate-limited";
+        HyprlandAPI::addNotification(g_pluginHandle, "[hyprcapture] " + error, CHyprColor(1.0, 0.2, 0.2, 1.0), 2500);
+        return {.success = false, .error = error};
+    }
 
     auto defaults = readDefaults();
+    if (quick && !defaults.allowQuick) {
+        const std::string error = "hyprcapture:quick disabled; set plugin:hyprcapture:allow_quick = 1 to enable no-confirmation capture";
+        if (g_lastQuickRejectNotification.time_since_epoch().count() == 0 || now - g_lastQuickRejectNotification >= kMinDispatchInterval) {
+            g_lastQuickRejectNotification = now;
+            HyprlandAPI::addNotification(g_pluginHandle, "[hyprcapture] " + error, CHyprColor(1.0, 0.2, 0.2, 1.0), 5000);
+        }
+        return {.success = false, .error = error};
+    }
+
+    installOverlayLayerRule();
+
     const auto requestedMode = hyprcapture::parseCaptureMode(args, defaults.mode);
     const auto result = hyprcapture::launchHelper({.defaults = defaults, .requestedMode = requestedMode, .quick = quick});
     if (!result.success) {
         HyprlandAPI::addNotification(g_pluginHandle, "[hyprcapture] " + result.error, CHyprColor(1.0, 0.2, 0.2, 1.0), 5000);
         return {.success = false, .error = result.error};
     }
+    g_lastCaptureDispatch = now;
     return {.success = true};
 }
 
@@ -126,6 +149,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:clipboard", Hyprlang::INT{1});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:show_thumbnail", Hyprlang::INT{1});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:include_cursor", Hyprlang::INT{0});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:allow_quick", Hyprlang::INT{0});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:fushion_mode", Hyprlang::INT{0});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:save_dir", Hyprlang::STRING{"~/Pictures/Screenshots"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:filename_template", Hyprlang::STRING{"Screenshot-%Y-%m-%d-%H%M%S.png"});

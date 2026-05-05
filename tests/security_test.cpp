@@ -78,6 +78,13 @@ int main(int argc, char** argv) {
     oversized.text = QString(17 * 1024 * 1024, QLatin1Char('x'));
     require(hyprcapture::ui::saveClipboardSnapshotData(oversized).isEmpty(), "oversized clipboard snapshot is rejected");
 
+    hyprcapture::ui::ClipboardSnapshotData tooManyUrls;
+    tooManyUrls.valid = true;
+    tooManyUrls.empty = false;
+    for (int i = 0; i < 129; ++i)
+        tooManyUrls.urls.push_back(QUrl(QStringLiteral("file:///tmp/%1").arg(i)));
+    require(hyprcapture::ui::saveClipboardSnapshotData(tooManyUrls).isEmpty(), "oversized clipboard url list is rejected");
+
     QDir(QFileInfo(info.absolutePath()).absolutePath()).rmdir(QFileInfo(info.absolutePath()).fileName());
 
     std::cout << "hyprcapture security tests passed\n";

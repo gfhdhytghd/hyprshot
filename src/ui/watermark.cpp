@@ -333,12 +333,8 @@ QImage loadFileWatermark(const std::string& configuredPath, int targetWidth) {
         return {};
 
     const auto suffix = QFileInfo(path).suffix().toLower();
-    if (suffix == QLatin1String("svg")) {
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly))
-            return {};
-        return renderSvgWatermark(file.readAll(), targetWidth);
-    }
+    if (suffix == QLatin1String("svg"))
+        return {};
 
     QImageReader reader(path);
     reader.setAutoTransform(true);

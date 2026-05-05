@@ -12,7 +12,7 @@ extern HANDLE g_pluginHandle;
 
 namespace hyprcapture {
 
-CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults);
+CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool quick);
 std::string writeCompositorSessionJsonFile(const CaptureSession& session, std::string_view json);
 void cleanupCompositorArtifacts(const CaptureSession& session);
 

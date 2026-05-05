@@ -23,6 +23,7 @@ struct CaptureDefaults {
     bool             clipboard = true;
     bool             showThumbnail = true;
     bool             includeCursor = false;
+    bool             allowQuick = false;
     bool             fushionMode = false;
     std::string      saveDir = "~/Pictures/Screenshots";
     std::string      filenameTemplate = "Screenshot-%Y-%m-%d-%H%M%S.png";

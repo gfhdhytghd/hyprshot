@@ -19,7 +19,7 @@ HyprCapture is a Hyprland-only screenshot tool split into a compositor plugin an
 - Compositor-side window artifacts, including windows that are occluded or partly off-screen
 - Window output backgrounds: follow system, white, black, real background, or transparent
 - Optional window border and shadow removal
-- Optional image watermarks from PNG, JPG/JPEG, SVG, or built-in presets
+- Optional image watermarks from PNG, JPG/JPEG, or built-in presets
 - Save-to-file and clipboard output
 - Stable Wayland clipboard writes through `wl-copy` when available, with Qt clipboard fallback
 - macOS-style result thumbnail with open, copy, show in folder, delete, and close actions
@@ -57,7 +57,8 @@ The `hyprpm` manifest installs the helper automatically:
 ```toml
 build = [
     "cmake -S . -B build-hyprpm -DCMAKE_BUILD_TYPE=Release",
-    "cmake --build build-hyprpm --target hyprcapture hyprcapture-ui",
+    "cmake --build build-hyprpm",
+    "ctest --test-dir build-hyprpm --output-on-failure",
     "install -Dm755 build-hyprpm/hyprcapture-ui \"$HOME/.local/bin/hyprcapture-ui\""
 ]
 ```
@@ -89,6 +90,7 @@ Requirements:
 - `cmake`
 - `pkg-config`
 - a C++23-capable compiler
+- nlohmann-json
 - Qt 6 Core, Gui, and Widgets
 - LayerShellQt
 - `wl-clipboard` for persistent Wayland clipboard ownership
@@ -97,7 +99,8 @@ Build and install the helper:
 
 ```sh
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
-cmake --build build-release --target hyprcapture-ui
+cmake --build build-release
+ctest --test-dir build-release --output-on-failure
 install -Dm755 build-release/hyprcapture-ui "$HOME/.local/bin/hyprcapture-ui"
 ```
 
@@ -141,15 +144,15 @@ Build outputs:
 ```conf
 bind = SUPER SHIFT, S, hyprcapture:open
 bind = SUPER SHIFT, W, hyprcapture:open,window
-bind = SUPER SHIFT, F, hyprcapture:quick,fullscreen
+bind = SUPER SHIFT, F, hyprcapture:open,fullscreen
 ```
 
 | Dispatcher | Description |
 | --- | --- |
 | `hyprcapture:open` | Open the overlay using `default_mode`. |
 | `hyprcapture:open,<mode>` | Open the overlay in `region`, `fullscreen`, or `window` mode. |
-| `hyprcapture:quick` | Capture immediately using `default_mode`. |
-| `hyprcapture:quick,<mode>` | Capture immediately in `region`, `fullscreen`, or `window` mode. |
+| `hyprcapture:quick` | Capture immediately using `default_mode`; disabled unless `allow_quick = 1`. |
+| `hyprcapture:quick,<mode>` | Capture immediately in `region`, `fullscreen`, or `window` mode; disabled unless `allow_quick = 1`. |
 | `hyprcapture:cancel` | Reserved dispatcher; currently returns success without changing an active helper. |
 
 ### Overlay
@@ -188,6 +191,7 @@ plugin {
         save = 1
         clipboard = 1
         show_thumbnail = 1
+        allow_quick = 0
         fushion_mode = 0
         save_dir = ~/Pictures/Screenshots
         filename_template = Screenshot-%Y-%m-%d-%H%M%S.png
@@ -211,6 +215,7 @@ plugin {
 | `window_border` | string | `keep` | Window border policy. Supports `keep` and `remove`. |
 | `window_shadow` | string | `keep` | Window shadow policy. Supports `keep` and `remove`. |
 | `include_cursor` | bool | `0` | Parsed and forwarded by the plugin/helper; cursor compositing is not currently rendered into the output. |
+| `allow_quick` | bool | `0` | Enable no-confirmation `hyprcapture:quick` dispatchers. Leave disabled unless your Hyprland IPC policy already restricts untrusted same-user clients. |
 | `fushion_mode` | bool | `0` | Fuse region and window interactions in one overlay: drag to capture a region, or single-click a window to capture that window. The toolbar keeps the fullscreen action and configuration controls; fullscreen multi-monitor scope is shown only when multiple monitors are present. |
 
 ### Output options
@@ -229,7 +234,7 @@ plugin {
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `watermark` | string | empty | Disabled when empty. Set to a PNG, JPG/JPEG, or SVG path, or use built-in `activate-linux` / `hypercam2`. Transparency is preserved for PNG/SVG. |
+| `watermark` | string | empty | Disabled when empty. Set to a PNG or JPG/JPEG path, or use built-in `activate-linux` / `hypercam2`. External SVG files are ignored; transparency is preserved for PNG. |
 | `watermark_position` | string | `central` | Supports `up-left`, `up-middle`, `up-right`, `left-middle`, `central`, `right-middle`, `down-left`, `down-middle`, and `down-right`. Common aliases like `center`, `top-center`, and `right-meddle` are accepted. |
 | `watermark_width` | string | `20%` | Watermark width. Use pixels like `320` / `320px`, or screenshot-width percent like `18%`. |
 | `watermark_offset` | string | `0 0` | X/Y offset from the selected position. Vec2-like values such as `12 -8`, `2% -4%`, or `12px, -8px` are accepted. Percent X is relative to screenshot width; percent Y is relative to screenshot height. |
@@ -240,7 +245,7 @@ Useful commands:
 
 ```sh
 cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-cmake --target hyprcapture hyprcapture-ui hyprcapture-config-test
+cmake --build build-cmake
 ctest --test-dir build-cmake --output-on-failure
 ./build-cmake/hyprcapture-ui --help
 ```
