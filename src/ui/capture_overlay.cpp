@@ -1819,6 +1819,11 @@ void CaptureOverlay::showThumbnail(const QImage& image, const QString& path, con
     }
 
     QStringList args{"--thumbnail-window", thumbPath, "--thumbnail-timeout-ms", QString::number(m_defaults.thumbnailTimeoutMs)};
+    if (m_defaults.save) {
+        const QString deleteRoot = QString::fromStdString(hyprcapture::expandUserPath(m_defaults.saveDir).string());
+        if (!deleteRoot.isEmpty())
+            args << "--thumbnail-delete-root" << deleteRoot;
+    }
     if (!restoreClipboardPath.isEmpty())
         args << "--restore-clipboard" << restoreClipboardPath;
     QProcess::startDetached(QCoreApplication::applicationFilePath(), args);

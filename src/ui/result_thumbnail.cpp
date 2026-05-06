@@ -103,14 +103,31 @@ QPointF wheelGestureDelta(QWheelEvent* event) {
     return delta;
 }
 
-bool canDeleteThumbnailPath(const QString& path) {
-    return !path.isEmpty() && hyprcapture::ui::isPrivateRuntimePath(path) && QFileInfo::exists(path);
+bool pathIsUnderDirectory(const QString& path, const QString& root) {
+    if (path.isEmpty() || root.isEmpty())
+        return false;
+
+    const QString rootCanonical = QFileInfo(root).canonicalFilePath();
+    const QString pathCanonical = QFileInfo(path).canonicalFilePath();
+    if (rootCanonical.isEmpty() || pathCanonical.isEmpty())
+        return false;
+
+    return pathCanonical.startsWith(rootCanonical + QLatin1Char('/'));
+}
+
+bool canDeleteThumbnailPath(const QString& path, const QString& deleteRoot) {
+    const QFileInfo info(path);
+    if (path.isEmpty() || !info.exists() || !info.isFile())
+        return false;
+    if (hyprcapture::ui::isPrivateRuntimePath(path))
+        return true;
+    return pathIsUnderDirectory(path, deleteRoot);
 }
 
 } // namespace
 
-ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString restoreClipboardPath, int timeoutMs, QWidget* parent)
-    : QWidget(parent), m_path(std::move(path)), m_restoreClipboardPath(std::move(restoreClipboardPath)) {
+ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString restoreClipboardPath, QString deleteRoot, int timeoutMs, QWidget* parent)
+    : QWidget(parent), m_path(std::move(path)), m_restoreClipboardPath(std::move(restoreClipboardPath)), m_deleteRoot(std::move(deleteRoot)) {
     setWindowFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus);
     setFocusPolicy(Qt::NoFocus);
     setObjectName("thumbnail");
@@ -166,7 +183,7 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
         if (!m_path.isEmpty())
             openPath(QFileInfo(m_path).absolutePath());
     });
-    if (canDeleteThumbnailPath(m_path))
+    if (canDeleteThumbnailPath(m_path, m_deleteRoot))
         addAction("Delete", [this] { deleteAndClose(); });
     addAction("Close", [this] { close(); });
     m_menuPanel->hide();
@@ -279,7 +296,7 @@ void ResultThumbnail::wheelEvent(QWheelEvent* event) {
 
     if (m_swipeOffset.x() >= std::min(kSwipeCloseThreshold, imageWidth * 0.55))
         animateSwipeOut(SwipeAction::Close);
-    else if (canDeleteThumbnailPath(m_path) && m_swipeOffset.y() >= std::min(kSwipeDeleteThreshold, imageHeight * 0.55))
+    else if (canDeleteThumbnailPath(m_path, m_deleteRoot) && m_swipeOffset.y() >= std::min(kSwipeDeleteThreshold, imageHeight * 0.55))
         animateSwipeOut(SwipeAction::Delete);
     else
         m_swipeResetTimer.start(180);
@@ -363,7 +380,7 @@ void ResultThumbnail::animateSwipeOut(SwipeAction action) {
 }
 
 void ResultThumbnail::deleteAndClose() {
-    if (!canDeleteThumbnailPath(m_path))
+    if (!canDeleteThumbnailPath(m_path, m_deleteRoot))
         return;
     if (!QFile::remove(m_path))
         return;

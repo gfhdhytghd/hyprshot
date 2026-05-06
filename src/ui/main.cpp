@@ -99,6 +99,7 @@ int main(int argc, char** argv) {
         {"session-json", "Compositor session metadata.", "json", "{}"},
         {"session-json-file", "Private compositor session metadata file.", "path"},
         {"thumbnail-window", "Show a normal thumbnail window for an image path.", "path"},
+        {"thumbnail-delete-root", "Directory where thumbnail files may be deleted.", "path"},
         {"restore-clipboard", "Clipboard snapshot to restore when deleting the thumbnail image.", "path"},
         {"quick", "Capture immediately."},
     });
@@ -112,6 +113,7 @@ int main(int argc, char** argv) {
         ResultThumbnail thumbnail(pixmap,
                                   thumbnailPath,
                                   parser.value("restore-clipboard"),
+                                  parser.value("thumbnail-delete-root"),
                                   boundedInt(parser.value("thumbnail-timeout-ms"), 5000, 0, MAX_THUMBNAIL_TIMEOUT_MS));
         thumbnail.show();
         return app.exec();

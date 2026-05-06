@@ -14,7 +14,7 @@ class ResultThumbnail final : public QWidget {
     Q_OBJECT
 
   public:
-    ResultThumbnail(const QPixmap& pixmap, QString path, QString restoreClipboardPath, int timeoutMs, QWidget* parent = nullptr);
+    ResultThumbnail(const QPixmap& pixmap, QString path, QString restoreClipboardPath, QString deleteRoot, int timeoutMs, QWidget* parent = nullptr);
 
   protected:
     void closeEvent(QCloseEvent* event) override;
@@ -41,6 +41,7 @@ class ResultThumbnail final : public QWidget {
 
     QString m_path;
     QString m_restoreClipboardPath;
+    QString m_deleteRoot;
     QWidget* m_card = nullptr;
     SwipeBackdrop* m_swipeBackdrop = nullptr;
     QLabel* m_imageLabel = nullptr;
