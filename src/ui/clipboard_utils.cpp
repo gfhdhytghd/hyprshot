@@ -127,11 +127,23 @@ bool pathIsInPrivateRuntimeRoot(const QString& path) {
         return false;
 
     const QString rootCanonical = QFileInfo(root).canonicalFilePath();
-    const QString pathCanonical = QFileInfo(path).canonicalFilePath();
-    if (rootCanonical.isEmpty() || pathCanonical.isEmpty())
+    if (rootCanonical.isEmpty() || path.isEmpty())
         return false;
 
-    return pathCanonical == rootCanonical || pathCanonical.startsWith(rootCanonical + QLatin1Char('/'));
+    const QFileInfo pathInfo(path);
+    if (pathInfo.exists()) {
+        const QString pathCanonical = pathInfo.canonicalFilePath();
+        if (pathCanonical.isEmpty())
+            return false;
+        return pathCanonical == rootCanonical || pathCanonical.startsWith(rootCanonical + QLatin1Char('/'));
+    }
+
+    const QString parentCanonical = QFileInfo(pathInfo.absolutePath()).canonicalFilePath();
+    const QString filename = pathInfo.fileName();
+    if (parentCanonical.isEmpty() || filename.isEmpty() || filename == QLatin1String(".") || filename == QLatin1String(".."))
+        return false;
+
+    return parentCanonical == rootCanonical || parentCanonical.startsWith(rootCanonical + QLatin1Char('/'));
 }
 
 bool privateRuntimeFileExists(const QString& path, qint64 maxSize) {
