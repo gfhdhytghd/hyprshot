@@ -85,6 +85,10 @@ constexpr std::size_t MAX_RGBA_READBACK_BYTES = 512ULL * 1024ULL * 1024ULL;
 constexpr std::size_t MAX_SESSION_ARTIFACT_BYTES = 768ULL * 1024ULL * 1024ULL;
 constexpr std::size_t RGBA_BYTES_PER_PIXEL = 4;
 constexpr auto        STALE_ARTIFACT_MAX_AGE = std::chrono::minutes(10);
+constexpr int         WINDOW_BACKGROUND_MIN_ALPHA = 32;
+constexpr int         WINDOW_SHADOW_MAX_RGB = 32;
+constexpr int         WINDOW_SHADOW_MAX_ALPHA = 223;
+constexpr int         WINDOW_BACKGROUND_INTERIOR_RADIUS = 1;
 
 struct RgbaReadbackRegion {
     int         outputCropX = 0;
@@ -1184,48 +1188,156 @@ RgbaReadback cropReadbackToBounds(const RgbaReadback& source, const PixelBounds&
     return cropReadback(source, clipped);
 }
 
-void compositeSolidBackground(RgbaReadback& frame, unsigned char r, unsigned char g, unsigned char b) {
-    if (frame.pixels.empty())
+bool readbackHasSize(const RgbaReadback& frame, int width, int height) {
+    std::size_t bytes = 0;
+    return frame.width == width && frame.height == height && checkedRgbaByteSize(width, height, bytes) && frame.pixels.size() == bytes;
+}
+
+RgbaReadback solidBackgroundReadback(int width, int height, unsigned char r, unsigned char g, unsigned char b) {
+    std::size_t bytes = 0;
+    if (!checkedRgbaByteSize(width, height, bytes))
+        return {};
+
+    RgbaReadback background;
+    background.width = width;
+    background.height = height;
+    background.pixels.assign(bytes, 0);
+    for (std::size_t i = 0; i + 3 < background.pixels.size(); i += RGBA_BYTES_PER_PIXEL) {
+        background.pixels[i + 0] = r;
+        background.pixels[i + 1] = g;
+        background.pixels[i + 2] = b;
+        background.pixels[i + 3] = 255;
+    }
+    return background;
+}
+
+RgbaReadback imageBackgroundReadback(const RecordingFrame& source, int width, int height) {
+    if (source.rgba.empty() || source.width <= 0 || source.height <= 0)
+        return {};
+
+    std::size_t bytes = 0;
+    if (!checkedRgbaByteSize(width, height, bytes))
+        return {};
+
+    RgbaReadback background;
+    background.width = width;
+    background.height = height;
+    background.pixels.assign(bytes, 0);
+    for (int y = 0; y < height; ++y) {
+        const int srcY = std::clamp(static_cast<int>((static_cast<long long>(y) * source.height) / height), 0, source.height - 1);
+        for (int x = 0; x < width; ++x) {
+            const int srcX = std::clamp(static_cast<int>((static_cast<long long>(x) * source.width) / width), 0, source.width - 1);
+            const auto src = (static_cast<std::size_t>(srcY) * source.width + srcX) * RGBA_BYTES_PER_PIXEL;
+            const auto dst = (static_cast<std::size_t>(y) * width + x) * RGBA_BYTES_PER_PIXEL;
+            std::copy(source.rgba.data() + src, source.rgba.data() + src + RGBA_BYTES_PER_PIXEL, background.pixels.data() + dst);
+            background.pixels[dst + 3] = 255;
+        }
+    }
+    return background;
+}
+
+bool isWindowContentPixel(const unsigned char* px) {
+    const int alpha = px[3];
+    if (alpha < WINDOW_BACKGROUND_MIN_ALPHA)
+        return false;
+
+    const int maxRgb = std::max({px[0], px[1], px[2]});
+    return maxRgb > WINDOW_SHADOW_MAX_RGB || alpha > WINDOW_SHADOW_MAX_ALPHA;
+}
+
+bool isWindowContentPixelAt(const RgbaReadback& artifact, int x, int y) {
+    if (x < 0 || x >= artifact.width || y < 0 || y >= artifact.height || artifact.pixels.empty())
+        return false;
+
+    const auto* px = artifact.pixels.data() + (static_cast<std::size_t>(y) * artifact.width + x) * RGBA_BYTES_PER_PIXEL;
+    return isWindowContentPixel(px);
+}
+
+bool isWindowInteriorPixel(const RgbaReadback& artifact, int x, int y) {
+    if (!isWindowContentPixelAt(artifact, x, y))
+        return false;
+
+    for (int dy = -WINDOW_BACKGROUND_INTERIOR_RADIUS; dy <= WINDOW_BACKGROUND_INTERIOR_RADIUS; ++dy) {
+        for (int dx = -WINDOW_BACKGROUND_INTERIOR_RADIUS; dx <= WINDOW_BACKGROUND_INTERIOR_RADIUS; ++dx) {
+            if (!isWindowContentPixelAt(artifact, x + dx, y + dy))
+                return false;
+        }
+    }
+    return true;
+}
+
+void reconstructRealWindowBackground(RgbaReadback& background, const RgbaReadback& artifact) {
+    if (!readbackHasSize(background, artifact.width, artifact.height) || artifact.pixels.empty())
         return;
 
+    // The desktop-region render includes the selected window. Invert source-over
+    // for translucent window pixels so real-bg does not composite the window twice.
+    for (int y = 0; y < background.height; ++y) {
+        for (int x = 0; x < background.width; ++x) {
+            const auto i = (static_cast<std::size_t>(y) * background.width + x) * RGBA_BYTES_PER_PIXEL;
+            const int alpha = artifact.pixels[i + 3];
+            if (alpha <= 0 || alpha >= 255)
+                continue;
+
+            const int inverseAlpha = 255 - alpha;
+            for (int channel = 0; channel < 3; ++channel) {
+                const int value = (background.pixels[i + channel] * 255 - artifact.pixels[i + channel] * alpha + inverseAlpha / 2) / inverseAlpha;
+                background.pixels[i + channel] = static_cast<unsigned char>(std::clamp(value, 0, 255));
+            }
+            background.pixels[i + 3] = 255;
+        }
+    }
+}
+
+void applyWindowContentAlphaMask(RgbaReadback& background, const RgbaReadback& artifact) {
+    if (!readbackHasSize(background, artifact.width, artifact.height) || artifact.pixels.empty())
+        return;
+
+    for (int y = 0; y < background.height; ++y) {
+        for (int x = 0; x < background.width; ++x) {
+            const auto i = (static_cast<std::size_t>(y) * background.width + x) * RGBA_BYTES_PER_PIXEL;
+            if (isWindowInteriorPixel(artifact, x, y)) {
+                background.pixels[i + 3] = 255;
+            } else {
+                background.pixels[i + 0] = 0;
+                background.pixels[i + 1] = 0;
+                background.pixels[i + 2] = 0;
+                background.pixels[i + 3] = 0;
+            }
+        }
+    }
+}
+
+void compositeWindowOverBackground(RgbaReadback& frame, RgbaReadback background) {
+    if (!readbackHasSize(frame, background.width, background.height))
+        return;
+
+    applyWindowContentAlphaMask(background, frame);
     for (std::size_t i = 0; i + 3 < frame.pixels.size(); i += RGBA_BYTES_PER_PIXEL) {
+        if (background.pixels[i + 3] == 0)
+            continue;
+
         const int alpha = frame.pixels[i + 3];
         if (alpha >= 255) {
             frame.pixels[i + 3] = 255;
             continue;
         }
-
         const int inverseAlpha = 255 - alpha;
-        frame.pixels[i + 0] = static_cast<unsigned char>((frame.pixels[i + 0] * alpha + r * inverseAlpha + 127) / 255);
-        frame.pixels[i + 1] = static_cast<unsigned char>((frame.pixels[i + 1] * alpha + g * inverseAlpha + 127) / 255);
-        frame.pixels[i + 2] = static_cast<unsigned char>((frame.pixels[i + 2] * alpha + b * inverseAlpha + 127) / 255);
+        for (int channel = 0; channel < 3; ++channel)
+            frame.pixels[i + channel] =
+                static_cast<unsigned char>((frame.pixels[i + channel] * alpha + background.pixels[i + channel] * inverseAlpha + 127) / 255);
         frame.pixels[i + 3] = 255;
     }
 }
 
-void compositeImageBackground(RgbaReadback& frame, const RecordingFrame& background) {
-    if (frame.pixels.empty() || background.rgba.empty() || background.width <= 0 || background.height <= 0)
-        return;
+void compositeSolidBackground(RgbaReadback& frame, unsigned char r, unsigned char g, unsigned char b) {
+    compositeWindowOverBackground(frame, solidBackgroundReadback(frame.width, frame.height, r, g, b));
+}
 
-    for (int y = 0; y < frame.height; ++y) {
-        const int bgY = std::clamp(static_cast<int>((static_cast<long long>(y) * background.height) / frame.height), 0, background.height - 1);
-        for (int x = 0; x < frame.width; ++x) {
-            const int bgX = std::clamp(static_cast<int>((static_cast<long long>(x) * background.width) / frame.width), 0, background.width - 1);
-            const auto dst = (static_cast<std::size_t>(y) * frame.width + x) * RGBA_BYTES_PER_PIXEL;
-            const auto bg = (static_cast<std::size_t>(bgY) * background.width + bgX) * RGBA_BYTES_PER_PIXEL;
-            const int alpha = frame.pixels[dst + 3];
-            if (alpha >= 255) {
-                frame.pixels[dst + 3] = 255;
-                continue;
-            }
-
-            const int inverseAlpha = 255 - alpha;
-            for (int channel = 0; channel < 3; ++channel)
-                frame.pixels[dst + channel] =
-                    static_cast<unsigned char>((frame.pixels[dst + channel] * alpha + background.rgba[bg + channel] * inverseAlpha + 127) / 255);
-            frame.pixels[dst + 3] = 255;
-        }
-    }
+void compositeRealBackground(RgbaReadback& frame, const RecordingFrame& background) {
+    RgbaReadback realBackground = imageBackgroundReadback(background, frame.width, frame.height);
+    reconstructRealWindowBackground(realBackground, frame);
+    compositeWindowOverBackground(frame, std::move(realBackground));
 }
 
 PHLWINDOW findWindowByAddress(const std::string& address) {
@@ -1316,6 +1428,11 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     if (readback.pixels.empty())
         return std::nullopt;
 
+    const int artifactCropX = readback.cropX;
+    const int artifactCropY = readback.cropTopY;
+    const int artifactWidth = readback.width;
+    const int artifactHeight = readback.height;
+
     const bool cropDecorations = request.defaults.windowBorder == DecorationPolicy::Remove || request.defaults.windowShadow == DecorationPolicy::Remove;
     if (cropDecorations) {
         const CBox visibleBox = renderedWindowGoalMainSurfaceBox(window);
@@ -1334,13 +1451,16 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     if (readback.pixels.empty())
         return std::nullopt;
 
+    const double artifactScaleX = artifactBox.w / std::max(1.0, static_cast<double>(artifactWidth));
+    const double artifactScaleY = artifactBox.h / std::max(1.0, static_cast<double>(artifactHeight));
+    const Rect   readbackLogicalBox = {.x = artifactBox.x + (readback.cropX - artifactCropX) * artifactScaleX,
+                                       .y = artifactBox.y + (readback.cropTopY - artifactCropY) * artifactScaleY,
+                                       .width = readback.width * artifactScaleX,
+                                       .height = readback.height * artifactScaleY};
+
     if (request.defaults.windowBackground == WindowBackground::Real) {
-        Rect backgroundRect = {.x = artifactBox.x + (readback.cropX / std::max(1.0, static_cast<double>(width))) * artifactBox.w,
-                               .y = artifactBox.y + (readback.cropTopY / std::max(1.0, static_cast<double>(height))) * artifactBox.h,
-                               .width = artifactBox.w * readback.width / std::max(1.0, static_cast<double>(width)),
-                               .height = artifactBox.h * readback.height / std::max(1.0, static_cast<double>(height))};
-        if (auto background = captureDesktopRegionRecordingFrame(backgroundRect))
-            compositeImageBackground(readback, *background);
+        if (auto background = captureDesktopRegionRecordingFrame(readbackLogicalBox))
+            compositeRealBackground(readback, *background);
         else
             compositeSolidBackground(readback, 30, 34, 38);
     } else if (request.defaults.windowBackground == WindowBackground::White) {
