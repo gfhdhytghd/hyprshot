@@ -9,6 +9,7 @@
 #include <hyprland/src/desktop/rule/layerRule/LayerRuleEffectContainer.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 
+#include "plugin/recording.hpp"
 #include "plugin/session_launcher.hpp"
 
 inline HANDLE g_pluginHandle = nullptr;
@@ -51,6 +52,10 @@ std::int64_t configInt(const std::string& suffix, std::int64_t fallback) {
     return configValue<Hyprlang::INT>("plugin:hyprcapture:" + suffix, fallback);
 }
 
+SDispatchResult dispatchResult(const hyprcapture::LaunchResult& result) {
+    return result.success ? SDispatchResult{.success = true} : SDispatchResult{.success = false, .error = result.error};
+}
+
 hyprcapture::CaptureDefaults readDefaults() {
     hyprcapture::CaptureDefaults defaults;
     defaults.mode = hyprcapture::parseCaptureMode(configString("default_mode", hyprcapture::toString(defaults.mode)), defaults.mode);
@@ -69,6 +74,11 @@ hyprcapture::CaptureDefaults readDefaults() {
     defaults.saveDir = configString("save_dir", defaults.saveDir);
     defaults.filenameTemplate = configString("filename_template", defaults.filenameTemplate);
     defaults.helper = configString("helper", defaults.helper);
+    defaults.recordFilenameTemplate = configString("record_filename_template", defaults.recordFilenameTemplate);
+    defaults.recordCodec = configString("record_codec", defaults.recordCodec);
+    defaults.recordPreset = configString("record_preset", defaults.recordPreset);
+    defaults.recordFps = configInt("record_fps", defaults.recordFps);
+    defaults.recordMaxSeconds = configInt("record_max_seconds", defaults.recordMaxSeconds);
     defaults.thumbnailTimeoutMs = configInt("thumbnail_timeout_ms", defaults.thumbnailTimeoutMs);
     defaults.watermark = configString("watermark", defaults.watermark);
     defaults.watermarkPosition =
@@ -89,7 +99,7 @@ void installOverlayLayerRule() {
     ruleEngine()->registerRule(SP<IRule>{rule});
 }
 
-SDispatchResult openCapture(const std::string& args, bool quick) {
+SDispatchResult openCapture(const std::string& args, bool quick, bool record) {
     const auto now = std::chrono::steady_clock::now();
     if (g_lastCaptureDispatch.time_since_epoch().count() != 0 && now - g_lastCaptureDispatch < kMinDispatchInterval) {
         const std::string error = "capture dispatch rate-limited";
@@ -110,7 +120,7 @@ SDispatchResult openCapture(const std::string& args, bool quick) {
     installOverlayLayerRule();
 
     const auto requestedMode = hyprcapture::parseCaptureMode(args, defaults.mode);
-    const auto result = hyprcapture::launchHelper({.defaults = defaults, .requestedMode = requestedMode, .quick = quick});
+    const auto result = hyprcapture::launchHelper({.defaults = defaults, .requestedMode = requestedMode, .quick = quick, .record = record});
     if (!result.success) {
         HyprlandAPI::addNotification(g_pluginHandle, "[hyprcapture] " + result.error, CHyprColor(1.0, 0.2, 0.2, 1.0), 5000);
         return {.success = false, .error = result.error};
@@ -120,11 +130,34 @@ SDispatchResult openCapture(const std::string& args, bool quick) {
 }
 
 SDispatchResult dispatchOpen(const std::string& args) {
-    return openCapture(args, false);
+    return openCapture(args, false, false);
 }
 
 SDispatchResult dispatchQuick(const std::string& args) {
-    return openCapture(args, true);
+    return openCapture(args, true, false);
+}
+
+SDispatchResult dispatchRecord(const std::string& args) {
+    if (hyprcapture::isRecordingActive())
+        return {.success = false, .error = "recording already active"};
+    return openCapture(args, false, true);
+}
+
+SDispatchResult dispatchRecordToggle(const std::string& args) {
+    if (hyprcapture::isRecordingActive())
+        return dispatchResult(hyprcapture::stopRecording("stopped"));
+    return dispatchRecord(args);
+}
+
+SDispatchResult dispatchRecordStop(const std::string&) {
+    return dispatchResult(hyprcapture::stopRecording("stopped"));
+}
+
+SDispatchResult dispatchRecordStart(const std::string& args) {
+    const auto result = hyprcapture::startRecordingFromRequestFile(args);
+    if (!result.success)
+        HyprlandAPI::addNotification(g_pluginHandle, "[hyprcapture] " + result.error, CHyprColor(1.0, 0.2, 0.2, 1.0), 5000);
+    return dispatchResult(result);
 }
 
 SDispatchResult dispatchCancel(const std::string&) {
@@ -153,6 +186,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:fushion_mode", Hyprlang::INT{0});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:save_dir", Hyprlang::STRING{"~/Pictures/Screenshots"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:filename_template", Hyprlang::STRING{"Screenshot-%Y-%m-%d-%H%M%S.png"});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_filename_template", Hyprlang::STRING{"Recording-%Y-%m-%d-%H%M%S.mp4"});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_fps", Hyprlang::INT{30});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_codec", Hyprlang::STRING{"libx264"});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_preset", Hyprlang::STRING{"veryfast"});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_max_seconds", Hyprlang::INT{0});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:thumbnail_timeout_ms", Hyprlang::INT{5000});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:helper", Hyprlang::STRING{""});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:watermark", Hyprlang::STRING{""});
@@ -162,6 +200,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:open", dispatchOpen);
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:quick", dispatchQuick);
+    HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:record", dispatchRecord);
+    HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:record-toggle", dispatchRecordToggle);
+    HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:record-stop", dispatchRecordStop);
+    HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:record-start", dispatchRecordStart);
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:cancel", dispatchCancel);
     HyprlandAPI::reloadConfig();
     installOverlayLayerRule();
@@ -175,6 +217,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    hyprcapture::shutdownRecording();
     Desktop::Rule::ruleEngine()->unregisterRule(kOverlayLayerRuleName);
     g_pluginHandle = nullptr;
 }

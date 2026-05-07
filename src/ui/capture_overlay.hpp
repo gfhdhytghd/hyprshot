@@ -29,7 +29,7 @@ class CaptureOverlay final : public QMainWindow {
     Q_PROPERTY(double overlayOpacity READ overlayOpacity WRITE setOverlayOpacity)
 
   public:
-    explicit CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, QString sessionJson, QWidget* parent = nullptr);
+    explicit CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, bool record, QString sessionJson, QWidget* parent = nullptr);
 
   protected:
     void showEvent(QShowEvent* event) override;
@@ -55,6 +55,7 @@ class CaptureOverlay final : public QMainWindow {
         double  borderSize = 0.0;
         QImage  image;
         QImage  realBackground;
+        QString address;
         QString title;
         QString appClass;
     };
@@ -66,6 +67,7 @@ class CaptureOverlay final : public QMainWindow {
     void updateToolbarControlsForMode();
     void finishCapture();
     void cancelCapture();
+    bool startRecording();
     void saveImage(const QImage& image, hyprcapture::ui::ClipboardSnapshotData clipboardSnapshot);
     QImage renderResultImage() const;
     QImage renderDesktopRectAtDisplayResolution(const QRect& globalRect) const;
@@ -105,6 +107,7 @@ class CaptureOverlay final : public QMainWindow {
     hyprcapture::CaptureDefaults m_defaults;
     hyprcapture::CaptureMode     m_mode;
     bool                      m_quick = false;
+    bool                      m_record = false;
     bool                      m_dragging = false;
     bool                      m_finishing = false;
     bool                      m_fadeOutStarted = false;

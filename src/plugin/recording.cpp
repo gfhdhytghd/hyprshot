@@ -1,0 +1,623 @@
+#include "plugin/recording.hpp"
+
+#include "plugin/artifact_capture.hpp"
+#include "plugin/session_launcher.hpp"
+#include "shared/config.hpp"
+#include "shared/protocol.hpp"
+
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
+#include <hyprland/src/plugins/PluginAPI.hpp>
+
+#include <algorithm>
+#include <cerrno>
+#include <chrono>
+#include <cctype>
+#include <condition_variable>
+#include <csignal>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
+#include <filesystem>
+#include <fcntl.h>
+#include <fstream>
+#include <mutex>
+#include <memory>
+#include <optional>
+#include <spawn.h>
+#include <sstream>
+#include <string_view>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <thread>
+#include <unistd.h>
+#include <vector>
+
+extern char** environ;
+extern HANDLE g_pluginHandle;
+
+namespace hyprcapture {
+namespace {
+
+constexpr std::size_t MAX_RECORD_REQUEST_BYTES = 64 * 1024;
+constexpr int         MAX_FRAME_QUEUE = 2;
+constexpr int         MAX_CONSECUTIVE_FRAME_FAILURES = 30;
+constexpr int         RGBA_BYTES_PER_PIXEL = 4;
+
+struct PipeFds {
+    int read = -1;
+    int write = -1;
+};
+
+void closeFd(int& fd) {
+    if (fd >= 0)
+        close(fd);
+    fd = -1;
+}
+
+bool setCloseOnExec(int fd) {
+    const int flags = fcntl(fd, F_GETFD);
+    return flags >= 0 && fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == 0;
+}
+
+std::optional<PipeFds> makePipe() {
+    int fds[2] = {-1, -1};
+    if (pipe(fds) != 0)
+        return std::nullopt;
+
+    PipeFds pipe{.read = fds[0], .write = fds[1]};
+    if (!setCloseOnExec(pipe.read) || !setCloseOnExec(pipe.write)) {
+        closeFd(pipe.read);
+        closeFd(pipe.write);
+        return std::nullopt;
+    }
+    return pipe;
+}
+
+bool isTrustedOwner(uid_t uid) {
+    return uid == 0 || uid == geteuid();
+}
+
+bool hasWritableGroupOrOther(mode_t mode) {
+    return (mode & 0022) != 0;
+}
+
+bool parentChainTrusted(const std::filesystem::path& path) {
+    for (auto current = path.parent_path(); !current.empty(); current = current.parent_path()) {
+        struct stat st {};
+        const auto  native = current.string();
+        if (stat(native.c_str(), &st) != 0 || !S_ISDIR(st.st_mode) || !isTrustedOwner(st.st_uid) || hasWritableGroupOrOther(st.st_mode))
+            return false;
+        if (current == current.root_path())
+            break;
+    }
+    return true;
+}
+
+std::optional<std::string> trustedExecutablePath(const std::string& candidate) {
+    if (candidate.empty())
+        return std::nullopt;
+
+    std::error_code ec;
+    auto            path = std::filesystem::weakly_canonical(std::filesystem::path(candidate), ec);
+    if (ec || !path.is_absolute() || !parentChainTrusted(path))
+        return std::nullopt;
+
+    const auto native = path.string();
+    struct stat st {};
+    if (stat(native.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || !isTrustedOwner(st.st_uid) || hasWritableGroupOrOther(st.st_mode))
+        return std::nullopt;
+    if (access(native.c_str(), X_OK) != 0)
+        return std::nullopt;
+    return native;
+}
+
+std::optional<std::string> trustedFfmpegPath() {
+    for (const auto& candidate : {"/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg", "/bin/ffmpeg"}) {
+        if (const auto trusted = trustedExecutablePath(candidate))
+            return trusted;
+    }
+    return std::nullopt;
+}
+
+bool allowEnvironmentName(std::string_view name) {
+    if (name == "HOME" || name == "USER" || name == "LOGNAME" || name == "LANG" || name == "XDG_RUNTIME_DIR" || name == "XDG_CURRENT_DESKTOP" ||
+        name == "XDG_SESSION_TYPE" || name == "WAYLAND_DISPLAY" || name == "DISPLAY" || name == "DBUS_SESSION_BUS_ADDRESS" ||
+        name == "HYPRLAND_INSTANCE_SIGNATURE")
+        return true;
+    return name.starts_with("LC_");
+}
+
+std::vector<std::string> childEnvironment() {
+    std::vector<std::string> env;
+    env.push_back("PATH=/usr/local/bin:/usr/bin:/bin");
+    for (char** item = environ; item && *item; ++item) {
+        const std::string entry(*item);
+        const auto        separator = entry.find('=');
+        if (separator == std::string::npos)
+            continue;
+        if (allowEnvironmentName(std::string_view(entry).substr(0, separator)))
+            env.push_back(entry);
+    }
+    return env;
+}
+
+std::filesystem::path privateRuntimeRoot() {
+    const auto rootName = "hyprcapture-" + std::to_string(static_cast<unsigned long long>(geteuid()));
+    for (const auto& base : {std::filesystem::path{"/dev/shm"}, std::filesystem::temp_directory_path()}) {
+        const auto root = base / rootName;
+        std::error_code ec;
+        const auto canonical = std::filesystem::weakly_canonical(root, ec);
+        if (ec)
+            continue;
+
+        struct stat st {};
+        const auto  native = canonical.string();
+        if (stat(native.c_str(), &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == geteuid() && (st.st_mode & 0777) == 0700)
+            return canonical;
+    }
+    return {};
+}
+
+bool pathIsInPrivateRuntimeRoot(const std::filesystem::path& path) {
+    std::error_code ec;
+    const auto      root = privateRuntimeRoot();
+    if (root.empty())
+        return false;
+
+    const auto canonical = std::filesystem::weakly_canonical(path, ec);
+    if (ec)
+        return false;
+
+    const auto rootNative = root.native();
+    const auto pathNative = canonical.native();
+    return pathNative == rootNative || pathNative.starts_with(rootNative + "/");
+}
+
+std::optional<std::string> readPrivateRequestFile(const std::string& rawPath) {
+    const std::filesystem::path path(rawPath);
+    if (rawPath.empty() || !path.is_absolute() || !pathIsInPrivateRuntimeRoot(path))
+        return std::nullopt;
+
+    const auto native = path.string();
+    struct stat st {};
+    if (stat(native.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != geteuid() || hasWritableGroupOrOther(st.st_mode) || st.st_size < 0 ||
+        static_cast<std::uintmax_t>(st.st_size) > MAX_RECORD_REQUEST_BYTES)
+        return std::nullopt;
+
+    std::ifstream file(path, std::ios::binary);
+    if (!file)
+        return std::nullopt;
+
+    std::ostringstream out;
+    out << file.rdbuf();
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    const auto value = out.str();
+    if (value.empty() || value.size() > MAX_RECORD_REQUEST_BYTES)
+        return std::nullopt;
+    return value;
+}
+
+bool safeCodecToken(std::string_view token) {
+    return !token.empty() && token.size() <= 64 && std::all_of(token.begin(), token.end(), [](unsigned char ch) {
+        return std::isalnum(ch) || ch == '_' || ch == '-';
+    });
+}
+
+std::string sanitizedCodec(std::string codec) {
+    if (!safeCodecToken(codec) || codec == "auto")
+        return "libx264";
+    return codec;
+}
+
+std::string sanitizedPreset(std::string preset) {
+    if (!safeCodecToken(preset))
+        return "veryfast";
+    return preset;
+}
+
+std::filesystem::path uniqueOutputPath(const CaptureDefaults& defaults) {
+    auto dir = expandUserPath(defaults.saveDir);
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+
+    std::filesystem::path filename(makeTimestampedFilename(defaults.recordFilenameTemplate));
+    if (filename.empty() || filename == "." || filename == "..")
+        filename = "Recording.mp4";
+    if (filename.extension().empty())
+        filename += ".mp4";
+
+    const auto stem = filename.stem().string().empty() ? std::string("Recording") : filename.stem().string();
+    const auto ext = filename.extension().string().empty() ? std::string(".mp4") : filename.extension().string();
+    for (int i = 0; i < 1000; ++i) {
+        const auto candidate = dir / (i == 0 ? stem + ext : stem + "-" + std::to_string(i) + ext);
+        if (!std::filesystem::exists(candidate, ec))
+            return candidate;
+    }
+
+    return dir / (stem + "-" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ext);
+}
+
+bool resizeFrameNearest(RecordingFrame& frame, int width, int height) {
+    if (frame.width == width && frame.height == height)
+        return true;
+    if (frame.rgba.empty() || frame.width <= 0 || frame.height <= 0 || width <= 0 || height <= 0)
+        return false;
+
+    std::vector<unsigned char> resized(static_cast<std::size_t>(width) * height * RGBA_BYTES_PER_PIXEL);
+    for (int y = 0; y < height; ++y) {
+        const int srcY = std::clamp(static_cast<int>((static_cast<long long>(y) * frame.height) / height), 0, frame.height - 1);
+        for (int x = 0; x < width; ++x) {
+            const int srcX = std::clamp(static_cast<int>((static_cast<long long>(x) * frame.width) / width), 0, frame.width - 1);
+            const auto src = (static_cast<std::size_t>(srcY) * frame.width + srcX) * RGBA_BYTES_PER_PIXEL;
+            const auto dst = (static_cast<std::size_t>(y) * width + x) * RGBA_BYTES_PER_PIXEL;
+            std::copy(frame.rgba.data() + src, frame.rgba.data() + src + RGBA_BYTES_PER_PIXEL, resized.data() + dst);
+        }
+    }
+
+    frame.width = width;
+    frame.height = height;
+    frame.rgba = std::move(resized);
+    return true;
+}
+
+bool makeEvenFrame(RecordingFrame& frame) {
+    const int evenWidth = frame.width & ~1;
+    const int evenHeight = frame.height & ~1;
+    if (evenWidth < 2 || evenHeight < 2)
+        return false;
+    if (evenWidth == frame.width && evenHeight == frame.height)
+        return true;
+
+    std::vector<unsigned char> trimmed(static_cast<std::size_t>(evenWidth) * evenHeight * RGBA_BYTES_PER_PIXEL);
+    const std::size_t dstRowBytes = static_cast<std::size_t>(evenWidth) * RGBA_BYTES_PER_PIXEL;
+    const std::size_t srcRowBytes = static_cast<std::size_t>(frame.width) * RGBA_BYTES_PER_PIXEL;
+    for (int y = 0; y < evenHeight; ++y)
+        std::copy(frame.rgba.data() + static_cast<std::size_t>(y) * srcRowBytes,
+                  frame.rgba.data() + static_cast<std::size_t>(y) * srcRowBytes + dstRowBytes,
+                  trimmed.data() + static_cast<std::size_t>(y) * dstRowBytes);
+
+    frame.width = evenWidth;
+    frame.height = evenHeight;
+    frame.rgba = std::move(trimmed);
+    return true;
+}
+
+class RawVideoEncoder {
+  public:
+    RawVideoEncoder(std::filesystem::path outputPath, int width, int height, int fps, std::string codec, std::string preset)
+        : m_outputPath(std::move(outputPath)), m_width(width), m_height(height), m_fps(fps), m_codec(std::move(codec)), m_preset(std::move(preset)) {}
+
+    ~RawVideoEncoder() {
+        stopAndJoin(false);
+    }
+
+    LaunchResult start() {
+        const auto ffmpeg = trustedFfmpegPath();
+        if (!ffmpeg)
+            return {.success = false, .error = "no trusted ffmpeg executable found"};
+
+        auto pipe = makePipe();
+        if (!pipe)
+            return {.success = false, .error = std::string("pipe failed: ") + std::strerror(errno)};
+
+        std::vector<std::string> args{
+            *ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-video_size",
+            std::to_string(m_width) + "x" + std::to_string(m_height),
+            "-framerate",
+            std::to_string(m_fps),
+            "-i",
+            "pipe:0",
+            "-an",
+            "-c:v",
+            m_codec,
+        };
+
+        if (m_codec == "libx264" || m_codec == "libx264rgb") {
+            args.push_back("-preset");
+            args.push_back(m_preset);
+            args.push_back("-crf");
+            args.push_back("23");
+        }
+        if (m_codec != "libx264rgb") {
+            args.push_back("-pix_fmt");
+            args.push_back("yuv420p");
+        }
+        args.push_back("-movflags");
+        args.push_back("+faststart");
+        args.push_back(m_outputPath.string());
+
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (auto& arg : args)
+            argv.push_back(arg.data());
+        argv.push_back(nullptr);
+
+        auto childEnv = childEnvironment();
+        std::vector<char*> envp;
+        envp.reserve(childEnv.size() + 1);
+        for (auto& env : childEnv)
+            envp.push_back(env.data());
+        envp.push_back(nullptr);
+
+        posix_spawn_file_actions_t fileActions {};
+        if (const int error = posix_spawn_file_actions_init(&fileActions); error != 0) {
+            closeFd(pipe->read);
+            closeFd(pipe->write);
+            return {.success = false, .error = std::string("spawn setup failed: ") + std::strerror(error)};
+        }
+
+        posix_spawn_file_actions_adddup2(&fileActions, pipe->read, STDIN_FILENO);
+        posix_spawn_file_actions_addclose(&fileActions, pipe->read);
+        posix_spawn_file_actions_addclose(&fileActions, pipe->write);
+#if defined(__GLIBC__) && defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 34)
+        posix_spawn_file_actions_addclosefrom_np(&fileActions, 3);
+#endif
+
+        const int spawnError = posix_spawn(&m_pid, argv[0], &fileActions, nullptr, argv.data(), envp.data());
+        posix_spawn_file_actions_destroy(&fileActions);
+        closeFd(pipe->read);
+        if (spawnError != 0) {
+            closeFd(pipe->write);
+            return {.success = false, .error = std::string("ffmpeg exec failed: ") + std::strerror(spawnError)};
+        }
+
+        m_writeFd = pipe->write;
+        pipe->write = -1;
+        m_worker = std::thread([this] { workerMain(); });
+        return {.success = true};
+    }
+
+    bool hasQueueSpace() const {
+        std::lock_guard lock(m_mutex);
+        return !m_stopping && m_frames.size() < MAX_FRAME_QUEUE;
+    }
+
+    bool enqueue(RecordingFrame&& frame) {
+        std::lock_guard lock(m_mutex);
+        if (m_stopping || m_frames.size() >= MAX_FRAME_QUEUE)
+            return false;
+
+        m_frames.push_back(std::move(frame.rgba));
+        m_cv.notify_one();
+        return true;
+    }
+
+    void stopAndJoin(bool drain) {
+        {
+            std::lock_guard lock(m_mutex);
+            m_stopping = true;
+            if (!drain)
+                m_frames.clear();
+        }
+        m_cv.notify_one();
+
+        if (m_worker.joinable())
+            m_worker.join();
+    }
+
+  private:
+    bool writeAll(const std::vector<unsigned char>& frame) {
+        const auto* data = reinterpret_cast<const char*>(frame.data());
+        std::size_t written = 0;
+        while (written < frame.size()) {
+            const ssize_t chunk = write(m_writeFd, data + written, frame.size() - written);
+            if (chunk < 0) {
+                if (errno == EINTR)
+                    continue;
+                return false;
+            }
+            if (chunk == 0)
+                return false;
+            written += static_cast<std::size_t>(chunk);
+        }
+        return true;
+    }
+
+    void waitForFfmpeg() {
+        if (m_pid <= 0)
+            return;
+
+        int status = 0;
+        while (waitpid(m_pid, &status, 0) < 0 && errno == EINTR) {
+        }
+        m_pid = -1;
+        std::error_code ec;
+        if (!m_outputPath.empty())
+            std::filesystem::permissions(m_outputPath, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, ec);
+    }
+
+    void workerMain() {
+        while (true) {
+            std::vector<unsigned char> frame;
+            {
+                std::unique_lock lock(m_mutex);
+                m_cv.wait(lock, [this] { return m_stopping || !m_frames.empty(); });
+                if (m_frames.empty()) {
+                    if (m_stopping)
+                        break;
+                    continue;
+                }
+                frame = std::move(m_frames.front());
+                m_frames.pop_front();
+            }
+
+            if (!writeAll(frame))
+                break;
+        }
+
+        closeFd(m_writeFd);
+        waitForFfmpeg();
+    }
+
+    std::filesystem::path m_outputPath;
+    int                   m_width = 0;
+    int                   m_height = 0;
+    int                   m_fps = 30;
+    std::string           m_codec;
+    std::string           m_preset;
+    int                   m_writeFd = -1;
+    pid_t                 m_pid = -1;
+    mutable std::mutex    m_mutex;
+    std::condition_variable m_cv;
+    std::deque<std::vector<unsigned char>> m_frames;
+    bool                                m_stopping = false;
+    std::thread                         m_worker;
+};
+
+struct ActiveRecording {
+    RecordingFrameRequest                    request;
+    std::unique_ptr<RawVideoEncoder>         encoder;
+    SP<CEventLoopTimer>                      timer;
+    std::chrono::milliseconds                interval{33};
+    Time::steady_tp                          startedAt;
+    std::filesystem::path                    outputPath;
+    int                                      width = 0;
+    int                                      height = 0;
+    int                                      consecutiveFrameFailures = 0;
+};
+
+std::unique_ptr<ActiveRecording> g_recording;
+
+void notifyRecording(const std::string& message, const CHyprColor& color = CHyprColor(0.2, 0.8, 0.3, 1.0), float timeoutMs = 3000) {
+    if (g_pluginHandle)
+        HyprlandAPI::addNotification(g_pluginHandle, "[hyprcapture] " + message, color, timeoutMs);
+}
+
+LaunchResult stopRecordingInternal(const std::string& reason, bool drain) {
+    if (!g_recording)
+        return {.success = false, .error = "no active recording"};
+
+    auto recording = std::move(g_recording);
+    if (recording->timer && g_pEventLoopManager)
+        g_pEventLoopManager->removeTimer(recording->timer);
+    recording->timer.reset();
+    if (recording->encoder)
+        recording->encoder->stopAndJoin(drain);
+
+    notifyRecording("recording " + reason + ": " + recording->outputPath.string());
+    return {.success = true};
+}
+
+void captureRecordingTick(SP<CEventLoopTimer> self) {
+    if (!g_recording || g_recording->timer.get() != self.get())
+        return;
+
+    const auto now = Time::steadyNow();
+    if (g_recording->request.defaults.recordMaxSeconds > 0 &&
+        std::chrono::duration_cast<std::chrono::seconds>(now - g_recording->startedAt).count() >= g_recording->request.defaults.recordMaxSeconds) {
+        stopRecordingInternal("stopped at max duration", true);
+        return;
+    }
+
+    if (g_recording->encoder && g_recording->encoder->hasQueueSpace()) {
+        auto frame = captureRecordingFrame(g_recording->request);
+        if (frame && makeEvenFrame(*frame) && resizeFrameNearest(*frame, g_recording->width, g_recording->height) &&
+            g_recording->encoder->enqueue(std::move(*frame))) {
+            g_recording->consecutiveFrameFailures = 0;
+        } else {
+            ++g_recording->consecutiveFrameFailures;
+        }
+    }
+
+    if (g_recording && g_recording->consecutiveFrameFailures >= MAX_CONSECUTIVE_FRAME_FAILURES) {
+        stopRecordingInternal("stopped after frame failures", true);
+        return;
+    }
+
+    if (g_recording && g_recording->timer)
+        self->updateTimeout(g_recording->interval);
+}
+
+void scheduleRecordingTimer() {
+    if (!g_recording || !g_pEventLoopManager)
+        return;
+
+    g_recording->timer = makeShared<CEventLoopTimer>(
+        g_recording->interval,
+        [](SP<CEventLoopTimer> self, void*) {
+            captureRecordingTick(self);
+        },
+        nullptr);
+    g_pEventLoopManager->addTimer(g_recording->timer);
+}
+
+} // namespace
+
+LaunchResult startRecordingFromRequestFile(const std::string& path) {
+    if (g_recording)
+        return {.success = false, .error = "recording already active"};
+    if (!g_pEventLoopManager)
+        return {.success = false, .error = "Hyprland event loop unavailable"};
+
+    const auto requestJson = readPrivateRequestFile(path);
+    if (!requestJson)
+        return {.success = false, .error = "invalid recording request file"};
+
+    const auto request = decodeRecordingRequestJson(*requestJson);
+    if (!request)
+        return {.success = false, .error = "invalid recording request metadata"};
+
+    RecordingFrameRequest frameRequest{.defaults = request->defaults,
+                                       .mode = request->mode,
+                                       .targetGeometry = request->targetGeometry,
+                                       .windowAddress = request->windowAddress};
+
+    auto firstFrame = captureRecordingFrame(frameRequest);
+    if (!firstFrame || !makeEvenFrame(*firstFrame))
+        return {.success = false, .error = "failed to capture first recording frame"};
+
+    const int fps = std::clamp<int>(static_cast<int>(request->defaults.recordFps), 1, 240);
+    const auto outputPath = uniqueOutputPath(request->defaults);
+    auto encoder = std::make_unique<RawVideoEncoder>(outputPath,
+                                                     firstFrame->width,
+                                                     firstFrame->height,
+                                                     fps,
+                                                     sanitizedCodec(request->defaults.recordCodec),
+                                                     sanitizedPreset(request->defaults.recordPreset));
+    if (const auto result = encoder->start(); !result.success)
+        return result;
+
+    const int width = firstFrame->width;
+    const int height = firstFrame->height;
+    encoder->enqueue(std::move(*firstFrame));
+
+    g_recording = std::make_unique<ActiveRecording>();
+    g_recording->request = std::move(frameRequest);
+    g_recording->encoder = std::move(encoder);
+    g_recording->interval = std::chrono::milliseconds(std::max(1, 1000 / fps));
+    g_recording->startedAt = Time::steadyNow();
+    g_recording->outputPath = outputPath;
+    g_recording->width = width;
+    g_recording->height = height;
+    scheduleRecordingTimer();
+
+    notifyRecording("recording started: " + outputPath.string());
+    return {.success = true};
+}
+
+LaunchResult stopRecording(const std::string& reason) {
+    return stopRecordingInternal(reason.empty() ? "stopped" : reason, true);
+}
+
+bool isRecordingActive() {
+    return static_cast<bool>(g_recording);
+}
+
+void shutdownRecording() {
+    if (g_recording)
+        stopRecordingInternal("stopped during plugin unload", false);
+}
+
+} // namespace hyprcapture

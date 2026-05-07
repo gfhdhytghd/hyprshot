@@ -22,6 +22,8 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QImageWriter>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
@@ -157,6 +159,44 @@ bool savePng(const QImage& image, const QString& path) {
         return false;
     }
     return true;
+}
+
+bool writePrivateTextFile(const QString& path, const QByteArray& bytes) {
+    if (path.isEmpty() || bytes.isEmpty() || !hyprcapture::ui::isPrivateRuntimePath(path))
+        return false;
+
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly))
+        return false;
+    if (!file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
+        file.remove();
+        return false;
+    }
+    if (file.write(bytes) != bytes.size()) {
+        file.remove();
+        return false;
+    }
+    return true;
+}
+
+bool dispatchRecordingStart(const QString& requestPath) {
+    const QString hyprctl = hyprcapture::ui::trustedSystemProgram(QStringLiteral("hyprctl"));
+    if (hyprctl.isEmpty() || requestPath.isEmpty())
+        return false;
+
+    QProcess process;
+    process.setProgram(hyprctl);
+    process.setArguments({QStringLiteral("dispatch"), QStringLiteral("hyprcapture:record-start"), requestPath});
+    process.setProcessEnvironment(hyprcapture::ui::trustedProcessEnvironment());
+    process.start();
+    if (!process.waitForStarted(1000))
+        return false;
+    if (!process.waitForFinished(5000)) {
+        process.kill();
+        process.waitForFinished(500);
+        return false;
+    }
+    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
 }
 
 QString uniqueOutputPath(const QDir& dir, const QString& rawFilename) {
@@ -879,8 +919,8 @@ void InlineSelect::choose(const QString& text) {
     hidePopup();
 }
 
-CaptureOverlay::CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, QString sessionJson, QWidget* parent)
-    : QMainWindow(parent), m_defaults(std::move(defaults)), m_mode(m_defaults.mode), m_quick(quick) {
+CaptureOverlay::CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, bool record, QString sessionJson, QWidget* parent)
+    : QMainWindow(parent), m_defaults(std::move(defaults)), m_mode(m_defaults.mode), m_quick(quick), m_record(record) {
     QElapsedTimer constructorTimer;
     constructorTimer.start();
     setWindowFlags(Qt::FramelessWindowHint | Qt::Tool);
@@ -960,6 +1000,7 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
     for (std::size_t i = 0; i < decoded->windows.size() && i < kMaxSessionWindows; ++i) {
         const auto& info = decoded->windows[i];
         WindowArtifact artifact;
+        artifact.address = qString(info.address);
         artifact.title = qString(info.title);
         artifact.appClass = qString(info.appClass);
         artifact.visibleGeometry = protocolRect(info.visibleGeometry);
@@ -1750,10 +1791,63 @@ QImage CaptureOverlay::renderResultImage() const {
     return image;
 }
 
+bool CaptureOverlay::startRecording() {
+    QRect cap = captureRectForMode();
+    if (!cap.isValid())
+        return false;
+
+    hyprcapture::RecordingRequest request;
+    request.id = hyprcapture::makeSessionId();
+    request.defaults = m_defaults;
+    request.defaults.mode = m_mode;
+    request.defaults.fullscreenScope = currentFullscreenScope();
+    request.defaults.windowBackground = currentWindowBackground();
+    request.defaults.windowBorder = currentWindowBorder();
+    request.defaults.windowShadow = currentWindowShadow();
+    request.mode = m_mode;
+
+    if (m_mode == hyprcapture::CaptureMode::Window) {
+        const auto* window = hoveredWindow();
+        if (!window || window->address.isEmpty())
+            return false;
+        request.windowAddress = window->address.toStdString();
+        cap = globalToLocalRect(windowFrameGeometry(*window));
+    }
+
+    const QRect globalRect(QPoint(mapToGlobal(cap.topLeft())), cap.size());
+    if (!globalRect.isValid())
+        return false;
+    request.targetGeometry = {.x = static_cast<double>(globalRect.x()),
+                              .y = static_cast<double>(globalRect.y()),
+                              .width = static_cast<double>(globalRect.width()),
+                              .height = static_cast<double>(globalRect.height())};
+
+    const QString requestPath = hyprcapture::ui::runtimeFile(QStringLiteral("record-request"), QStringLiteral(".json"));
+    const std::string json = hyprcapture::encodeRecordingRequestJson(request);
+    if (!writePrivateTextFile(requestPath, QByteArray(json.data(), static_cast<qsizetype>(json.size()))))
+        return false;
+
+    const bool started = dispatchRecordingStart(requestPath);
+    if (!started)
+        QFile::remove(requestPath);
+    return started;
+}
+
 void CaptureOverlay::finishCapture() {
     if (m_finishing)
         return;
     m_finishing = true;
+
+    if (m_record) {
+        if (!startRecording()) {
+            m_finishing = false;
+            updateStatus();
+            return;
+        }
+        traceTiming(QStringLiteral("record_start"));
+        fadeOutThen([] { qApp->quit(); });
+        return;
+    }
 
     QElapsedTimer renderTimer;
     renderTimer.start();

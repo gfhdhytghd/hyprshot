@@ -22,6 +22,8 @@ constexpr std::size_t MAX_METADATA_STRING_BYTES = 4096;
 constexpr std::size_t MAX_PATH_BYTES = 4096;
 constexpr int         MAX_ARTIFACT_DIMENSION = 32768;
 constexpr double      MAX_LOGICAL_COORDINATE = 1'000'000.0;
+constexpr std::int64_t MAX_RECORD_FPS = 240;
+constexpr std::int64_t MAX_RECORD_SECONDS = 24 * 60 * 60;
 
 std::string boundedString(const std::string& value, std::size_t maxBytes) {
     if (value.size() <= maxBytes)
@@ -52,6 +54,34 @@ Json pointJson(const Point& point) {
     return Json{
         {"x", boundedDouble(point.x, -MAX_LOGICAL_COORDINATE, MAX_LOGICAL_COORDINATE)},
         {"y", boundedDouble(point.y, -MAX_LOGICAL_COORDINATE, MAX_LOGICAL_COORDINATE)},
+    };
+}
+
+Json defaultsJson(const CaptureDefaults& defaults) {
+    return Json{
+        {"mode", toString(defaults.mode)},
+        {"fullscreenScope", toString(defaults.fullscreenScope)},
+        {"windowBackground", toString(defaults.windowBackground)},
+        {"windowBorder", toString(defaults.windowBorder)},
+        {"windowShadow", toString(defaults.windowShadow)},
+        {"save", defaults.save},
+        {"clipboard", defaults.clipboard},
+        {"showThumbnail", defaults.showThumbnail},
+        {"includeCursor", defaults.includeCursor},
+        {"allowQuick", defaults.allowQuick},
+        {"fushionMode", defaults.fushionMode},
+        {"saveDir", boundedString(defaults.saveDir, MAX_PATH_BYTES)},
+        {"filenameTemplate", boundedString(defaults.filenameTemplate, MAX_METADATA_STRING_BYTES)},
+        {"recordFilenameTemplate", boundedString(defaults.recordFilenameTemplate, MAX_METADATA_STRING_BYTES)},
+        {"recordCodec", boundedString(defaults.recordCodec, MAX_METADATA_STRING_BYTES)},
+        {"recordPreset", boundedString(defaults.recordPreset, MAX_METADATA_STRING_BYTES)},
+        {"recordFps", std::clamp<std::int64_t>(defaults.recordFps, 1, MAX_RECORD_FPS)},
+        {"recordMaxSeconds", std::clamp<std::int64_t>(defaults.recordMaxSeconds, 0, MAX_RECORD_SECONDS)},
+        {"thumbnailTimeoutMs", std::clamp<std::int64_t>(defaults.thumbnailTimeoutMs, 0, 60 * 60 * 1000)},
+        {"watermark", boundedString(defaults.watermark, MAX_PATH_BYTES)},
+        {"watermarkPosition", toString(defaults.watermarkPosition)},
+        {"watermarkWidth", boundedString(defaults.watermarkWidth, MAX_METADATA_STRING_BYTES)},
+        {"watermarkOffset", boundedString(defaults.watermarkOffset, MAX_METADATA_STRING_BYTES)},
     };
 }
 
@@ -175,6 +205,11 @@ bool parseDefaults(const Json& obj, CaptureDefaults& defaults) {
         boolValue(obj, "allowQuick", defaults.allowQuick, false) && boolValue(obj, "fushionMode", defaults.fushionMode, false) &&
         stringValue(obj, "saveDir", defaults.saveDir, MAX_PATH_BYTES, false) &&
         stringValue(obj, "filenameTemplate", defaults.filenameTemplate, MAX_METADATA_STRING_BYTES, false) &&
+        stringValue(obj, "recordFilenameTemplate", defaults.recordFilenameTemplate, MAX_METADATA_STRING_BYTES, false) &&
+        stringValue(obj, "recordCodec", defaults.recordCodec, MAX_METADATA_STRING_BYTES, false) &&
+        stringValue(obj, "recordPreset", defaults.recordPreset, MAX_METADATA_STRING_BYTES, false) &&
+        int64Value(obj, "recordFps", defaults.recordFps, 1, MAX_RECORD_FPS, false) &&
+        int64Value(obj, "recordMaxSeconds", defaults.recordMaxSeconds, 0, MAX_RECORD_SECONDS, false) &&
         int64Value(obj, "thumbnailTimeoutMs", defaults.thumbnailTimeoutMs, 0, 60 * 60 * 1000, false) &&
         stringValue(obj, "watermark", defaults.watermark, MAX_PATH_BYTES, false) &&
         stringValue(obj, "watermarkWidth", defaults.watermarkWidth, MAX_METADATA_STRING_BYTES, false) &&
@@ -246,26 +281,7 @@ std::string makeSessionId() {
 std::string encodeSessionJson(const CaptureSession& session) {
     Json root;
     root["id"] = boundedString(session.id, MAX_METADATA_STRING_BYTES);
-    root["defaults"] = Json{
-        {"mode", toString(session.defaults.mode)},
-        {"fullscreenScope", toString(session.defaults.fullscreenScope)},
-        {"windowBackground", toString(session.defaults.windowBackground)},
-        {"windowBorder", toString(session.defaults.windowBorder)},
-        {"windowShadow", toString(session.defaults.windowShadow)},
-        {"save", session.defaults.save},
-        {"clipboard", session.defaults.clipboard},
-        {"showThumbnail", session.defaults.showThumbnail},
-        {"includeCursor", session.defaults.includeCursor},
-        {"allowQuick", session.defaults.allowQuick},
-        {"fushionMode", session.defaults.fushionMode},
-        {"saveDir", boundedString(session.defaults.saveDir, MAX_PATH_BYTES)},
-        {"filenameTemplate", boundedString(session.defaults.filenameTemplate, MAX_METADATA_STRING_BYTES)},
-        {"thumbnailTimeoutMs", std::clamp<std::int64_t>(session.defaults.thumbnailTimeoutMs, 0, 60 * 60 * 1000)},
-        {"watermark", boundedString(session.defaults.watermark, MAX_PATH_BYTES)},
-        {"watermarkPosition", toString(session.defaults.watermarkPosition)},
-        {"watermarkWidth", boundedString(session.defaults.watermarkWidth, MAX_METADATA_STRING_BYTES)},
-        {"watermarkOffset", boundedString(session.defaults.watermarkOffset, MAX_METADATA_STRING_BYTES)},
-    };
+    root["defaults"] = defaultsJson(session.defaults);
     if (session.cursorPosition)
         root["cursorPosition"] = pointJson(*session.cursorPosition);
 
@@ -355,6 +371,39 @@ std::optional<CaptureSession> decodeSessionJson(const std::string& json) {
     }
 
     return session;
+}
+
+std::string encodeRecordingRequestJson(const RecordingRequest& request) {
+    Json root;
+    root["id"] = boundedString(request.id, MAX_METADATA_STRING_BYTES);
+    root["defaults"] = defaultsJson(request.defaults);
+    root["mode"] = toString(request.mode);
+    root["targetGeometry"] = rectJson(request.targetGeometry);
+    root["windowAddress"] = boundedString(request.windowAddress, MAX_METADATA_STRING_BYTES);
+    return root.dump(-1, ' ', false, Json::error_handler_t::replace);
+}
+
+std::optional<RecordingRequest> decodeRecordingRequestJson(const std::string& json) {
+    if (json.empty() || json.size() > MAX_SESSION_JSON_BYTES || json.front() != '{')
+        return std::nullopt;
+
+    const auto root = Json::parse(json, nullptr, false);
+    if (root.is_discarded() || !root.is_object())
+        return std::nullopt;
+
+    RecordingRequest request;
+    std::string      mode;
+    if (!stringValue(root, "id", request.id, MAX_METADATA_STRING_BYTES) || request.id.empty() ||
+        !root.contains("defaults") || !parseDefaults(root.value("defaults", Json{}), request.defaults) ||
+        !stringValue(root, "mode", mode, MAX_METADATA_STRING_BYTES) || !rectValue(root, "targetGeometry", request.targetGeometry) ||
+        !stringValue(root, "windowAddress", request.windowAddress, MAX_METADATA_STRING_BYTES, false))
+        return std::nullopt;
+
+    request.mode = parseCaptureMode(mode, request.defaults.mode);
+    request.defaults.mode = request.mode;
+    if (request.mode == CaptureMode::Window && request.windowAddress.empty())
+        return std::nullopt;
+    return request;
 }
 
 } // namespace hyprcapture

@@ -109,6 +109,24 @@ int main() {
     require(decoded->monitors.size() == 1 && decoded->windows.size() == 1, "decoded object counts");
     require(decoded->windows.front().artifactPath == "/tmp/window.rgba", "decoded artifact path");
 
+    RecordingRequest recording;
+    recording.id = "recording-request";
+    recording.defaults = session.defaults;
+    recording.defaults.recordFps = 60;
+    recording.defaults.recordFilenameTemplate = "Recording-%Y.mp4";
+    recording.mode = CaptureMode::Window;
+    recording.targetGeometry = {.x = 10, .y = 20, .width = 640, .height = 480};
+    recording.windowAddress = "0x1";
+    const auto recordingJson = encodeRecordingRequestJson(recording);
+    require(recordingJson.find("\"recordFps\":60") != std::string::npos, "record fps json");
+    require(recordingJson.find("\"recordFilenameTemplate\":\"Recording-%Y.mp4\"") != std::string::npos, "record filename json");
+    const auto decodedRecording = decodeRecordingRequestJson(recordingJson);
+    require(decodedRecording.has_value(), "encoded recording request decodes");
+    require(decodedRecording->mode == CaptureMode::Window, "decoded recording mode");
+    require(decodedRecording->windowAddress == "0x1", "decoded recording window address");
+    require(decodedRecording->defaults.recordFps == 60, "decoded recording fps");
+    require(!decodeRecordingRequestJson("{}").has_value(), "missing recording request fields rejected");
+
     require(!decodeSessionJson("{not json").has_value(), "malformed json is rejected");
     require(!decodeSessionJson("{}").has_value(), "missing required protocol fields rejected");
 

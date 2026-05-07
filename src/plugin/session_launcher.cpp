@@ -114,7 +114,7 @@ bool allowEnvironmentName(std::string_view name) {
     if (name == "HOME" || name == "USER" || name == "LOGNAME" || name == "LANG" || name == "XDG_RUNTIME_DIR" || name == "XDG_CURRENT_DESKTOP" ||
         name == "XDG_SESSION_TYPE" || name == "WAYLAND_DISPLAY" || name == "DISPLAY" || name == "DBUS_SESSION_BUS_ADDRESS" ||
         name == "QT_QPA_PLATFORM" || name == "QT_SCALE_FACTOR" || name == "QT_AUTO_SCREEN_SCALE_FACTOR" || name == "QT_ENABLE_HIGHDPI_SCALING" ||
-        name == "HYPRCAPTURE_TIMING")
+        name == "HYPRCAPTURE_TIMING" || name == "HYPRLAND_INSTANCE_SIGNATURE")
         return true;
     return name.starts_with("LC_");
 }
@@ -288,7 +288,7 @@ LaunchResult launchHelper(const LaunchRequest& request) {
 
     CaptureDefaults captureDefaults = request.defaults;
     captureDefaults.mode = request.requestedMode;
-    CaptureSession session = captureCompositorArtifacts(captureDefaults, request.quick);
+    CaptureSession session = captureCompositorArtifacts(captureDefaults, request.quick || request.record);
     session.defaults.mode = request.requestedMode;
 
     const auto sessionJson = encodeSessionJson(session);
@@ -338,6 +338,8 @@ LaunchResult launchHelper(const LaunchRequest& request) {
     args.push_back(request.defaults.watermarkOffset);
     if (request.quick)
         args.push_back("--quick");
+    if (request.record)
+        args.push_back("--record");
     if (useSessionJsonFile) {
         args.push_back("--session-json-file");
         args.push_back(sessionJsonFile);

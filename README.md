@@ -14,6 +14,7 @@ HyprCapture is a Hyprland-only screenshot tool split into a compositor plugin an
 ## Features
 
 - Fullscreen, region, and window capture modes
+- Fullscreen, region, and window recording through HyprCapture's compositor-side renderer
 - Immediate frozen desktop image behind the overlay
 - Display-resolution output for fullscreen and region captures
 - Compositor-side window artifacts, including windows that are occluded or partly off-screen
@@ -24,6 +25,7 @@ HyprCapture is a Hyprland-only screenshot tool split into a compositor plugin an
 - Stable Wayland clipboard writes through `wl-copy` when available, with Qt clipboard fallback
 - macOS-style result thumbnail with open, copy, show in folder, delete, and close actions
 - Thumbnail swipe gestures: swipe right to close, swipe down to delete and restore the previous clipboard snapshot
+- Recording does not use `wf-recorder`, `grim`, screencopy, PipeWire portals, or Hyprland managed screenshare sessions
 
 
 https://github.com/user-attachments/assets/2c986639-7a3d-44ee-9f33-1b9b79ad9f1d
@@ -93,6 +95,7 @@ Requirements:
 - nlohmann-json
 - Qt 6 Core, Gui, and Widgets
 - LayerShellQt
+- FFmpeg for recording output
 - `wl-clipboard` for persistent Wayland clipboard ownership
 
 Build and install the helper:
@@ -145,6 +148,8 @@ Build outputs:
 bind = SUPER SHIFT, S, hyprcapture:open
 bind = SUPER SHIFT, W, hyprcapture:open,window
 bind = SUPER SHIFT, F, hyprcapture:open,fullscreen
+bind = SUPER SHIFT, R, hyprcapture:record
+bind = SUPER SHIFT, X, hyprcapture:record-stop
 ```
 
 | Dispatcher | Description |
@@ -153,6 +158,10 @@ bind = SUPER SHIFT, F, hyprcapture:open,fullscreen
 | `hyprcapture:open,<mode>` | Open the overlay in `region`, `fullscreen`, or `window` mode. |
 | `hyprcapture:quick` | Capture immediately using `default_mode`; disabled unless `allow_quick = 1`. |
 | `hyprcapture:quick,<mode>` | Capture immediately in `region`, `fullscreen`, or `window` mode; disabled unless `allow_quick = 1`. |
+| `hyprcapture:record` | Open the overlay and start recording the selected target. |
+| `hyprcapture:record,<mode>` | Open the overlay in `region`, `fullscreen`, or `window` mode and start recording the selected target. |
+| `hyprcapture:record-toggle` | Stop the active recording, or open the recording overlay when no recording is active. |
+| `hyprcapture:record-stop` | Stop the active recording and finalize the video file. |
 | `hyprcapture:cancel` | Reserved dispatcher; currently returns success without changing an active helper. |
 
 ### Overlay
@@ -163,6 +172,12 @@ bind = SUPER SHIFT, F, hyprcapture:open,fullscreen
 - Fushion mode: the toolbar keeps the fullscreen action and configuration controls; drag anywhere to capture a region, or single-click a window to capture that window.
 - Esc cancels the helper.
 - The toolbar is anchored near the bottom of the screen and only shows controls relevant to the active mode.
+
+### Recording
+
+Recording reuses the same overlay selection model as screenshots. After a target is chosen, the compositor plugin captures frames with HyprCapture's offscreen renderer and passes raw RGBA frames to FFmpeg through a bounded queue. Slow encoding drops frames instead of blocking Hyprland's render loop.
+
+Current recording output is a single video file under `save_dir`. The first implementation uses FFmpeg rawvideo input and CPU-side RGBA readback; it intentionally avoids Hyprland's screencopy, portal, and screenshare session paths to avoid managed-session leaks like the known `wf-recorder` failure mode.
 
 ### Thumbnail
 
@@ -195,6 +210,11 @@ plugin {
         fushion_mode = 0
         save_dir = ~/Pictures/Screenshots
         filename_template = Screenshot-%Y-%m-%d-%H%M%S.png
+        record_filename_template = Recording-%Y-%m-%d-%H%M%S.mp4
+        record_fps = 30
+        record_codec = libx264
+        record_preset = veryfast
+        record_max_seconds = 0
         include_cursor = 0
         thumbnail_timeout_ms = 5000
         watermark =
@@ -227,6 +247,11 @@ plugin {
 | `show_thumbnail` | bool | `1` | Show the result thumbnail after capture. |
 | `save_dir` | string | `~/Pictures/Screenshots` | Output directory. `~` is expanded against `HOME`. |
 | `filename_template` | string | `Screenshot-%Y-%m-%d-%H%M%S.png` | `strftime` template for saved screenshot filenames. |
+| `record_filename_template` | string | `Recording-%Y-%m-%d-%H%M%S.mp4` | `strftime` template for saved recording filenames. |
+| `record_fps` | int | `30` | Recording frame rate. Higher values increase compositor readback and encoder load. |
+| `record_codec` | string | `libx264` | FFmpeg video encoder name. The default is broadly compatible. |
+| `record_preset` | string | `veryfast` | FFmpeg preset used with `libx264`/`libx264rgb`. |
+| `record_max_seconds` | int | `0` | Optional automatic stop in seconds. `0` means no duration limit. |
 | `thumbnail_timeout_ms` | int | `5000` | Thumbnail auto-close timeout in milliseconds. Use `0` to keep it open until user action. |
 | `helper` | string | empty | Optional absolute helper override. By default the plugin tries `HYPRCAPTURE_HELPER`, then `$HOME/.local/bin/hyprcapture-ui`, then trusted system install paths. |
 
@@ -256,4 +281,5 @@ Temporary compositor artifacts and thumbnail/clipboard scratch files are written
 
 - The repository includes a root [`hyprpm.toml`](hyprpm.toml) manifest, which is expected by `hyprpm`.
 - `window_background = real` uses compositor-captured real background data when available and falls back to reconstructing from the frozen desktop snapshot.
+- Recording applies window decoration cropping and solid/follow-system backgrounds in the compositor-side path. `window_background = real` currently uses a live desktop-region fallback, and `transparent` is limited by the default MP4/H.264 output because it has no alpha channel.
 - Do not run `hyprpm update` or reload the plugin while an active screenshot overlay is being used.

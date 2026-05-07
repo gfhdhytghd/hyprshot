@@ -102,6 +102,7 @@ int main(int argc, char** argv) {
         {"thumbnail-delete-root", "Directory where thumbnail files may be deleted.", "path"},
         {"restore-clipboard", "Clipboard snapshot to restore when deleting the thumbnail image.", "path"},
         {"quick", "Capture immediately."},
+        {"record", "Use the overlay to start a compositor-side recording."},
     });
     parser.process(app);
 
@@ -148,7 +149,7 @@ int main(int argc, char** argv) {
             QFile::remove(path);
     }
 
-    CaptureOverlay overlay(defaults, parser.isSet("quick"), sessionJson);
+    CaptureOverlay overlay(defaults, parser.isSet("quick"), parser.isSet("record"), sessionJson);
     overlay.show();
     overlay.activateWindow();
     overlay.raise();

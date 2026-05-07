@@ -128,6 +128,16 @@ bool intersects(const Rect& a, const Rect& b) {
     return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
+Rect intersection(const Rect& a, const Rect& b) {
+    const double x1 = std::max(a.x, b.x);
+    const double y1 = std::max(a.y, b.y);
+    const double x2 = std::min(a.x + a.width, b.x + b.width);
+    const double y2 = std::min(a.y + a.height, b.y + b.height);
+    if (x2 <= x1 || y2 <= y1)
+        return {};
+    return {.x = x1, .y = y1, .width = x2 - x1, .height = y2 - y1};
+}
+
 bool ensurePrivateDirectory(const std::filesystem::path& path) {
     const auto native = path.string();
     if (native.empty())
@@ -705,27 +715,6 @@ void unpremultiplyAlpha(RgbaReadback& readback) {
     }
 }
 
-bool writeRgbaFramebufferRegion(CFramebuffer& framebuffer,
-                                const std::filesystem::path& path,
-                                int cropX,
-                                int cropTopY,
-                                int cropWidth,
-                                int cropHeight,
-                                ArtifactBudget& budget) {
-    auto readback = readRgbaFramebufferRegion(framebuffer, cropX, cropTopY, cropWidth, cropHeight);
-    return !readback.pixels.empty() && writeRgbaFile(path, readback.pixels, &budget);
-}
-
-bool writeRgbaFramebuffer(CFramebuffer& framebuffer, const std::filesystem::path& path, ArtifactBudget& budget) {
-    return writeRgbaFramebufferRegion(framebuffer,
-                                      path,
-                                      0,
-                                      0,
-                                      positiveRoundedIntFromDouble(framebuffer.m_size.x),
-                                      positiveRoundedIntFromDouble(framebuffer.m_size.y),
-                                      budget);
-}
-
 CBox renderedWindowBox(const PHLWINDOW& window, CBox box) {
     if (window->m_workspace && !window->m_pinned)
         box.translate(window->m_workspace->m_renderOffset->value());
@@ -787,21 +776,27 @@ class WindowAnimationGoalOverride {
     bool      m_active = false;
 };
 
-bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& frozenTime, const std::filesystem::path& path, int& width, int& height, ArtifactBudget& budget) {
+RgbaReadback renderMonitorReadback(const PHLMONITOR& monitor,
+                                   const Time::steady_tp& frozenTime,
+                                   int cropX,
+                                   int cropTopY,
+                                   int cropWidth,
+                                   int cropHeight,
+                                   ArtifactBudget* budget = nullptr) {
     if (!monitor || !monitor->m_activeWorkspace || !g_pHyprRenderer || !g_pHyprOpenGL)
-        return false;
+        return {};
 
-    width = positiveRoundedIntFromDouble(monitor->m_pixelSize.x);
-    height = positiveRoundedIntFromDouble(monitor->m_pixelSize.y);
+    const int width = positiveRoundedIntFromDouble(monitor->m_pixelSize.x);
+    const int height = positiveRoundedIntFromDouble(monitor->m_pixelSize.y);
     std::size_t framebufferBytes = 0;
     if (!checkedRgbaByteSize(width, height, framebufferBytes))
-        return false;
-    if (!budget.canFit(framebufferBytes))
-        return false;
+        return {};
+    if (budget && !budget->canFit(framebufferBytes))
+        return {};
 
     CFramebuffer framebuffer;
     if (!framebuffer.alloc(width, height, monitor->m_output->state->state().drmFormat))
-        return false;
+        return {};
 
     const bool previousBlockFeedback = g_pHyprRenderer->m_bBlockSurfaceFeedback;
     const bool previousBlockShader = g_pHyprOpenGL->m_renderData.blockScreenShader;
@@ -811,7 +806,7 @@ bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& fro
     g_pHyprRenderer->m_bBlockSurfaceFeedback = true;
     if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &framebuffer)) {
         g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
-        return false;
+        return {};
     }
 
     g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 1.0});
@@ -821,20 +816,29 @@ bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& fro
     g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
     g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
 
-    return writeRgbaFramebuffer(framebuffer, path, budget);
+    auto readback = readRgbaFramebufferRegion(framebuffer, cropX, cropTopY, cropWidth, cropHeight);
+    if (budget && !readback.pixels.empty() && !budget->consume(readback.pixels.size()))
+        return {};
+    return readback;
 }
 
-bool renderWindowArtifact(const PHLWINDOW& window,
-                          const PHLMONITOR& monitor,
-                          const Time::steady_tp& frozenTime,
-                          bool decorate,
-                          const std::filesystem::path& path,
-                          int& width,
-                          int& height,
-                          CBox& artifactBox,
-                          ArtifactBudget& budget) {
+bool renderMonitorArtifact(const PHLMONITOR& monitor, const Time::steady_tp& frozenTime, const std::filesystem::path& path, int& width, int& height, ArtifactBudget& budget) {
+    width = positiveRoundedIntFromDouble(monitor ? monitor->m_pixelSize.x : 0.0);
+    height = positiveRoundedIntFromDouble(monitor ? monitor->m_pixelSize.y : 0.0);
+    auto readback = renderMonitorReadback(monitor, frozenTime, 0, 0, width, height, &budget);
+    return !readback.pixels.empty() && writeRgbaFile(path, readback.pixels);
+}
+
+RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
+                                          const PHLMONITOR& monitor,
+                                          const Time::steady_tp& frozenTime,
+                                          bool decorate,
+                                          int& width,
+                                          int& height,
+                                          CBox& artifactBox,
+                                          ArtifactBudget* budget = nullptr) {
     if (!window || !monitor || !g_pHyprRenderer || !g_pHyprOpenGL)
-        return false;
+        return {};
 
     WindowAnimationGoalOverride windowGoal(window);
     const CBox fullBox = renderedWindowBox(window, window->getFullWindowBoundingBox());
@@ -845,12 +849,12 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     const int framebufferHeight = positiveRoundedIntFromDouble(monitor->m_pixelSize.y);
     std::size_t framebufferBytes = 0;
     if (!checkedRgbaByteSize(framebufferWidth, framebufferHeight, framebufferBytes))
-        return false;
+        return {};
     std::size_t cropBytes = 0;
     if (!checkedRgbaByteSize(width, height, cropBytes))
-        return false;
-    if (!budget.consume(std::max(framebufferBytes, cropBytes)))
-        return false;
+        return {};
+    if (budget && !budget->consume(std::max(framebufferBytes, cropBytes)))
+        return {};
 
     const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
     const int targetCropX = width < framebufferWidth ? (framebufferWidth - width) / 2 : 0;
@@ -862,7 +866,7 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     CFramebuffer framebuffer;
     const auto drmFormat = monitor->m_output && monitor->m_output->state ? monitor->m_output->state->state().drmFormat : DRM_FORMAT_ABGR8888;
     if (!framebuffer.alloc(framebufferWidth, framebufferHeight, DRM_FORMAT_ABGR8888) && !framebuffer.alloc(framebufferWidth, framebufferHeight, drmFormat))
-        return false;
+        return {};
 
     const bool previousBlockFeedback = g_pHyprRenderer->m_bBlockSurfaceFeedback;
     const bool previousBlockShader = g_pHyprOpenGL->m_renderData.blockScreenShader;
@@ -891,13 +895,13 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     };
 
     if (!renderIntoFramebuffer())
-        return false;
+        return {};
 
     const int cropX = clampedIntFromDouble(renderCropBox.x);
     const int cropY = clampedIntFromDouble(renderCropBox.y);
     auto      readback = readRgbaFramebufferRegion(framebuffer, 0, 0, framebufferWidth, framebufferHeight);
     if (readback.pixels.empty())
-        return false;
+        return {};
 
     PixelBounds bounds;
     if (findAlphaBounds(readback, bounds))
@@ -905,7 +909,7 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     else
         readback = readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height);
     if (readback.pixels.empty())
-        return false;
+        return {};
 
     width = readback.width;
     height = readback.height;
@@ -914,7 +918,20 @@ bool renderWindowArtifact(const PHLWINDOW& window,
     repairTopTransparentSeam(readback);
     unpremultiplyAlpha(readback);
 
-    return writeRgbaFile(path, readback.pixels);
+    return readback;
+}
+
+bool renderWindowArtifact(const PHLWINDOW& window,
+                          const PHLMONITOR& monitor,
+                          const Time::steady_tp& frozenTime,
+                          bool decorate,
+                          const std::filesystem::path& path,
+                          int& width,
+                          int& height,
+                          CBox& artifactBox,
+                          ArtifactBudget& budget) {
+    auto readback = renderWindowArtifactReadback(window, monitor, frozenTime, decorate, width, height, artifactBox, &budget);
+    return !readback.pixels.empty() && writeRgbaFile(path, readback.pixels);
 }
 
 void* findFunctionByDemangledName(const std::string& lookupName, const std::string& demangledNeedle) {
@@ -1128,6 +1145,215 @@ std::vector<PHLWINDOW> windowsInRenderOrder() {
     return ordered;
 }
 
+void blitScaledRgba(const RgbaReadback& source,
+                    std::vector<unsigned char>& target,
+                    int targetWidth,
+                    int targetHeight,
+                    int targetX,
+                    int targetY,
+                    int targetPartWidth,
+                    int targetPartHeight) {
+    if (source.pixels.empty() || source.width <= 0 || source.height <= 0 || target.empty() || targetWidth <= 0 || targetHeight <= 0 || targetPartWidth <= 0 ||
+        targetPartHeight <= 0)
+        return;
+
+    for (int y = 0; y < targetPartHeight; ++y) {
+        const int dstY = targetY + y;
+        if (dstY < 0 || dstY >= targetHeight)
+            continue;
+
+        const int srcY = std::clamp(static_cast<int>((static_cast<long long>(y) * source.height) / targetPartHeight), 0, source.height - 1);
+        for (int x = 0; x < targetPartWidth; ++x) {
+            const int dstX = targetX + x;
+            if (dstX < 0 || dstX >= targetWidth)
+                continue;
+
+            const int srcX = std::clamp(static_cast<int>((static_cast<long long>(x) * source.width) / targetPartWidth), 0, source.width - 1);
+            const auto src = (static_cast<std::size_t>(srcY) * source.width + srcX) * RGBA_BYTES_PER_PIXEL;
+            const auto dst = (static_cast<std::size_t>(dstY) * targetWidth + dstX) * RGBA_BYTES_PER_PIXEL;
+            std::copy(source.pixels.data() + src, source.pixels.data() + src + RGBA_BYTES_PER_PIXEL, target.data() + dst);
+        }
+    }
+}
+
+RgbaReadback cropReadbackToBounds(const RgbaReadback& source, const PixelBounds& bounds) {
+    const PixelBounds clipped{.x = std::clamp(bounds.x, 0, std::max(0, source.width - 1)),
+                              .y = std::clamp(bounds.y, 0, std::max(0, source.height - 1)),
+                              .width = std::max(0, std::min(bounds.width, source.width - std::clamp(bounds.x, 0, std::max(0, source.width - 1)))),
+                              .height = std::max(0, std::min(bounds.height, source.height - std::clamp(bounds.y, 0, std::max(0, source.height - 1))))};
+    return cropReadback(source, clipped);
+}
+
+void compositeSolidBackground(RgbaReadback& frame, unsigned char r, unsigned char g, unsigned char b) {
+    if (frame.pixels.empty())
+        return;
+
+    for (std::size_t i = 0; i + 3 < frame.pixels.size(); i += RGBA_BYTES_PER_PIXEL) {
+        const int alpha = frame.pixels[i + 3];
+        if (alpha >= 255) {
+            frame.pixels[i + 3] = 255;
+            continue;
+        }
+
+        const int inverseAlpha = 255 - alpha;
+        frame.pixels[i + 0] = static_cast<unsigned char>((frame.pixels[i + 0] * alpha + r * inverseAlpha + 127) / 255);
+        frame.pixels[i + 1] = static_cast<unsigned char>((frame.pixels[i + 1] * alpha + g * inverseAlpha + 127) / 255);
+        frame.pixels[i + 2] = static_cast<unsigned char>((frame.pixels[i + 2] * alpha + b * inverseAlpha + 127) / 255);
+        frame.pixels[i + 3] = 255;
+    }
+}
+
+void compositeImageBackground(RgbaReadback& frame, const RecordingFrame& background) {
+    if (frame.pixels.empty() || background.rgba.empty() || background.width <= 0 || background.height <= 0)
+        return;
+
+    for (int y = 0; y < frame.height; ++y) {
+        const int bgY = std::clamp(static_cast<int>((static_cast<long long>(y) * background.height) / frame.height), 0, background.height - 1);
+        for (int x = 0; x < frame.width; ++x) {
+            const int bgX = std::clamp(static_cast<int>((static_cast<long long>(x) * background.width) / frame.width), 0, background.width - 1);
+            const auto dst = (static_cast<std::size_t>(y) * frame.width + x) * RGBA_BYTES_PER_PIXEL;
+            const auto bg = (static_cast<std::size_t>(bgY) * background.width + bgX) * RGBA_BYTES_PER_PIXEL;
+            const int alpha = frame.pixels[dst + 3];
+            if (alpha >= 255) {
+                frame.pixels[dst + 3] = 255;
+                continue;
+            }
+
+            const int inverseAlpha = 255 - alpha;
+            for (int channel = 0; channel < 3; ++channel)
+                frame.pixels[dst + channel] =
+                    static_cast<unsigned char>((frame.pixels[dst + channel] * alpha + background.rgba[bg + channel] * inverseAlpha + 127) / 255);
+            frame.pixels[dst + 3] = 255;
+        }
+    }
+}
+
+PHLWINDOW findWindowByAddress(const std::string& address) {
+    if (address.empty() || !g_pCompositor)
+        return {};
+
+    for (const auto& window : g_pCompositor->m_windows) {
+        if (window && "0x" + pointerId(window.get()) == address)
+            return window;
+    }
+    return {};
+}
+
+std::optional<RecordingFrame> captureDesktopRegionRecordingFrame(const Rect& targetGeometry) {
+    if (!g_pCompositor || !g_pHyprRenderer || targetGeometry.width <= 0.0 || targetGeometry.height <= 0.0)
+        return std::nullopt;
+
+    std::vector<PHLMONITOR> intersecting;
+    double                  outputScale = 0.0;
+    for (const auto& monitor : g_pCompositor->m_monitors) {
+        if (!monitor)
+            continue;
+        const Rect monRect = monitorRect(monitor);
+        if (!intersects(targetGeometry, monRect))
+            continue;
+        intersecting.push_back(monitor);
+        outputScale = std::max(outputScale, monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale);
+    }
+
+    if (intersecting.empty() || outputScale <= 0.0)
+        return std::nullopt;
+
+    const int outputWidth = positiveRoundedIntFromDouble(targetGeometry.width * outputScale);
+    const int outputHeight = positiveRoundedIntFromDouble(targetGeometry.height * outputScale);
+    std::size_t outputBytes = 0;
+    if (!checkedRgbaByteSize(outputWidth, outputHeight, outputBytes))
+        return std::nullopt;
+
+    RecordingFrame frame;
+    frame.width = outputWidth;
+    frame.height = outputHeight;
+    frame.rgba.assign(outputBytes, 0);
+
+    const auto now = Time::steadyNow();
+    for (const auto& monitor : intersecting) {
+        const Rect monRect = monitorRect(monitor);
+        const Rect logicalPart = intersection(targetGeometry, monRect);
+        if (logicalPart.width <= 0.0 || logicalPart.height <= 0.0)
+            continue;
+
+        const double monitorScale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
+        const int cropX = clampedIntFromDouble((logicalPart.x - monRect.x) * monitorScale);
+        const int cropY = clampedIntFromDouble((logicalPart.y - monRect.y) * monitorScale);
+        const int cropWidth = positiveRoundedIntFromDouble(logicalPart.width * monitorScale);
+        const int cropHeight = positiveRoundedIntFromDouble(logicalPart.height * monitorScale);
+        auto readback = renderMonitorReadback(monitor, now, cropX, cropY, cropWidth, cropHeight);
+        if (readback.pixels.empty())
+            continue;
+
+        const int dstX = clampedIntFromDouble((logicalPart.x - targetGeometry.x) * outputScale);
+        const int dstY = clampedIntFromDouble((logicalPart.y - targetGeometry.y) * outputScale);
+        const int dstWidth = positiveRoundedIntFromDouble(logicalPart.width * outputScale);
+        const int dstHeight = positiveRoundedIntFromDouble(logicalPart.height * outputScale);
+        blitScaledRgba(readback, frame.rgba, frame.width, frame.height, dstX, dstY, dstWidth, dstHeight);
+    }
+
+    if (frame.rgba.empty())
+        return std::nullopt;
+    return frame;
+}
+
+std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRequest& request) {
+    const auto window = findWindowByAddress(request.windowAddress);
+    if (!window || !shouldCaptureWindow(window))
+        return std::nullopt;
+
+    const auto monitor = window->m_monitor.lock();
+    if (!monitor)
+        return std::nullopt;
+
+    const bool renderDecorations =
+        request.defaults.fushionMode || request.defaults.windowBorder == DecorationPolicy::Keep || request.defaults.windowShadow == DecorationPolicy::Keep;
+
+    int  width = 0;
+    int  height = 0;
+    CBox artifactBox;
+    auto readback = renderWindowArtifactReadback(window, monitor, Time::steadyNow(), renderDecorations, width, height, artifactBox);
+    if (readback.pixels.empty())
+        return std::nullopt;
+
+    const bool cropDecorations = request.defaults.windowBorder == DecorationPolicy::Remove || request.defaults.windowShadow == DecorationPolicy::Remove;
+    if (cropDecorations) {
+        const CBox visibleBox = renderedWindowGoalMainSurfaceBox(window);
+        if (visibleBox.w > 0.0 && visibleBox.h > 0.0 && artifactBox.w > 0.0 && artifactBox.h > 0.0) {
+            const double scaleX = static_cast<double>(readback.width) / artifactBox.w;
+            const double scaleY = static_cast<double>(readback.height) / artifactBox.h;
+            PixelBounds bounds;
+            bounds.x = std::max(0, static_cast<int>(std::floor((visibleBox.x - artifactBox.x) * scaleX)));
+            bounds.y = std::max(0, static_cast<int>(std::floor((visibleBox.y - artifactBox.y) * scaleY)));
+            bounds.width = std::max(1, static_cast<int>(std::ceil(visibleBox.w * scaleX)));
+            bounds.height = std::max(1, static_cast<int>(std::ceil(visibleBox.h * scaleY)));
+            readback = cropReadbackToBounds(readback, bounds);
+        }
+    }
+
+    if (readback.pixels.empty())
+        return std::nullopt;
+
+    if (request.defaults.windowBackground == WindowBackground::Real) {
+        Rect backgroundRect = {.x = artifactBox.x + (readback.cropX / std::max(1.0, static_cast<double>(width))) * artifactBox.w,
+                               .y = artifactBox.y + (readback.cropTopY / std::max(1.0, static_cast<double>(height))) * artifactBox.h,
+                               .width = artifactBox.w * readback.width / std::max(1.0, static_cast<double>(width)),
+                               .height = artifactBox.h * readback.height / std::max(1.0, static_cast<double>(height))};
+        if (auto background = captureDesktopRegionRecordingFrame(backgroundRect))
+            compositeImageBackground(readback, *background);
+        else
+            compositeSolidBackground(readback, 30, 34, 38);
+    } else if (request.defaults.windowBackground == WindowBackground::White) {
+        compositeSolidBackground(readback, 255, 255, 255);
+    } else if (request.defaults.windowBackground == WindowBackground::Black) {
+        compositeSolidBackground(readback, 0, 0, 0);
+    } else if (request.defaults.windowBackground == WindowBackground::FollowSystem) {
+        compositeSolidBackground(readback, 17, 19, 23);
+    }
+
+    return RecordingFrame{.rgba = std::move(readback.pixels), .width = readback.width, .height = readback.height};
+}
+
 } // namespace
 
 CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool quick) {
@@ -1226,6 +1452,16 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool 
     }
 
     return session;
+}
+
+std::optional<RecordingFrame> captureRecordingFrame(const RecordingFrameRequest& request) {
+    if (request.mode == CaptureMode::Window)
+        return captureWindowRecordingFrame(request);
+
+    if (request.targetGeometry.width <= 0.0 || request.targetGeometry.height <= 0.0)
+        return std::nullopt;
+
+    return captureDesktopRegionRecordingFrame(request.targetGeometry);
 }
 
 std::string writeCompositorSessionJsonFile(const CaptureSession& session, std::string_view json) {

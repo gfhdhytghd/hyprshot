@@ -28,6 +28,11 @@ struct CaptureDefaults {
     std::string      saveDir = "~/Pictures/Screenshots";
     std::string      filenameTemplate = "Screenshot-%Y-%m-%d-%H%M%S.png";
     std::string      helper;
+    std::string      recordFilenameTemplate = "Recording-%Y-%m-%d-%H%M%S.mp4";
+    std::string      recordCodec = "libx264";
+    std::string      recordPreset = "veryfast";
+    std::int64_t     recordFps = 30;
+    std::int64_t     recordMaxSeconds = 0;
     std::int64_t     thumbnailTimeoutMs = 5000;
     std::string      watermark;
     WatermarkPosition watermarkPosition = WatermarkPosition::Central;

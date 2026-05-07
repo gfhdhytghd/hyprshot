@@ -189,6 +189,7 @@ bool allowEnvironmentName(const QString& name) {
         QStringLiteral("QT_AUTO_SCREEN_SCALE_FACTOR"),
         QStringLiteral("QT_ENABLE_HIGHDPI_SCALING"),
         QStringLiteral("HYPRCAPTURE_TIMING"),
+        QStringLiteral("HYPRLAND_INSTANCE_SIGNATURE"),
     };
     return allowed.contains(name) || name.startsWith(QStringLiteral("LC_"));
 }

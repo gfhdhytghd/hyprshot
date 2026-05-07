@@ -31,6 +31,7 @@ find_package(nlohmann_json REQUIRED)
 add_library(hyprcapture SHARED
   src/plugin/main.cpp
   src/plugin/artifact_capture.cpp
+  src/plugin/recording.cpp
   src/plugin/session_launcher.cpp
   src/shared/config.cpp
   src/shared/protocol.cpp

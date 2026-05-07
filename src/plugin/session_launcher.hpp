@@ -10,6 +10,7 @@ struct LaunchRequest {
     CaptureDefaults defaults;
     CaptureMode     requestedMode = CaptureMode::Region;
     bool            quick = false;
+    bool            record = false;
 };
 
 struct LaunchResult {

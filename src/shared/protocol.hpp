@@ -61,8 +61,18 @@ struct CaptureSession {
     std::vector<WindowInfo>  windows;
 };
 
+struct RecordingRequest {
+    std::string     id;
+    CaptureDefaults defaults;
+    CaptureMode     mode = CaptureMode::Region;
+    Rect            targetGeometry;
+    std::string     windowAddress;
+};
+
 std::string makeSessionId();
 std::string encodeSessionJson(const CaptureSession& session);
 std::optional<CaptureSession> decodeSessionJson(const std::string& json);
+std::string encodeRecordingRequestJson(const RecordingRequest& request);
+std::optional<RecordingRequest> decodeRecordingRequestJson(const std::string& json);
 
 } // namespace hyprcapture
