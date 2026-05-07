@@ -1370,8 +1370,8 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool 
         return session;
     const auto frozenTime = Time::steadyNow();
     const bool renderDecorations = defaults.fushionMode || defaults.windowBorder == DecorationPolicy::Keep || defaults.windowShadow == DecorationPolicy::Keep;
-    const bool captureMonitorArtifacts = quick || defaults.mode == CaptureMode::Window || defaults.fushionMode;
-    const bool captureWindowArtifacts = defaults.mode == CaptureMode::Window || (defaults.fushionMode && defaults.mode != CaptureMode::Fullscreen);
+    const bool captureMonitorArtifacts = true;
+    const bool captureWindowArtifacts = true;
     ArtifactBudget artifactBudget;
 
     int monitorIndex = 0;

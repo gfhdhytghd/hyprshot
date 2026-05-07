@@ -11,6 +11,7 @@ struct LaunchRequest {
     CaptureMode     requestedMode = CaptureMode::Region;
     bool            quick = false;
     bool            record = false;
+    bool            recordActive = false;
 };
 
 struct LaunchResult {

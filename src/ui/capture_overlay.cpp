@@ -110,6 +110,7 @@ const char* kFullscreenSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w
 const char* kWindowSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M808.125883 243.195881 134.874315 243.195881c-30.608112 0-55.513338 24.905226-55.513338 55.520501l0 505.178641c0 30.615275 24.905226 55.520501 55.513338 55.520501L808.125883 859.415524c30.607088 0 55.512315-24.905226 55.512315-55.520501L863.638197 298.716382C863.638197 268.101107 838.733994 243.195881 808.125883 243.195881zM835.629283 803.895023c0 15.167444-12.338003 27.510564-27.503401 27.510564L134.874315 831.405587c-15.167444 0-27.504424-12.343119-27.504424-27.510564L107.369891 383.246591l728.259392 0L835.629283 803.895023zM835.629283 355.236654 107.370915 355.236654l0-56.519248c0-15.173584 12.33698-27.510564 27.504424-27.510564L808.125883 271.206842c15.165398 0 27.503401 12.33698 27.503401 27.510564L835.629283 355.236654zM920.166655 131.156132 274.924002 131.156132c-30.608112 0-55.513338 24.905226-55.513338 55.514361l0 28.515451c0 7.734148 6.263657 14.004969 14.005992 14.004969 7.740288 0 14.005992-6.27082 14.005992-14.004969l0-28.515451c0-15.167444 12.33698-27.504424 27.503401-27.504424L920.167678 159.166069c15.165398 0 27.503401 12.33698 27.503401 27.504424l0 519.188726c0 15.167444-12.338003 27.511587-27.503401 27.511587l-28.516474 0c-7.739265 0-14.004969 6.27082-14.004969 14.004969 0 7.736195 6.263657 14.007015 14.004969 14.007015l28.516474 0c30.607088 0 55.512315-24.905226 55.512315-55.521524L975.679993 186.670493C975.67897 156.061358 950.773743 131.156132 920.166655 131.156132zM219.410664 299.216779l-56.019875 0c-7.740288 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.263657 14.011108 14.005992 14.011108l56.019875 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C233.415632 305.487599 227.151975 299.216779 219.410664 299.216779zM331.450413 299.216779l-56.019875 0c-7.741311 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.262634 14.011108 14.005992 14.011108l56.019875 0c7.739265 0 14.004969-6.27082 14.004969-14.011108C345.455381 305.487599 339.191724 299.216779 331.450413 299.216779zM443.490162 299.216779l-56.018851 0c-7.741311 0-14.007015 6.27082-14.007015 13.998829 0 7.740288 6.263657 14.011108 14.007015 14.011108l56.018851 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C457.49513 305.487599 451.231473 299.216779 443.490162 299.216779z" fill="#000000"/></svg>)";
 const char* kRegionSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M960 256V64H768v64H256V64H64v192h64v512H64v192h192v-64h512v64h192V768h-64V256z m-128 512h-64v64H256v-64h-64V256h64v-64h512v64h64z" fill="#000000"/></svg>)";
 const char* kCancelSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M883.8304 41.01546667L512.00213333 412.84693333 140.1696 41.01546667c-27.38026667-27.3792-71.77386667-27.3792-99.1552 0-27.37813333 27.3792-27.37813333 71.77066667 0 99.1552l371.8336 371.83146666L41.0144 883.82933333c-27.37813333 27.38026667-27.37813333 71.776 0 99.15413334 27.38133333 27.38133333 71.776 27.38133333 99.1552 0L512.00213333 611.15733333l371.82933334 371.82613334c27.37813333 27.38133333 71.77386667 27.38133333 99.15306666 0 27.3792-27.37813333 27.3792-71.77386667 0-99.15413334L611.15733333 512.00213333 982.98453333 140.17066667c27.3792-27.38133333 27.3792-71.776 0-99.1552-27.3792-27.38133333-71.7696-27.38133333-99.15413333 0z m0 0" fill="#333333"/></svg>)";
+const char* kRecordSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M507.6 508.2m-229.8 0a229.8 229.8 0 1 0 459.6 0 229.8 229.8 0 1 0-459.6 0Z" fill="#1c1c1c"/><path d="M507.6 952.9c-245.2 0-444.7-199.5-444.7-444.6S262.4 63.6 507.6 63.6s444.7 199.5 444.7 444.7-199.5 444.6-444.7 444.6z m0-837.2C291.2 115.7 115 291.8 115 508.3c0 216.5 176.1 392.6 392.7 392.6s392.7-176.1 392.7-392.6c-0.1-216.5-176.2-392.6-392.8-392.6z" fill="#1c1c1c"/></svg>)";
 const char* kSelectArrowSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M827.733333 411.733333L526.933333 712.533333c-8.533333 8.533333-21.333333 8.533333-29.866666 0L196.266667 411.733333c-17.066667-17.066667-17.066667-42.666667 0-59.733333 17.066667-17.066667 42.666667-17.066667 59.733333 0l256 256 256-256c17.066667-17.066667 42.666667-17.066667 59.733333 0s17.066667 42.666667 0 59.733333z"/></svg>)";
 
 QString qString(const std::string& value) {
@@ -179,14 +180,17 @@ bool writePrivateTextFile(const QString& path, const QByteArray& bytes) {
     return true;
 }
 
-bool dispatchRecordingStart(const QString& requestPath) {
+bool dispatchHyprcaptureCommand(const QString& dispatcher, const QString& argument = {}) {
     const QString hyprctl = hyprcapture::ui::trustedSystemProgram(QStringLiteral("hyprctl"));
-    if (hyprctl.isEmpty() || requestPath.isEmpty())
+    if (hyprctl.isEmpty() || dispatcher.isEmpty())
         return false;
 
     QProcess process;
     process.setProgram(hyprctl);
-    process.setArguments({QStringLiteral("dispatch"), QStringLiteral("hyprcapture:record-start"), requestPath});
+    QStringList args{QStringLiteral("dispatch"), dispatcher};
+    if (!argument.isEmpty())
+        args.push_back(argument);
+    process.setArguments(args);
     process.setProcessEnvironment(hyprcapture::ui::trustedProcessEnvironment());
     process.start();
     if (!process.waitForStarted(1000))
@@ -197,6 +201,10 @@ bool dispatchRecordingStart(const QString& requestPath) {
         return false;
     }
     return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+}
+
+bool dispatchRecordingStart(const QString& requestPath) {
+    return !requestPath.isEmpty() && dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-start"), requestPath);
 }
 
 QString uniqueOutputPath(const QDir& dir, const QString& rawFilename) {
@@ -919,8 +927,8 @@ void InlineSelect::choose(const QString& text) {
     hidePopup();
 }
 
-CaptureOverlay::CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, bool record, QString sessionJson, QWidget* parent)
-    : QMainWindow(parent), m_defaults(std::move(defaults)), m_mode(m_defaults.mode), m_quick(quick), m_record(record) {
+CaptureOverlay::CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, bool record, bool recordActive, QString sessionJson, QWidget* parent)
+    : QMainWindow(parent), m_defaults(std::move(defaults)), m_mode(m_defaults.mode), m_quick(quick), m_record(record), m_recordActive(recordActive) {
     QElapsedTimer constructorTimer;
     constructorTimer.start();
     setWindowFlags(Qt::FramelessWindowHint | Qt::Tool);
@@ -1134,6 +1142,31 @@ void CaptureOverlay::buildToolbar() {
     addMode("Fullscreen", hyprcapture::CaptureMode::Fullscreen, iconFromSvg(kFullscreenSvg));
     addMode("Region", hyprcapture::CaptureMode::Region, iconFromSvg(kRegionSvg));
     addMode("Window", hyprcapture::CaptureMode::Window, iconFromSvg(kWindowSvg));
+
+    m_recordToggle = new QPushButton(m_toolbar);
+    m_recordToggle->setObjectName("captureModeButton");
+    m_recordToggle->setFlat(true);
+    m_recordToggle->setFocusPolicy(Qt::NoFocus);
+    m_recordToggle->setIcon(iconFromSvg(kRecordSvg));
+    m_recordToggle->setIconSize(QSize(kModeIconSize, kModeIconSize));
+    m_recordToggle->setFixedSize(36, 32);
+    m_recordToggle->setToolTip(m_recordActive ? "Stop recording" : "Record");
+    m_recordToggle->setAccessibleName(m_recordActive ? "Stop recording" : "Record");
+    m_recordToggle->setCheckable(true);
+    m_recordToggle->setChecked(m_record || m_recordActive);
+    layout->addWidget(m_recordToggle);
+    connect(m_recordToggle, &QPushButton::clicked, this, [this] {
+        if (m_recordActive) {
+            m_recordToggle->setChecked(true);
+            if (stopRecording())
+                fadeOutThen([] { qApp->quit(); });
+            return;
+        }
+
+        m_record = m_recordToggle->isChecked();
+        updateStatus();
+        update();
+    });
 
     m_fullscreenScope = new InlineSelect(this, m_toolbar);
     m_fullscreenScope->setPrefix("Full");
@@ -1613,8 +1646,14 @@ void CaptureOverlay::updateStatus() {
         m_status->adjustSize();
     };
 
+    if (m_recordActive) {
+        setStatusText("recording");
+        relayoutToolbar();
+        return;
+    }
+
     if (m_mode != hyprcapture::CaptureMode::Window) {
-        setStatusText({});
+        setStatusText(m_record ? QStringLiteral("record") : QString{});
         relayoutToolbar();
         return;
     }
@@ -1631,7 +1670,7 @@ void CaptureOverlay::updateStatus() {
     }
 
     if (hoveredWindow())
-        setStatusText({});
+        setStatusText(m_record ? QStringLiteral("record") : QString{});
     else
         setStatusText("choose window");
     relayoutToolbar();
@@ -1831,6 +1870,10 @@ bool CaptureOverlay::startRecording() {
     if (!started)
         QFile::remove(requestPath);
     return started;
+}
+
+bool CaptureOverlay::stopRecording() {
+    return dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-stop"));
 }
 
 void CaptureOverlay::finishCapture() {

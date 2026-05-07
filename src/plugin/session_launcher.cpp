@@ -288,7 +288,7 @@ LaunchResult launchHelper(const LaunchRequest& request) {
 
     CaptureDefaults captureDefaults = request.defaults;
     captureDefaults.mode = request.requestedMode;
-    CaptureSession session = captureCompositorArtifacts(captureDefaults, request.quick || request.record);
+    CaptureSession session = captureCompositorArtifacts(captureDefaults, request.quick || request.record || request.recordActive);
     session.defaults.mode = request.requestedMode;
 
     const auto sessionJson = encodeSessionJson(session);
@@ -340,6 +340,8 @@ LaunchResult launchHelper(const LaunchRequest& request) {
         args.push_back("--quick");
     if (request.record)
         args.push_back("--record");
+    if (request.recordActive)
+        args.push_back("--record-active");
     if (useSessionJsonFile) {
         args.push_back("--session-json-file");
         args.push_back(sessionJsonFile);

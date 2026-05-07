@@ -15,6 +15,7 @@ class QButtonGroup;
 class QGraphicsOpacityEffect;
 class QLabel;
 class QPainter;
+class QPushButton;
 class QResizeEvent;
 class QShowEvent;
 class QPropertyAnimation;
@@ -29,7 +30,7 @@ class CaptureOverlay final : public QMainWindow {
     Q_PROPERTY(double overlayOpacity READ overlayOpacity WRITE setOverlayOpacity)
 
   public:
-    explicit CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, bool record, QString sessionJson, QWidget* parent = nullptr);
+    explicit CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, bool record, bool recordActive, QString sessionJson, QWidget* parent = nullptr);
 
   protected:
     void showEvent(QShowEvent* event) override;
@@ -68,6 +69,7 @@ class CaptureOverlay final : public QMainWindow {
     void finishCapture();
     void cancelCapture();
     bool startRecording();
+    bool stopRecording();
     void saveImage(const QImage& image, hyprcapture::ui::ClipboardSnapshotData clipboardSnapshot);
     QImage renderResultImage() const;
     QImage renderDesktopRectAtDisplayResolution(const QRect& globalRect) const;
@@ -108,6 +110,7 @@ class CaptureOverlay final : public QMainWindow {
     hyprcapture::CaptureMode     m_mode;
     bool                      m_quick = false;
     bool                      m_record = false;
+    bool                      m_recordActive = false;
     bool                      m_dragging = false;
     bool                      m_finishing = false;
     bool                      m_fadeOutStarted = false;
@@ -122,6 +125,7 @@ class CaptureOverlay final : public QMainWindow {
     QPropertyAnimation* m_fadeAnimation = nullptr;
     InlineSelect* m_fullscreenScope = nullptr;
     InlineSelect* m_windowBackground = nullptr;
+    QPushButton*  m_recordToggle = nullptr;
     QLabel*      m_status = nullptr;
     QImage       m_desktopImage;
     QRect        m_desktopGeometry;

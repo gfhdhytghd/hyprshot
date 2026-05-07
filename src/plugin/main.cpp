@@ -120,7 +120,8 @@ SDispatchResult openCapture(const std::string& args, bool quick, bool record) {
     installOverlayLayerRule();
 
     const auto requestedMode = hyprcapture::parseCaptureMode(args, defaults.mode);
-    const auto result = hyprcapture::launchHelper({.defaults = defaults, .requestedMode = requestedMode, .quick = quick, .record = record});
+    const auto result = hyprcapture::launchHelper(
+        {.defaults = defaults, .requestedMode = requestedMode, .quick = quick, .record = record, .recordActive = hyprcapture::isRecordingActive()});
     if (!result.success) {
         HyprlandAPI::addNotification(g_pluginHandle, "[hyprcapture] " + result.error, CHyprColor(1.0, 0.2, 0.2, 1.0), 5000);
         return {.success = false, .error = result.error};

@@ -148,8 +148,6 @@ Build outputs:
 bind = SUPER SHIFT, S, hyprcapture:open
 bind = SUPER SHIFT, W, hyprcapture:open,window
 bind = SUPER SHIFT, F, hyprcapture:open,fullscreen
-bind = SUPER SHIFT, R, hyprcapture:record
-bind = SUPER SHIFT, X, hyprcapture:record-stop
 ```
 
 | Dispatcher | Description |
@@ -158,10 +156,6 @@ bind = SUPER SHIFT, X, hyprcapture:record-stop
 | `hyprcapture:open,<mode>` | Open the overlay in `region`, `fullscreen`, or `window` mode. |
 | `hyprcapture:quick` | Capture immediately using `default_mode`; disabled unless `allow_quick = 1`. |
 | `hyprcapture:quick,<mode>` | Capture immediately in `region`, `fullscreen`, or `window` mode; disabled unless `allow_quick = 1`. |
-| `hyprcapture:record` | Open the overlay and start recording the selected target. |
-| `hyprcapture:record,<mode>` | Open the overlay in `region`, `fullscreen`, or `window` mode and start recording the selected target. |
-| `hyprcapture:record-toggle` | Stop the active recording, or open the recording overlay when no recording is active. |
-| `hyprcapture:record-stop` | Stop the active recording and finalize the video file. |
 | `hyprcapture:cancel` | Reserved dispatcher; currently returns success without changing an active helper. |
 
 ### Overlay
@@ -175,7 +169,9 @@ bind = SUPER SHIFT, X, hyprcapture:record-stop
 
 ### Recording
 
-Recording reuses the same overlay selection model as screenshots. After a target is chosen, the compositor plugin captures frames with HyprCapture's offscreen renderer and passes raw RGBA frames to FFmpeg through a bounded queue. Slow encoding drops frames instead of blocking Hyprland's render loop.
+Recording is toggled from the normal screenshot overlay toolbar. Click the record icon, then choose fullscreen, drag a region, or choose a window exactly like a screenshot; after the target is chosen, the compositor plugin captures frames with HyprCapture's offscreen renderer and passes raw RGBA frames to FFmpeg through a bounded queue. Slow encoding drops frames instead of blocking Hyprland's render loop.
+
+To stop an active recording, open the same overlay and click the checked record icon.
 
 Current recording output is a single video file under `save_dir`. The first implementation uses FFmpeg rawvideo input and CPU-side RGBA readback; it intentionally avoids Hyprland's screencopy, portal, and screenshare session paths to avoid managed-session leaks like the known `wf-recorder` failure mode.
 
