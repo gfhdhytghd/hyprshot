@@ -1330,7 +1330,7 @@ void CaptureOverlay::paintDesktop(QPainter& painter, const QRect& target) const 
         painter.setClipRect(target);
         painter.fillRect(target, QColor(30, 34, 38));
 
-        const QRect globalTarget(QPoint(mapToGlobal(target.topLeft())), target.size());
+        const QRect globalTarget = localToDesktopLogicalRect(target);
         for (const auto& artifact : m_monitorArtifacts) {
             if (artifact.image.isNull() || !artifact.logicalGeometry.isValid())
                 continue;
@@ -1394,7 +1394,7 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
 }
 
 void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
-    rememberCursorPosition(event->globalPosition());
+    rememberCursorLocalPosition(event->position());
     if (m_toolbar->geometry().contains(event->pos()))
         return;
     hideOptionPopups();
@@ -1426,7 +1426,7 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
 }
 
 void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
-    rememberCursorPosition(event->globalPosition());
+    rememberCursorLocalPosition(event->position());
     if (m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen) {
         if (m_dragging)
             m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
@@ -1447,7 +1447,7 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event) {
-    rememberCursorPosition(event->globalPosition());
+    rememberCursorLocalPosition(event->position());
     if (event->button() != Qt::LeftButton)
         return;
 
@@ -1526,7 +1526,7 @@ QRect CaptureOverlay::captureRectForMode() const {
 
 QRect CaptureOverlay::fullscreenCaptureRect() const {
     if (currentFullscreenScope() == hyprcapture::FullscreenScope::Current)
-        return localScreenRectAt(mapFromGlobal(cursorLogicalPosition()));
+        return localScreenRectAt(globalToLocalRect(QRect(cursorLogicalPosition(), QSize(1, 1))).topLeft());
     return rect();
 }
 
@@ -1535,6 +1535,14 @@ QRect CaptureOverlay::regionCaptureBounds() const {
 }
 
 QRect CaptureOverlay::localScreenRectAt(const QPoint& localPos) const {
+    if (!m_monitorArtifacts.empty()) {
+        const QPoint logicalPoint = localToDesktopLogicalPoint(localPos);
+        for (const auto& artifact : m_monitorArtifacts) {
+            if (artifact.logicalGeometry.contains(logicalPoint))
+                return globalToLocalRect(artifact.logicalGeometry).intersected(rect());
+        }
+    }
+
     QScreen* screen = QGuiApplication::screenAt(mapToGlobal(localPos));
     if (!screen)
         screen = QGuiApplication::screenAt(cursorLogicalPosition());
@@ -1550,7 +1558,21 @@ QPoint CaptureOverlay::clampedToRect(const QPoint& point, const QRect& bounds) c
 }
 
 QRect CaptureOverlay::globalToLocalRect(const QRect& rect) const {
+    if (m_desktopGeometry.isValid())
+        return QRect(rect.topLeft() - m_desktopGeometry.topLeft(), rect.size());
     return QRect(mapFromGlobal(rect.topLeft()), rect.size());
+}
+
+QRect CaptureOverlay::localToDesktopLogicalRect(const QRect& rect) const {
+    if (m_desktopGeometry.isValid())
+        return QRect(m_desktopGeometry.topLeft() + rect.topLeft(), rect.size());
+    return QRect(QPoint(mapToGlobal(rect.topLeft())), rect.size());
+}
+
+QPoint CaptureOverlay::localToDesktopLogicalPoint(const QPoint& point) const {
+    if (m_desktopGeometry.isValid())
+        return m_desktopGeometry.topLeft() + point;
+    return mapToGlobal(point);
 }
 
 QRect CaptureOverlay::desktopSourceRectForGlobalRect(const QRect& rect) const {
@@ -1567,13 +1589,16 @@ QRect CaptureOverlay::desktopSourceRectForGlobalRect(const QRect& rect) const {
 }
 
 QRect CaptureOverlay::localToDesktopSourceRect(const QRect& rect) const {
-    return desktopSourceRectForGlobalRect(QRect(QPoint(mapToGlobal(rect.topLeft())), rect.size()));
+    return desktopSourceRectForGlobalRect(localToDesktopLogicalRect(rect));
 }
 
 QPoint CaptureOverlay::cursorLogicalPosition() const {
     if (m_hasCursorLogicalPosition)
         return m_cursorLogicalPosition;
-    return mapToGlobal(mapFromGlobal(QCursor::pos()));
+    const QPoint local = mapFromGlobal(QCursor::pos());
+    if (rect().contains(local))
+        return localToDesktopLogicalPoint(local);
+    return QCursor::pos();
 }
 
 void CaptureOverlay::rememberCursorPosition(const QPointF& globalPosition) {
@@ -1587,9 +1612,18 @@ void CaptureOverlay::rememberCursorPosition(const QPointF& globalPosition) {
     m_hasCursorLogicalPosition = true;
 }
 
+void CaptureOverlay::rememberCursorLocalPosition(const QPointF& localPosition) {
+    rememberCursorPosition(localToDesktopLogicalPoint(QPoint(static_cast<int>(std::floor(localPosition.x())), static_cast<int>(std::floor(localPosition.y())))));
+}
+
 void CaptureOverlay::refreshInitialCursorPosition() {
-    if (!m_hasCursorLogicalPosition)
-        rememberCursorPosition(QCursor::pos());
+    if (!m_hasCursorLogicalPosition) {
+        const QPoint local = mapFromGlobal(QCursor::pos());
+        if (rect().contains(local))
+            rememberCursorLocalPosition(local);
+        else
+            rememberCursorPosition(QCursor::pos());
+    }
     updateStatus();
     update();
 }
@@ -1796,7 +1830,7 @@ QImage CaptureOverlay::renderResultImage() const {
         return {};
 
     if (!m_monitorArtifacts.empty()) {
-        const QImage highResolution = renderDesktopRectAtDisplayResolution(QRect(mapToGlobal(cap.topLeft()), cap.size()));
+        const QImage highResolution = renderDesktopRectAtDisplayResolution(localToDesktopLogicalRect(cap));
         if (!highResolution.isNull())
             return highResolution;
     }
@@ -1853,7 +1887,7 @@ bool CaptureOverlay::startRecording() {
         cap = globalToLocalRect(windowFrameGeometry(*window));
     }
 
-    const QRect globalRect(QPoint(mapToGlobal(cap.topLeft())), cap.size());
+    const QRect globalRect = localToDesktopLogicalRect(cap);
     if (!globalRect.isValid())
         return false;
     request.targetGeometry = {.x = static_cast<double>(globalRect.x()),

@@ -81,10 +81,13 @@ class CaptureOverlay final : public QMainWindow {
     QRect localScreenRectAt(const QPoint& localPos) const;
     QPoint clampedToRect(const QPoint& point, const QRect& bounds) const;
     QRect globalToLocalRect(const QRect& rect) const;
+    QRect localToDesktopLogicalRect(const QRect& rect) const;
+    QPoint localToDesktopLogicalPoint(const QPoint& point) const;
     QRect desktopSourceRectForGlobalRect(const QRect& rect) const;
     QRect localToDesktopSourceRect(const QRect& rect) const;
     QPoint cursorLogicalPosition() const;
     void rememberCursorPosition(const QPointF& globalPosition);
+    void rememberCursorLocalPosition(const QPointF& localPosition);
     void refreshInitialCursorPosition();
     int monitorCount() const;
     bool hasMultipleMonitors() const;
