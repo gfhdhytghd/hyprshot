@@ -106,6 +106,11 @@ struct CaptureOutputResult {
     bool    clipboardCopied = false;
 };
 
+struct DispatchCommandResult {
+    bool    success = false;
+    QString error;
+};
+
 const char* kFullscreenSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M128 266.666667v490.666666a53.393333 53.393333 0 0 0 53.333333 53.333334h661.333334a53.393333 53.393333 0 0 0 53.333333-53.333334V266.666667a53.393333 53.393333 0 0 0-53.333333-53.333334H181.333333a53.393333 53.393333 0 0 0-53.333333 53.333334z m725.333333 0v490.666666a10.666667 10.666667 0 0 1-10.666666 10.666667H181.333333a10.666667 10.666667 0 0 1-10.666666-10.666667V266.666667a10.666667 10.666667 0 0 1 10.666666-10.666667h661.333334a10.666667 10.666667 0 0 1 10.666666 10.666667z m-597.333333 608a21.333333 21.333333 0 0 1-21.333333 21.333333H96a53.393333 53.393333 0 0 1-53.333333-53.333333v-138.666667a21.333333 21.333333 0 0 1 42.666666 0v138.666667a10.666667 10.666667 0 0 0 10.666667 10.666666h138.666667a21.333333 21.333333 0 0 1 21.333333 21.333334zM42.666667 320V181.333333a53.393333 53.393333 0 0 1 53.333333-53.333333h138.666667a21.333333 21.333333 0 0 1 0 42.666667H96a10.666667 10.666667 0 0 0-10.666667 10.666666v138.666667a21.333333 21.333333 0 0 1-42.666666 0z m938.666666-138.666667v138.666667a21.333333 21.333333 0 0 1-42.666666 0V181.333333a10.666667 10.666667 0 0 0-10.666667-10.666666h-138.666667a21.333333 21.333333 0 0 1 0-42.666667h138.666667a53.393333 53.393333 0 0 1 53.333333 53.333333z m0 522.666667v138.666667a53.393333 53.393333 0 0 1-53.333333 53.333333h-138.666667a21.333333 21.333333 0 0 1 0-42.666667h138.666667a10.666667 10.666667 0 0 0 10.666667-10.666666v-138.666667a21.333333 21.333333 0 0 1 42.666666 0z" fill="#000000"/></svg>)";
 const char* kWindowSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M808.125883 243.195881 134.874315 243.195881c-30.608112 0-55.513338 24.905226-55.513338 55.520501l0 505.178641c0 30.615275 24.905226 55.520501 55.513338 55.520501L808.125883 859.415524c30.607088 0 55.512315-24.905226 55.512315-55.520501L863.638197 298.716382C863.638197 268.101107 838.733994 243.195881 808.125883 243.195881zM835.629283 803.895023c0 15.167444-12.338003 27.510564-27.503401 27.510564L134.874315 831.405587c-15.167444 0-27.504424-12.343119-27.504424-27.510564L107.369891 383.246591l728.259392 0L835.629283 803.895023zM835.629283 355.236654 107.370915 355.236654l0-56.519248c0-15.173584 12.33698-27.510564 27.504424-27.510564L808.125883 271.206842c15.165398 0 27.503401 12.33698 27.503401 27.510564L835.629283 355.236654zM920.166655 131.156132 274.924002 131.156132c-30.608112 0-55.513338 24.905226-55.513338 55.514361l0 28.515451c0 7.734148 6.263657 14.004969 14.005992 14.004969 7.740288 0 14.005992-6.27082 14.005992-14.004969l0-28.515451c0-15.167444 12.33698-27.504424 27.503401-27.504424L920.167678 159.166069c15.165398 0 27.503401 12.33698 27.503401 27.504424l0 519.188726c0 15.167444-12.338003 27.511587-27.503401 27.511587l-28.516474 0c-7.739265 0-14.004969 6.27082-14.004969 14.004969 0 7.736195 6.263657 14.007015 14.004969 14.007015l28.516474 0c30.607088 0 55.512315-24.905226 55.512315-55.521524L975.679993 186.670493C975.67897 156.061358 950.773743 131.156132 920.166655 131.156132zM219.410664 299.216779l-56.019875 0c-7.740288 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.263657 14.011108 14.005992 14.011108l56.019875 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C233.415632 305.487599 227.151975 299.216779 219.410664 299.216779zM331.450413 299.216779l-56.019875 0c-7.741311 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.262634 14.011108 14.005992 14.011108l56.019875 0c7.739265 0 14.004969-6.27082 14.004969-14.011108C345.455381 305.487599 339.191724 299.216779 331.450413 299.216779zM443.490162 299.216779l-56.018851 0c-7.741311 0-14.007015 6.27082-14.007015 13.998829 0 7.740288 6.263657 14.011108 14.007015 14.011108l56.018851 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C457.49513 305.487599 451.231473 299.216779 443.490162 299.216779z" fill="#000000"/></svg>)";
 const char* kRegionSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M960 256V64H768v64H256V64H64v192h64v512H64v192h192v-64h512v64h192V768h-64V256z m-128 512h-64v64H256v-64h-64V256h64v-64h512v64h64z" fill="#000000"/></svg>)";
@@ -180,10 +185,21 @@ bool writePrivateTextFile(const QString& path, const QByteArray& bytes) {
     return true;
 }
 
-bool dispatchHyprcaptureCommand(const QString& dispatcher, const QString& argument = {}) {
+QString compactProcessError(QProcess& process, const QString& fallback) {
+    QString error = QString::fromUtf8(process.readAllStandardError()).trimmed();
+    if (error.isEmpty())
+        error = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
+    if (error.startsWith(QStringLiteral("[hyprcapture] ")))
+        error = error.mid(QStringLiteral("[hyprcapture] ").size()).trimmed();
+    if (error.isEmpty())
+        error = fallback;
+    return error.left(160);
+}
+
+DispatchCommandResult dispatchHyprcaptureCommand(const QString& dispatcher, const QString& argument = {}) {
     const QString hyprctl = hyprcapture::ui::trustedSystemProgram(QStringLiteral("hyprctl"));
     if (hyprctl.isEmpty() || dispatcher.isEmpty())
-        return false;
+        return {.success = false, .error = QStringLiteral("hyprctl unavailable")};
 
     QProcess process;
     process.setProgram(hyprctl);
@@ -194,17 +210,21 @@ bool dispatchHyprcaptureCommand(const QString& dispatcher, const QString& argume
     process.setProcessEnvironment(hyprcapture::ui::trustedProcessEnvironment());
     process.start();
     if (!process.waitForStarted(1000))
-        return false;
+        return {.success = false, .error = QStringLiteral("hyprctl start failed")};
     if (!process.waitForFinished(5000)) {
         process.kill();
         process.waitForFinished(500);
-        return false;
+        return {.success = false, .error = QStringLiteral("hyprctl timeout")};
     }
-    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    if (process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0)
+        return {.success = true};
+    return {.success = false, .error = compactProcessError(process, QStringLiteral("dispatch failed"))};
 }
 
-bool dispatchRecordingStart(const QString& requestPath) {
-    return !requestPath.isEmpty() && dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-start"), requestPath);
+DispatchCommandResult dispatchRecordingStart(const QString& requestPath) {
+    if (requestPath.isEmpty())
+        return {.success = false, .error = QStringLiteral("record request missing")};
+    return dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-start"), requestPath);
 }
 
 QString uniqueOutputPath(const QDir& dir, const QString& rawFilename) {
@@ -350,6 +370,8 @@ QString toolbarStyleSheet(const QPalette& palette) {
     const QColor hover = mixedColor(button, highlight, 0.16);
     const QColor checked = mixedColor(button, highlight, 0.32);
     const QColor modeChecked = mixedColor(text, window, 0.72);
+    const QColor recordChecked(212, 48, 62);
+    const QColor recordPressed(176, 35, 48);
 
     return QStringLiteral(
                "#toolbar { background: %1; border: 1px solid %2; border-radius: 8px; }"
@@ -361,6 +383,10 @@ QString toolbarStyleSheet(const QPalette& palette) {
                "QPushButton#captureModeButton:hover { background: transparent; }"
                "QPushButton#captureModeButton:checked { background: %8; border-radius: 7px; }"
                "QPushButton#captureModeButton:pressed { background: %8; border-radius: 7px; }"
+               "QPushButton#recordToggleButton { padding: 4px 6px; background: transparent; border: none; outline: none; }"
+               "QPushButton#recordToggleButton:hover { background: transparent; }"
+               "QPushButton#recordToggleButton:checked { background: %9; border-radius: 7px; }"
+               "QPushButton#recordToggleButton:pressed { background: %10; border-radius: 7px; }"
                "QLabel { color: %3; }")
         .arg(cssRgba(window, 238),
              cssRgba(border, 150),
@@ -369,7 +395,9 @@ QString toolbarStyleSheet(const QPalette& palette) {
              cssRgba(checked, 220),
              cssRgba(highlightedText),
              cssRgba(highlight),
-             cssRgba(modeChecked));
+             cssRgba(modeChecked),
+             cssRgba(recordChecked, 220),
+             cssRgba(recordPressed, 230));
 }
 
 QString popupStyleSheet(const QPalette& palette) {
@@ -1144,7 +1172,7 @@ void CaptureOverlay::buildToolbar() {
     addMode("Window", hyprcapture::CaptureMode::Window, iconFromSvg(kWindowSvg));
 
     m_recordToggle = new QPushButton(m_toolbar);
-    m_recordToggle->setObjectName("captureModeButton");
+    m_recordToggle->setObjectName("recordToggleButton");
     m_recordToggle->setFlat(true);
     m_recordToggle->setFocusPolicy(Qt::NoFocus);
     m_recordToggle->setIcon(iconFromSvg(kRecordSvg));
@@ -1163,6 +1191,7 @@ void CaptureOverlay::buildToolbar() {
             return;
         }
 
+        m_recordError.clear();
         m_record = m_recordToggle->isChecked();
         updateStatus();
         update();
@@ -1402,6 +1431,8 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
         return;
 
     if (m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen) {
+        if (m_record)
+            m_recordError.clear();
         m_mode = hyprcapture::CaptureMode::Region;
         m_dragging = true;
         m_dragStart = event->pos();
@@ -1420,6 +1451,8 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
         return;
 
     m_dragging = true;
+    if (m_record)
+        m_recordError.clear();
     m_dragStart = event->pos();
     m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
     update();
@@ -1686,8 +1719,14 @@ void CaptureOverlay::updateStatus() {
         return;
     }
 
+    if (!m_recordError.isEmpty()) {
+        setStatusText(m_recordError);
+        relayoutToolbar();
+        return;
+    }
+
     if (m_mode != hyprcapture::CaptureMode::Window) {
-        setStatusText(m_record ? QStringLiteral("record") : QString{});
+        setStatusText(m_record ? QStringLiteral("record target") : QString{});
         relayoutToolbar();
         return;
     }
@@ -1704,7 +1743,7 @@ void CaptureOverlay::updateStatus() {
     }
 
     if (hoveredWindow())
-        setStatusText(m_record ? QStringLiteral("record") : QString{});
+        setStatusText(m_record ? QStringLiteral("record target") : QString{});
     else
         setStatusText("choose window");
     relayoutToolbar();
@@ -1865,9 +1904,12 @@ QImage CaptureOverlay::renderResultImage() const {
 }
 
 bool CaptureOverlay::startRecording() {
+    m_recordError.clear();
     QRect cap = captureRectForMode();
-    if (!cap.isValid())
+    if (!cap.isValid()) {
+        m_recordError = QStringLiteral("invalid record target");
         return false;
+    }
 
     hyprcapture::RecordingRequest request;
     request.id = hyprcapture::makeSessionId();
@@ -1881,15 +1923,19 @@ bool CaptureOverlay::startRecording() {
 
     if (m_mode == hyprcapture::CaptureMode::Window) {
         const auto* window = hoveredWindow();
-        if (!window || window->address.isEmpty())
+        if (!window || window->address.isEmpty()) {
+            m_recordError = QStringLiteral("invalid record window");
             return false;
+        }
         request.windowAddress = window->address.toStdString();
         cap = globalToLocalRect(windowFrameGeometry(*window));
     }
 
     const QRect globalRect = localToDesktopLogicalRect(cap);
-    if (!globalRect.isValid())
+    if (!globalRect.isValid()) {
+        m_recordError = QStringLiteral("invalid record geometry");
         return false;
+    }
     request.targetGeometry = {.x = static_cast<double>(globalRect.x()),
                               .y = static_cast<double>(globalRect.y()),
                               .width = static_cast<double>(globalRect.width()),
@@ -1897,17 +1943,21 @@ bool CaptureOverlay::startRecording() {
 
     const QString requestPath = hyprcapture::ui::runtimeFile(QStringLiteral("record-request"), QStringLiteral(".json"));
     const std::string json = hyprcapture::encodeRecordingRequestJson(request);
-    if (!writePrivateTextFile(requestPath, QByteArray(json.data(), static_cast<qsizetype>(json.size()))))
+    if (!writePrivateTextFile(requestPath, QByteArray(json.data(), static_cast<qsizetype>(json.size())))) {
+        m_recordError = QStringLiteral("record request write failed");
         return false;
+    }
 
-    const bool started = dispatchRecordingStart(requestPath);
-    if (!started)
+    const auto started = dispatchRecordingStart(requestPath);
+    if (!started.success) {
+        m_recordError = started.error.isEmpty() ? QStringLiteral("record start failed") : started.error;
         QFile::remove(requestPath);
-    return started;
+    }
+    return started.success;
 }
 
 bool CaptureOverlay::stopRecording() {
-    return dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-stop"));
+    return dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-stop")).success;
 }
 
 void CaptureOverlay::finishCapture() {

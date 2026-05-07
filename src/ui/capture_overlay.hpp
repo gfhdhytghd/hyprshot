@@ -114,6 +114,7 @@ class CaptureOverlay final : public QMainWindow {
     bool                      m_quick = false;
     bool                      m_record = false;
     bool                      m_recordActive = false;
+    QString                   m_recordError;
     bool                      m_dragging = false;
     bool                      m_finishing = false;
     bool                      m_fadeOutStarted = false;
