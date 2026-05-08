@@ -31,5 +31,6 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool 
 std::optional<RecordingFrame> captureRecordingFrame(const RecordingFrameRequest& request);
 std::string writeCompositorSessionJsonFile(const CaptureSession& session, std::string_view json);
 void cleanupCompositorArtifacts(const CaptureSession& session);
+void shutdownArtifactCapture();
 
 } // namespace hyprcapture

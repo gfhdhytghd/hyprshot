@@ -9,6 +9,7 @@
 #include <hyprland/src/desktop/rule/layerRule/LayerRuleEffectContainer.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 
+#include "plugin/artifact_capture.hpp"
 #include "plugin/recording.hpp"
 #include "plugin/session_launcher.hpp"
 
@@ -228,6 +229,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     hyprcapture::shutdownRecording();
+    hyprcapture::shutdownArtifactCapture();
     Desktop::Rule::ruleEngine()->unregisterRule(kOverlayLayerRuleName);
     g_pluginHandle = nullptr;
 }

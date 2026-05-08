@@ -56,6 +56,7 @@ struct PixelBounds {
 
 struct RealBackgroundCaptureState {
     PHLWINDOW    window;
+    std::size_t  targetIndex = 0;
     int          cropX = 0;
     int          cropY = 0;
     int          width = 0;
@@ -75,6 +76,11 @@ struct PendingRealBackgroundCapture {
     std::size_t           windowIndex = 0;
 };
 
+struct RealBackgroundCaptureTarget {
+    PHLWINDOW window;
+    CBox      artifactBox;
+};
+
 constexpr int WINDOW_ARTIFACT_CROP_PADDING = 128;
 constexpr std::size_t MAX_SESSION_MONITORS = 64;
 constexpr std::size_t MAX_SESSION_WINDOWS = 512;
@@ -88,7 +94,7 @@ constexpr auto        STALE_ARTIFACT_MAX_AGE = std::chrono::minutes(10);
 constexpr int         WINDOW_BACKGROUND_MIN_ALPHA = 32;
 constexpr int         WINDOW_SHADOW_MAX_RGB = 32;
 constexpr int         WINDOW_SHADOW_MAX_ALPHA = 223;
-constexpr int         WINDOW_BACKGROUND_INTERIOR_RADIUS = 1;
+constexpr auto        REAL_BACKGROUND_RECORDING_REFRESH_INTERVAL = std::chrono::seconds(1);
 
 struct RgbaReadbackRegion {
     int         outputCropX = 0;
@@ -123,6 +129,14 @@ struct ArtifactBudget {
         remaining -= bytes;
         return true;
     }
+};
+
+struct RealBackgroundRecordingCache {
+    PHLWINDOW       window;
+    PHLMONITOR      monitor;
+    Rect            geometry;
+    Time::steady_tp capturedAt;
+    RgbaReadback    readback;
 };
 
 Rect toRect(const CBox& box) {
@@ -573,6 +587,10 @@ RealBackgroundRenderHookContext* g_realBackgroundRenderHookContext = nullptr;
 RenderWindowFn                   g_renderWindowOriginal = nullptr;
 RenderTextureInternalFn          g_renderTextureInternalOriginal = nullptr;
 RenderTextureWithBlurInternalFn  g_renderTextureWithBlurInternalOriginal = nullptr;
+CFunctionHook*                   g_realBackgroundRenderWindowHook = nullptr;
+CFunctionHook*                   g_realBackgroundRenderTextureInternalHook = nullptr;
+CFunctionHook*                   g_realBackgroundRenderTextureWithBlurInternalHook = nullptr;
+std::optional<RealBackgroundRecordingCache> g_realBackgroundRecordingCache;
 
 PHLWINDOW currentRenderWindow() {
     if (!g_pHyprOpenGL)
@@ -985,30 +1003,104 @@ void* findRenderTextureWithBlurInternalFunction() {
     return findFunctionByDemangledName("renderTextureWithBlurInternal", "CHyprOpenGLImpl::renderTextureWithBlurInternal(");
 }
 
-void renderRealBackgroundArtifactsForMonitor(const PHLMONITOR& monitor,
-                                             const Time::steady_tp& frozenTime,
-                                             const std::vector<PendingRealBackgroundCapture*>& requests,
-                                             CaptureSession& session,
-                                             ArtifactBudget& budget) {
-    if (!monitor || !monitor->m_activeWorkspace || requests.empty() || !g_pHyprRenderer || !g_pHyprOpenGL)
+void removeRealBackgroundHook(CFunctionHook*& hook) {
+    if (!hook)
         return;
+    hook->unhook();
+    HyprlandAPI::removeFunctionHook(g_pluginHandle, hook);
+    hook = nullptr;
+}
+
+void shutdownRealBackgroundHooks() {
+    g_realBackgroundRenderHookContext = nullptr;
+    g_renderWindowOriginal = nullptr;
+    g_renderTextureInternalOriginal = nullptr;
+    g_renderTextureWithBlurInternalOriginal = nullptr;
+    removeRealBackgroundHook(g_realBackgroundRenderTextureWithBlurInternalHook);
+    removeRealBackgroundHook(g_realBackgroundRenderTextureInternalHook);
+    removeRealBackgroundHook(g_realBackgroundRenderWindowHook);
+}
+
+bool ensureRealBackgroundHooks() {
+    if (g_realBackgroundRenderWindowHook && g_renderWindowOriginal)
+        return true;
+
+    shutdownRealBackgroundHooks();
+
+    void* renderWindowSource = findRenderWindowFunction();
+    if (!renderWindowSource)
+        return false;
+
+    g_realBackgroundRenderWindowHook = HyprlandAPI::createFunctionHook(g_pluginHandle, renderWindowSource, reinterpret_cast<void*>(&hkRenderWindow));
+    if (!g_realBackgroundRenderWindowHook || !g_realBackgroundRenderWindowHook->hook()) {
+        shutdownRealBackgroundHooks();
+        return false;
+    }
+
+    g_renderWindowOriginal = reinterpret_cast<RenderWindowFn>(g_realBackgroundRenderWindowHook->m_original);
+    if (!g_renderWindowOriginal) {
+        shutdownRealBackgroundHooks();
+        return false;
+    }
+
+    void* renderTextureInternalSource = findRenderTextureInternalFunction();
+    void* renderTextureWithBlurInternalSource = findRenderTextureWithBlurInternalFunction();
+    if (!renderTextureInternalSource || !renderTextureWithBlurInternalSource)
+        return true;
+
+    g_realBackgroundRenderTextureInternalHook =
+        HyprlandAPI::createFunctionHook(g_pluginHandle, renderTextureInternalSource, reinterpret_cast<void*>(&hkRenderTextureInternal));
+    g_realBackgroundRenderTextureWithBlurInternalHook =
+        HyprlandAPI::createFunctionHook(g_pluginHandle, renderTextureWithBlurInternalSource, reinterpret_cast<void*>(&hkRenderTextureWithBlurInternal));
+
+    const bool textureHooksReady = g_realBackgroundRenderTextureInternalHook && g_realBackgroundRenderTextureWithBlurInternalHook &&
+        g_realBackgroundRenderTextureInternalHook->hook() && g_realBackgroundRenderTextureWithBlurInternalHook->hook();
+
+    if (!textureHooksReady) {
+        removeRealBackgroundHook(g_realBackgroundRenderTextureWithBlurInternalHook);
+        removeRealBackgroundHook(g_realBackgroundRenderTextureInternalHook);
+        return true;
+    }
+
+    g_renderTextureInternalOriginal = reinterpret_cast<RenderTextureInternalFn>(g_realBackgroundRenderTextureInternalHook->m_original);
+    g_renderTextureWithBlurInternalOriginal =
+        reinterpret_cast<RenderTextureWithBlurInternalFn>(g_realBackgroundRenderTextureWithBlurInternalHook->m_original);
+
+    if (!g_renderTextureInternalOriginal || !g_renderTextureWithBlurInternalOriginal) {
+        g_renderTextureInternalOriginal = nullptr;
+        g_renderTextureWithBlurInternalOriginal = nullptr;
+        removeRealBackgroundHook(g_realBackgroundRenderTextureWithBlurInternalHook);
+        removeRealBackgroundHook(g_realBackgroundRenderTextureInternalHook);
+    }
+
+    return true;
+}
+
+std::vector<RgbaReadback> renderRealBackgroundReadbacksForMonitor(const PHLMONITOR& monitor,
+                                                                  const Time::steady_tp& frozenTime,
+                                                                  const std::vector<RealBackgroundCaptureTarget>& targets) {
+    std::vector<RgbaReadback> readbacks(targets.size());
+    if (!monitor || !monitor->m_activeWorkspace || targets.empty() || !g_pHyprRenderer || !g_pHyprOpenGL)
+        return readbacks;
 
     const int framebufferWidth = positiveRoundedIntFromDouble(monitor->m_pixelSize.x);
     const int framebufferHeight = positiveRoundedIntFromDouble(monitor->m_pixelSize.y);
     std::size_t framebufferBytes = 0;
     if (!checkedRgbaByteSize(framebufferWidth, framebufferHeight, framebufferBytes))
-        return;
+        return readbacks;
     const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
 
     std::vector<RealBackgroundCaptureState> states;
-    states.reserve(requests.size());
-    for (const auto* request : requests) {
-        if (!request || !request->window)
+    states.reserve(targets.size());
+    for (std::size_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
+        const auto& target = targets[targetIndex];
+        if (!target.window)
             continue;
 
-        CBox cropBox = request->artifactBox.copy().translate(-monitor->m_position).scale(scale).round();
+        CBox cropBox = target.artifactBox.copy().translate(-monitor->m_position).scale(scale).round();
         RealBackgroundCaptureState state;
-        state.window = request->window;
+        state.window = target.window;
+        state.targetIndex = targetIndex;
         state.cropX = clampedIntFromDouble(cropBox.x);
         state.cropY = clampedIntFromDouble(cropBox.y);
         state.width = positiveIntFromDouble(cropBox.w);
@@ -1016,79 +1108,20 @@ void renderRealBackgroundArtifactsForMonitor(const PHLMONITOR& monitor,
         states.push_back(std::move(state));
     }
     if (states.empty())
-        return;
+        return readbacks;
 
     CFramebuffer framebuffer;
     const auto drmFormat = monitor->m_output && monitor->m_output->state ? monitor->m_output->state->state().drmFormat : DRM_FORMAT_ABGR8888;
     if (!framebuffer.alloc(framebufferWidth, framebufferHeight, DRM_FORMAT_ABGR8888) && !framebuffer.alloc(framebufferWidth, framebufferHeight, drmFormat))
-        return;
+        return readbacks;
 
-    void* renderWindowSource = findRenderWindowFunction();
-    if (!renderWindowSource)
-        return;
-
-    void* renderTextureInternalSource = findRenderTextureInternalFunction();
-    void* renderTextureWithBlurInternalSource = findRenderTextureWithBlurInternalFunction();
-
-    const auto removeHook = [](CFunctionHook* hook) {
-        if (!hook)
-            return;
-        hook->unhook();
-        HyprlandAPI::removeFunctionHook(g_pluginHandle, hook);
-    };
-
-    CFunctionHook* renderWindowHook = HyprlandAPI::createFunctionHook(g_pluginHandle, renderWindowSource, reinterpret_cast<void*>(&hkRenderWindow));
-    if (!renderWindowHook)
-        return;
-
-    if (!renderWindowHook->hook()) {
-        removeHook(renderWindowHook);
-        return;
-    }
-
-    g_renderWindowOriginal = reinterpret_cast<RenderWindowFn>(renderWindowHook->m_original);
-    if (!g_renderWindowOriginal) {
-        removeHook(renderWindowHook);
-        return;
-    }
-
-    CFunctionHook* renderTextureInternalHook = nullptr;
-    CFunctionHook* renderTextureWithBlurInternalHook = nullptr;
-    if (renderTextureInternalSource && renderTextureWithBlurInternalSource) {
-        renderTextureInternalHook =
-            HyprlandAPI::createFunctionHook(g_pluginHandle, renderTextureInternalSource, reinterpret_cast<void*>(&hkRenderTextureInternal));
-        renderTextureWithBlurInternalHook =
-            HyprlandAPI::createFunctionHook(g_pluginHandle, renderTextureWithBlurInternalSource, reinterpret_cast<void*>(&hkRenderTextureWithBlurInternal));
-
-        const bool textureHooksReady = renderTextureInternalHook && renderTextureWithBlurInternalHook && renderTextureInternalHook->hook() &&
-            renderTextureWithBlurInternalHook->hook();
-
-        if (textureHooksReady) {
-            g_renderTextureInternalOriginal = reinterpret_cast<RenderTextureInternalFn>(renderTextureInternalHook->m_original);
-            g_renderTextureWithBlurInternalOriginal =
-                reinterpret_cast<RenderTextureWithBlurInternalFn>(renderTextureWithBlurInternalHook->m_original);
-        }
-
-        if (!textureHooksReady || !g_renderTextureInternalOriginal || !g_renderTextureWithBlurInternalOriginal) {
-            g_renderTextureInternalOriginal = nullptr;
-            g_renderTextureWithBlurInternalOriginal = nullptr;
-            removeHook(renderTextureWithBlurInternalHook);
-            removeHook(renderTextureInternalHook);
-            renderTextureWithBlurInternalHook = nullptr;
-            renderTextureInternalHook = nullptr;
-        }
-    }
+    if (!ensureRealBackgroundHooks())
+        return readbacks;
 
     RealBackgroundRenderHookContext hookContext{.monitor = monitor, .states = &states};
     g_realBackgroundRenderHookContext = &hookContext;
-    const auto cleanupHook = [&]() {
+    const auto clearHookContext = [&]() {
         g_realBackgroundRenderHookContext = nullptr;
-        g_renderWindowOriginal = nullptr;
-        g_renderTextureInternalOriginal = nullptr;
-        g_renderTextureWithBlurInternalOriginal = nullptr;
-        removeHook(renderTextureWithBlurInternalHook);
-        removeHook(renderTextureInternalHook);
-        removeHook(renderWindowHook);
     };
 
     const bool previousBlockFeedback = g_pHyprRenderer->m_bBlockSurfaceFeedback;
@@ -1099,35 +1132,56 @@ void renderRealBackgroundArtifactsForMonitor(const PHLMONITOR& monitor,
     g_pHyprRenderer->m_bBlockSurfaceFeedback = true;
     if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &framebuffer)) {
         g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
-        cleanupHook();
-        return;
+        clearHookContext();
+        return readbacks;
     }
 
     g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 1.0});
     g_pHyprRenderer->renderWorkspace(monitor, monitor->m_activeWorkspace, frozenTime, CBox{0, 0, static_cast<double>(framebufferWidth), static_cast<double>(framebufferHeight)});
     g_pHyprOpenGL->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
-    cleanupHook();
+    clearHookContext();
     g_pHyprRenderer->m_renderPass.clear();
     g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
     g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
 
     for (std::size_t i = 0; i < states.size(); ++i) {
         auto& state = states[i];
-        if (!state.captured || state.readback.pixels.empty() || i >= requests.size())
+        if (!state.captured || state.readback.pixels.empty() || state.targetIndex >= readbacks.size())
             continue;
 
+        readbacks[state.targetIndex] = std::move(state.readback);
+    }
+
+    return readbacks;
+}
+
+void renderRealBackgroundArtifactsForMonitor(const PHLMONITOR& monitor,
+                                             const Time::steady_tp& frozenTime,
+                                             const std::vector<PendingRealBackgroundCapture*>& requests,
+                                             CaptureSession& session,
+                                             ArtifactBudget& budget) {
+    if (requests.empty())
+        return;
+
+    std::vector<RealBackgroundCaptureTarget> targets;
+    targets.reserve(requests.size());
+    for (const auto* request : requests)
+        targets.push_back(request ? RealBackgroundCaptureTarget{.window = request->window, .artifactBox = request->artifactBox} : RealBackgroundCaptureTarget{});
+
+    auto readbacks = renderRealBackgroundReadbacksForMonitor(monitor, frozenTime, targets);
+    for (std::size_t i = 0; i < readbacks.size() && i < requests.size(); ++i) {
         auto* request = requests[i];
-        if (!request || request->windowIndex >= session.windows.size())
+        if (!request || request->windowIndex >= session.windows.size() || readbacks[i].pixels.empty())
             continue;
 
-        if (!writeRgbaFile(request->path, state.readback.pixels, &budget))
+        if (!writeRgbaFile(request->path, readbacks[i].pixels, &budget))
             continue;
 
         auto& info = session.windows[request->windowIndex];
         info.realBackgroundPath = request->path.string();
-        info.realBackgroundWidth = state.readback.width;
-        info.realBackgroundHeight = state.readback.height;
+        info.realBackgroundWidth = readbacks[i].width;
+        info.realBackgroundHeight = readbacks[i].height;
         info.realBackgroundTopDown = true;
     }
 }
@@ -1217,6 +1271,12 @@ bool readbackHasSize(const RgbaReadback& frame, int width, int height) {
     return frame.width == width && frame.height == height && checkedRgbaByteSize(width, height, bytes) && frame.pixels.size() == bytes;
 }
 
+bool sameGeometry(const Rect& left, const Rect& right) {
+    constexpr double EPSILON = 0.5;
+    return std::abs(left.x - right.x) < EPSILON && std::abs(left.y - right.y) < EPSILON && std::abs(left.width - right.width) < EPSILON &&
+        std::abs(left.height - right.height) < EPSILON;
+}
+
 RgbaReadback solidBackgroundReadback(int width, int height, unsigned char r, unsigned char g, unsigned char b) {
     std::size_t bytes = 0;
     if (!checkedRgbaByteSize(width, height, bytes))
@@ -1235,31 +1295,6 @@ RgbaReadback solidBackgroundReadback(int width, int height, unsigned char r, uns
     return background;
 }
 
-RgbaReadback imageBackgroundReadback(const RecordingFrame& source, int width, int height) {
-    if (source.rgba.empty() || source.width <= 0 || source.height <= 0)
-        return {};
-
-    std::size_t bytes = 0;
-    if (!checkedRgbaByteSize(width, height, bytes))
-        return {};
-
-    RgbaReadback background;
-    background.width = width;
-    background.height = height;
-    background.pixels.assign(bytes, 0);
-    for (int y = 0; y < height; ++y) {
-        const int srcY = std::clamp(static_cast<int>((static_cast<long long>(y) * source.height) / height), 0, source.height - 1);
-        for (int x = 0; x < width; ++x) {
-            const int srcX = std::clamp(static_cast<int>((static_cast<long long>(x) * source.width) / width), 0, source.width - 1);
-            const auto src = (static_cast<std::size_t>(srcY) * source.width + srcX) * RGBA_BYTES_PER_PIXEL;
-            const auto dst = (static_cast<std::size_t>(y) * width + x) * RGBA_BYTES_PER_PIXEL;
-            std::copy(source.rgba.data() + src, source.rgba.data() + src + RGBA_BYTES_PER_PIXEL, background.pixels.data() + dst);
-            background.pixels[dst + 3] = 255;
-        }
-    }
-    return background;
-}
-
 bool isWindowContentPixel(const unsigned char* px) {
     const int alpha = px[3];
     if (alpha < WINDOW_BACKGROUND_MIN_ALPHA)
@@ -1267,27 +1302,6 @@ bool isWindowContentPixel(const unsigned char* px) {
 
     const int maxRgb = std::max({px[0], px[1], px[2]});
     return maxRgb > WINDOW_SHADOW_MAX_RGB || alpha > WINDOW_SHADOW_MAX_ALPHA;
-}
-
-bool isWindowContentPixelAt(const RgbaReadback& artifact, int x, int y) {
-    if (x < 0 || x >= artifact.width || y < 0 || y >= artifact.height || artifact.pixels.empty())
-        return false;
-
-    const auto* px = artifact.pixels.data() + (static_cast<std::size_t>(y) * artifact.width + x) * RGBA_BYTES_PER_PIXEL;
-    return isWindowContentPixel(px);
-}
-
-bool isWindowInteriorPixel(const RgbaReadback& artifact, int x, int y) {
-    if (!isWindowContentPixelAt(artifact, x, y))
-        return false;
-
-    for (int dy = -WINDOW_BACKGROUND_INTERIOR_RADIUS; dy <= WINDOW_BACKGROUND_INTERIOR_RADIUS; ++dy) {
-        for (int dx = -WINDOW_BACKGROUND_INTERIOR_RADIUS; dx <= WINDOW_BACKGROUND_INTERIOR_RADIUS; ++dx) {
-            if (!isWindowContentPixelAt(artifact, x + dx, y + dy))
-                return false;
-        }
-    }
-    return true;
 }
 
 void reconstructRealWindowBackground(RgbaReadback& background, const RgbaReadback& artifact) {
@@ -1313,44 +1327,28 @@ void reconstructRealWindowBackground(RgbaReadback& background, const RgbaReadbac
     }
 }
 
-void applyWindowContentAlphaMask(RgbaReadback& background, const RgbaReadback& artifact) {
-    if (!readbackHasSize(background, artifact.width, artifact.height) || artifact.pixels.empty())
-        return;
-
-    for (int y = 0; y < background.height; ++y) {
-        for (int x = 0; x < background.width; ++x) {
-            const auto i = (static_cast<std::size_t>(y) * background.width + x) * RGBA_BYTES_PER_PIXEL;
-            if (isWindowInteriorPixel(artifact, x, y)) {
-                background.pixels[i + 3] = 255;
-            } else {
-                background.pixels[i + 0] = 0;
-                background.pixels[i + 1] = 0;
-                background.pixels[i + 2] = 0;
-                background.pixels[i + 3] = 0;
-            }
-        }
-    }
-}
-
-void compositeWindowOverBackground(RgbaReadback& frame, RgbaReadback background) {
+void compositeWindowOverBackground(RgbaReadback& frame, const RgbaReadback& background) {
     if (!readbackHasSize(frame, background.width, background.height))
         return;
 
-    applyWindowContentAlphaMask(background, frame);
-    for (std::size_t i = 0; i + 3 < frame.pixels.size(); i += RGBA_BYTES_PER_PIXEL) {
-        if (background.pixels[i + 3] == 0)
-            continue;
+    for (int y = 0; y < frame.height; ++y) {
+        for (int x = 0; x < frame.width; ++x) {
+            const auto i = (static_cast<std::size_t>(y) * frame.width + x) * RGBA_BYTES_PER_PIXEL;
+            if (!isWindowContentPixel(frame.pixels.data() + i))
+                continue;
 
-        const int alpha = frame.pixels[i + 3];
-        if (alpha >= 255) {
+            const int  alpha = frame.pixels[i + 3];
+            if (alpha >= 255) {
+                frame.pixels[i + 3] = 255;
+                continue;
+            }
+
+            const int inverseAlpha = 255 - alpha;
+            for (int channel = 0; channel < 3; ++channel)
+                frame.pixels[i + channel] =
+                    static_cast<unsigned char>((frame.pixels[i + channel] * alpha + background.pixels[i + channel] * inverseAlpha + 127) / 255);
             frame.pixels[i + 3] = 255;
-            continue;
         }
-        const int inverseAlpha = 255 - alpha;
-        for (int channel = 0; channel < 3; ++channel)
-            frame.pixels[i + channel] =
-                static_cast<unsigned char>((frame.pixels[i + channel] * alpha + background.pixels[i + channel] * inverseAlpha + 127) / 255);
-        frame.pixels[i + 3] = 255;
     }
 }
 
@@ -1358,10 +1356,15 @@ void compositeSolidBackground(RgbaReadback& frame, unsigned char r, unsigned cha
     compositeWindowOverBackground(frame, solidBackgroundReadback(frame.width, frame.height, r, g, b));
 }
 
-void compositeRealBackground(RgbaReadback& frame, const RecordingFrame& background) {
-    RgbaReadback realBackground = imageBackgroundReadback(background, frame.width, frame.height);
-    reconstructRealWindowBackground(realBackground, frame);
-    compositeWindowOverBackground(frame, std::move(realBackground));
+void compositeRealBackground(RgbaReadback& frame, const RgbaReadback& background, bool backgroundContainsWindow) {
+    if (backgroundContainsWindow) {
+        RgbaReadback realBackground = background;
+        reconstructRealWindowBackground(realBackground, frame);
+        compositeWindowOverBackground(frame, realBackground);
+        return;
+    }
+
+    compositeWindowOverBackground(frame, background);
 }
 
 std::optional<CHyprColor> recordingSolidBackgroundColor(WindowBackground background) {
@@ -1444,6 +1447,35 @@ std::optional<RecordingFrame> captureDesktopRegionRecordingFrame(const Rect& tar
     return frame;
 }
 
+const RgbaReadback* captureWindowRealBackgroundRecordingFrame(const PHLWINDOW& window,
+                                                              const PHLMONITOR& monitor,
+                                                              const Time::steady_tp& frozenTime,
+                                                              const Rect& targetGeometry) {
+    if (!window || !monitor || targetGeometry.width <= 0.0 || targetGeometry.height <= 0.0)
+        return nullptr;
+
+    if (g_realBackgroundRecordingCache && g_realBackgroundRecordingCache->window && g_realBackgroundRecordingCache->window.get() == window.get() &&
+        g_realBackgroundRecordingCache->monitor && g_realBackgroundRecordingCache->monitor.get() == monitor.get() &&
+        sameGeometry(g_realBackgroundRecordingCache->geometry, targetGeometry) && !g_realBackgroundRecordingCache->readback.pixels.empty() &&
+        frozenTime - g_realBackgroundRecordingCache->capturedAt < REAL_BACKGROUND_RECORDING_REFRESH_INTERVAL) {
+        return &g_realBackgroundRecordingCache->readback;
+    }
+
+    const CBox artifactBox{targetGeometry.x, targetGeometry.y, targetGeometry.width, targetGeometry.height};
+    auto       readbacks = renderRealBackgroundReadbacksForMonitor(monitor, frozenTime, {{.window = window, .artifactBox = artifactBox}});
+    if (readbacks.empty() || readbacks.front().pixels.empty())
+        return nullptr;
+
+    g_realBackgroundRecordingCache = RealBackgroundRecordingCache{
+        .window = window,
+        .monitor = monitor,
+        .geometry = targetGeometry,
+        .capturedAt = frozenTime,
+        .readback = std::move(readbacks.front()),
+    };
+    return &g_realBackgroundRecordingCache->readback;
+}
+
 std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRequest& request) {
     const auto window = findWindowByAddress(request.windowAddress);
     if (!window || !shouldCaptureWindow(window))
@@ -1465,7 +1497,8 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
         renderOptions.clearColor = *solidBackground;
         renderOptions.postprocessAlpha = false;
     }
-    auto readback = renderWindowArtifactReadback(window, monitor, Time::steadyNow(), renderDecorations, width, height, artifactBox, nullptr, false, renderOptions);
+    const auto frozenTime = Time::steadyNow();
+    auto       readback = renderWindowArtifactReadback(window, monitor, frozenTime, renderDecorations, width, height, artifactBox, nullptr, false, renderOptions);
     if (readback.pixels.empty())
         return std::nullopt;
 
@@ -1500,8 +1533,8 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
                                        .height = readback.height * artifactScaleY};
 
     if (request.defaults.windowBackground == WindowBackground::Real) {
-        if (auto background = captureDesktopRegionRecordingFrame(readbackLogicalBox))
-            compositeRealBackground(readback, *background);
+        if (auto background = captureWindowRealBackgroundRecordingFrame(window, monitor, frozenTime, readbackLogicalBox))
+            compositeRealBackground(readback, *background, false);
         else
             compositeSolidBackground(readback, 30, 34, 38);
     }
@@ -1668,6 +1701,11 @@ void cleanupCompositorArtifacts(const CaptureSession& session) {
         std::error_code ec;
         std::filesystem::remove(parent, ec);
     }
+}
+
+void shutdownArtifactCapture() {
+    g_realBackgroundRecordingCache.reset();
+    shutdownRealBackgroundHooks();
 }
 
 } // namespace hyprcapture
