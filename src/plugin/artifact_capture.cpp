@@ -94,7 +94,6 @@ constexpr auto        STALE_ARTIFACT_MAX_AGE = std::chrono::minutes(10);
 constexpr int         WINDOW_BACKGROUND_MIN_ALPHA = 32;
 constexpr int         WINDOW_SHADOW_MAX_RGB = 32;
 constexpr int         WINDOW_SHADOW_MAX_ALPHA = 223;
-constexpr auto        REAL_BACKGROUND_RECORDING_REFRESH_INTERVAL = std::chrono::seconds(1);
 
 struct RgbaReadbackRegion {
     int         outputCropX = 0;
@@ -1369,12 +1368,6 @@ bool readbackHasSize(const RgbaReadback& frame, int width, int height) {
     return frame.width == width && frame.height == height && checkedRgbaByteSize(width, height, bytes) && frame.pixels.size() == bytes;
 }
 
-bool sameGeometry(const Rect& left, const Rect& right) {
-    constexpr double EPSILON = 0.5;
-    return std::abs(left.x - right.x) < EPSILON && std::abs(left.y - right.y) < EPSILON && std::abs(left.width - right.width) < EPSILON &&
-        std::abs(left.height - right.height) < EPSILON;
-}
-
 RgbaReadback solidBackgroundReadback(int width, int height, unsigned char r, unsigned char g, unsigned char b) {
     std::size_t bytes = 0;
     if (!checkedRgbaByteSize(width, height, bytes))
@@ -1517,13 +1510,6 @@ const RealBackgroundRecordingCache* captureWindowRealBackgroundRecordingFrame(co
                                                                               const Rect& targetGeometry) {
     if (!window || !monitor || targetGeometry.width <= 0.0 || targetGeometry.height <= 0.0)
         return nullptr;
-
-    if (g_realBackgroundRecordingCache && g_realBackgroundRecordingCache->window && g_realBackgroundRecordingCache->window.get() == window.get() &&
-        g_realBackgroundRecordingCache->monitor && g_realBackgroundRecordingCache->monitor.get() == monitor.get() &&
-        sameGeometry(g_realBackgroundRecordingCache->geometry, targetGeometry) && g_realBackgroundRecordingCache->texture &&
-        frozenTime - g_realBackgroundRecordingCache->capturedAt < REAL_BACKGROUND_RECORDING_REFRESH_INTERVAL) {
-        return &*g_realBackgroundRecordingCache;
-    }
 
     const CBox artifactBox{targetGeometry.x, targetGeometry.y, targetGeometry.width, targetGeometry.height};
     auto       readbacks = renderRealBackgroundReadbacksForMonitor(monitor, frozenTime, {{.window = window, .artifactBox = artifactBox}});
