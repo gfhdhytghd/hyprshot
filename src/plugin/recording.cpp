@@ -48,6 +48,11 @@ constexpr int         MAX_FRAME_QUEUE = 2;
 constexpr int         MAX_CONSECUTIVE_FRAME_FAILURES = 30;
 constexpr int         RGBA_BYTES_PER_PIXEL = 4;
 
+struct QueuedEncoderFrame {
+    std::shared_ptr<const std::vector<unsigned char>> pixels;
+    int                                               repeats = 1;
+};
+
 struct PipeFds {
     int read = -1;
     int write = -1;
@@ -561,12 +566,13 @@ class RawVideoEncoder {
         return !m_stopping && m_frames.size() < MAX_FRAME_QUEUE;
     }
 
-    bool enqueue(RecordingFrame&& frame) {
+    bool enqueue(RecordingFrame&& frame, int repeats = 1) {
         std::lock_guard lock(m_mutex);
         if (m_stopping || m_frames.size() >= MAX_FRAME_QUEUE)
             return false;
 
-        m_frames.push_back(std::move(frame.rgba));
+        auto pixels = std::make_shared<std::vector<unsigned char>>(std::move(frame.rgba));
+        m_frames.push_back(QueuedEncoderFrame{.pixels = std::move(pixels), .repeats = std::max(1, repeats)});
         m_cv.notify_one();
         return true;
     }
@@ -616,8 +622,9 @@ class RawVideoEncoder {
     }
 
     void workerMain() {
+        bool writeFailed = false;
         while (true) {
-            std::vector<unsigned char> frame;
+            QueuedEncoderFrame frame;
             {
                 std::unique_lock lock(m_mutex);
                 m_cv.wait(lock, [this] { return m_stopping || !m_frames.empty(); });
@@ -630,7 +637,16 @@ class RawVideoEncoder {
                 m_frames.pop_front();
             }
 
-            if (!writeAll(frame))
+            if (!frame.pixels)
+                continue;
+
+            for (int i = 0; i < frame.repeats; ++i) {
+                if (!writeAll(*frame.pixels)) {
+                    writeFailed = true;
+                    break;
+                }
+            }
+            if (writeFailed)
                 break;
         }
 
@@ -648,7 +664,7 @@ class RawVideoEncoder {
     pid_t                 m_pid = -1;
     mutable std::mutex    m_mutex;
     std::condition_variable m_cv;
-    std::deque<std::vector<unsigned char>> m_frames;
+    std::deque<QueuedEncoderFrame>       m_frames;
     bool                                m_stopping = false;
     std::thread                         m_worker;
 };
@@ -753,12 +769,24 @@ void captureRecordingTick(SP<CEventLoopTimer> self) {
     if (!g_recording || g_recording->timer.get() != self.get())
         return;
 
-    const auto now = Time::steadyNow();
+    const auto tickStartedAt = Time::steadyNow();
     if (g_recording->request.defaults.recordMaxSeconds > 0 &&
-        std::chrono::duration_cast<std::chrono::seconds>(now - g_recording->startedAt).count() >= g_recording->request.defaults.recordMaxSeconds) {
+        std::chrono::duration_cast<std::chrono::seconds>(tickStartedAt - g_recording->startedAt).count() >= g_recording->request.defaults.recordMaxSeconds) {
         stopRecordingInternal("stopped at max duration", true);
         return;
     }
+
+    int framesDue = 1;
+    if (g_recording->nextFrameAt.time_since_epoch().count() != 0) {
+        auto dueAt = g_recording->nextFrameAt;
+        while (dueAt + g_recording->interval <= tickStartedAt) {
+            dueAt += g_recording->interval;
+            ++framesDue;
+        }
+    }
+    framesDue = std::clamp(framesDue, 1, 240);
+    if (framesDue > 1)
+        traceTiming("record.duplicate_frame_due");
 
     if (g_recording->encoder && g_recording->encoder->hasQueueSpace()) {
         std::optional<RecordingFrame> frame;
@@ -776,7 +804,7 @@ void captureRecordingTick(SP<CEventLoopTimer> self) {
         bool enqueued = false;
         if (processed) {
             ScopedTiming timing("record.enqueue");
-            enqueued = g_recording->encoder->enqueue(std::move(*frame));
+            enqueued = g_recording->encoder->enqueue(std::move(*frame), framesDue);
         }
 
         if (enqueued) {
@@ -797,6 +825,8 @@ void captureRecordingTick(SP<CEventLoopTimer> self) {
         const auto afterTick = Time::steadyNow();
         if (g_recording->nextFrameAt.time_since_epoch().count() == 0)
             g_recording->nextFrameAt = afterTick + g_recording->interval;
+        else
+            g_recording->nextFrameAt += g_recording->interval * framesDue;
         while (g_recording->nextFrameAt <= afterTick)
             g_recording->nextFrameAt += g_recording->interval;
 

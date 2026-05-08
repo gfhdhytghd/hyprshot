@@ -117,6 +117,7 @@ struct WindowRenderOptions {
     CHyprColor clearColor{0.0, 0.0, 0.0, 0.0};
     SP<CTexture> backgroundTexture;
     bool       asyncReadback = false;
+    bool       clipBackgroundToWindow = false;
     bool       postprocessAlpha = true;
 };
 
@@ -912,6 +913,11 @@ CFramebuffer& reusableWindowRecordingFramebuffer() {
     return framebuffer;
 }
 
+CFramebuffer& reusableWindowRecordingMaskFramebuffer() {
+    static CFramebuffer framebuffer;
+    return framebuffer;
+}
+
 CBox renderedWindowBox(const PHLWINDOW& window, CBox box) {
     if (window->m_workspace && !window->m_pinned)
         box.translate(window->m_workspace->m_renderOffset->value());
@@ -1072,12 +1078,12 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
     const bool previousBlockShader = g_pHyprOpenGL->m_renderData.blockScreenShader;
     const bool previousRenderingSnapshot = g_pHyprRenderer->m_bRenderingSnapshot;
 
-    const auto renderIntoFramebuffer = [&]() {
+    const auto renderIntoFramebuffer = [&](CFramebuffer& targetFramebuffer, CFramebuffer* backgroundMatte = nullptr) {
         ScopedTiming timing("window.render");
         CRegion fakeDamage{0, 0, framebufferWidth, framebufferHeight};
         g_pHyprRenderer->makeEGLCurrent();
         g_pHyprRenderer->m_bBlockSurfaceFeedback = true;
-        if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &framebuffer)) {
+        if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &targetFramebuffer)) {
             g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
             return false;
         }
@@ -1085,8 +1091,12 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
         g_pHyprRenderer->m_bRenderingSnapshot = true;
         FullSurfaceVisibleRegionOverride fullVisibleRegion(window);
         g_pHyprOpenGL->clear(options.clearColor);
-        if (options.backgroundTexture)
-            g_pHyprOpenGL->renderTexture(options.backgroundTexture, renderCropBox, {.a = 1.0F});
+        if (options.backgroundTexture) {
+            if (backgroundMatte)
+                g_pHyprOpenGL->renderTextureMatte(options.backgroundTexture, renderCropBox, *backgroundMatte);
+            else
+                g_pHyprOpenGL->renderTexture(options.backgroundTexture, renderCropBox, {.a = 1.0F});
+        }
         g_pHyprRenderer->renderWindow(window, monitor, frozenTime, decorate, RENDER_PASS_ALL, false, false);
         g_pHyprRenderer->m_bRenderingSnapshot = previousRenderingSnapshot;
 
@@ -1097,8 +1107,39 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
         return true;
     };
 
-    if (!renderIntoFramebuffer())
+    if (options.backgroundTexture && options.clipBackgroundToWindow) {
+        auto& matteFramebuffer = reusableWindowRecordingMaskFramebuffer();
+        if (!matteFramebuffer.alloc(framebufferWidth, framebufferHeight, DRM_FORMAT_ABGR8888) && !matteFramebuffer.alloc(framebufferWidth, framebufferHeight, drmFormat))
+            return {};
+
+        const auto renderMask = [&]() {
+            ScopedTiming timing("window.mask_render");
+            CRegion fakeDamage{0, 0, framebufferWidth, framebufferHeight};
+            g_pHyprRenderer->makeEGLCurrent();
+            g_pHyprRenderer->m_bBlockSurfaceFeedback = true;
+            if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &matteFramebuffer)) {
+                g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
+                return false;
+            }
+
+            g_pHyprRenderer->m_bRenderingSnapshot = true;
+            FullSurfaceVisibleRegionOverride fullVisibleRegion(window);
+            g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 0.0});
+            g_pHyprRenderer->renderWindow(window, monitor, frozenTime, decorate, RENDER_PASS_ALL, false, false);
+            g_pHyprRenderer->m_bRenderingSnapshot = previousRenderingSnapshot;
+
+            g_pHyprOpenGL->m_renderData.blockScreenShader = true;
+            g_pHyprRenderer->endRender();
+            g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
+            g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
+            return true;
+        };
+
+        if (!renderMask() || !renderIntoFramebuffer(framebuffer, &matteFramebuffer))
+            return {};
+    } else if (!renderIntoFramebuffer(framebuffer)) {
         return {};
+    }
 
     const int cropX = clampedIntFromDouble(renderCropBox.x);
     const int cropY = clampedIntFromDouble(renderCropBox.y);
@@ -1722,6 +1763,7 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
         };
         if (auto background = captureBackground()) {
             renderOptions.backgroundTexture = background->texture;
+            renderOptions.clipBackgroundToWindow = true;
             renderOptions.postprocessAlpha = false;
         }
     }
