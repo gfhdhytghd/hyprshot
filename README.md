@@ -245,11 +245,20 @@ plugin {
 | `filename_template` | string | `Screenshot-%Y-%m-%d-%H%M%S.png` | `strftime` template for saved screenshot filenames. |
 | `record_filename_template` | string | `Recording-%Y-%m-%d-%H%M%S.mp4` | `strftime` template for saved recording filenames. |
 | `record_fps` | int | `30` | Recording frame rate. Higher values increase compositor readback and encoder load. |
-| `record_codec` | string | `libx264` | FFmpeg video encoder name. The default is broadly compatible. |
+| `record_codec` | string | `libx264` | FFmpeg video encoder name. The default is broadly compatible. Use `auto` or `h264_vaapi` on VAAPI systems to offload encoding for 60 fps recording. |
 | `record_preset` | string | `veryfast` | FFmpeg preset used with `libx264`/`libx264rgb`. |
 | `record_max_seconds` | int | `0` | Optional automatic stop in seconds. `0` means no duration limit. |
 | `thumbnail_timeout_ms` | int | `5000` | Thumbnail auto-close timeout in milliseconds. Use `0` to keep it open until user action. |
 | `helper` | string | empty | Optional absolute helper override. By default the plugin tries `HYPRCAPTURE_HELPER`, then `$HOME/.local/bin/hyprcapture-ui`, then trusted system install paths. |
+
+For 60 fps, prefer hardware encoding:
+
+```conf
+record_fps = 60
+record_codec = auto
+```
+
+`auto` currently prefers VAAPI when a writable `/dev/dri/renderD*` device exists and falls back to `libx264`. This still uses HyprCapture's compositor-side capture path; it does not use `wf-recorder`, screencopy, portal sessions, or Hyprland screenshare managed sessions.
 
 ### Watermark options
 

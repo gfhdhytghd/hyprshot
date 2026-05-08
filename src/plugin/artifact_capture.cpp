@@ -840,7 +840,8 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
                                           int& width,
                                           int& height,
                                           CBox& artifactBox,
-                                          ArtifactBudget* budget = nullptr) {
+                                          ArtifactBudget* budget = nullptr,
+                                          bool trimToAlphaBounds = true) {
     if (!window || !monitor || !g_pHyprRenderer || !g_pHyprOpenGL)
         return {};
 
@@ -903,15 +904,18 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
 
     const int cropX = clampedIntFromDouble(renderCropBox.x);
     const int cropY = clampedIntFromDouble(renderCropBox.y);
-    auto      readback = readRgbaFramebufferRegion(framebuffer, 0, 0, framebufferWidth, framebufferHeight);
+    auto readback = trimToAlphaBounds ? readRgbaFramebufferRegion(framebuffer, 0, 0, framebufferWidth, framebufferHeight) :
+                                        readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height);
     if (readback.pixels.empty())
         return {};
 
-    PixelBounds bounds;
-    if (findAlphaBounds(readback, bounds))
-        readback = cropReadback(readback, bounds);
-    else
-        readback = readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height);
+    if (trimToAlphaBounds) {
+        PixelBounds bounds;
+        if (findAlphaBounds(readback, bounds))
+            readback = cropReadback(readback, bounds);
+        else
+            readback = readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height);
+    }
     if (readback.pixels.empty())
         return {};
 
@@ -1424,7 +1428,7 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     int  width = 0;
     int  height = 0;
     CBox artifactBox;
-    auto readback = renderWindowArtifactReadback(window, monitor, Time::steadyNow(), renderDecorations, width, height, artifactBox);
+    auto readback = renderWindowArtifactReadback(window, monitor, Time::steadyNow(), renderDecorations, width, height, artifactBox, nullptr, false);
     if (readback.pixels.empty())
         return std::nullopt;
 

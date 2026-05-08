@@ -122,6 +122,32 @@ std::optional<std::string> trustedFfmpegPath() {
     return std::nullopt;
 }
 
+std::optional<std::string> findVaapiRenderDevice() {
+    for (int minor = 128; minor <= 143; ++minor) {
+        const std::string candidate = "/dev/dri/renderD" + std::to_string(minor);
+        struct stat       st {};
+        if (stat(candidate.c_str(), &st) == 0 && S_ISCHR(st.st_mode) && access(candidate.c_str(), R_OK | W_OK) == 0)
+            return candidate;
+    }
+    return std::nullopt;
+}
+
+bool hasSuffix(std::string_view value, std::string_view suffix) {
+    return value.size() >= suffix.size() && value.substr(value.size() - suffix.size()) == suffix;
+}
+
+bool isVaapiCodec(std::string_view codec) {
+    return hasSuffix(codec, "_vaapi");
+}
+
+bool isNvencCodec(std::string_view codec) {
+    return hasSuffix(codec, "_nvenc");
+}
+
+bool isHardwareCodec(std::string_view codec) {
+    return isVaapiCodec(codec) || isNvencCodec(codec);
+}
+
 bool allowEnvironmentName(std::string_view name) {
     if (name == "HOME" || name == "USER" || name == "LOGNAME" || name == "LANG" || name == "XDG_RUNTIME_DIR" || name == "XDG_CURRENT_DESKTOP" ||
         name == "XDG_SESSION_TYPE" || name == "WAYLAND_DISPLAY" || name == "DISPLAY" || name == "DBUS_SESSION_BUS_ADDRESS" ||
@@ -208,7 +234,9 @@ bool safeCodecToken(std::string_view token) {
 }
 
 std::string sanitizedCodec(std::string codec) {
-    if (!safeCodecToken(codec) || codec == "auto")
+    if (codec == "auto")
+        return findVaapiRenderDevice() ? "h264_vaapi" : "libx264";
+    if (!safeCodecToken(codec))
         return "libx264";
     return codec;
 }
@@ -217,6 +245,14 @@ std::string sanitizedPreset(std::string preset) {
     if (!safeCodecToken(preset))
         return "veryfast";
     return preset;
+}
+
+Time::steady_dur frameIntervalForFps(int fps) {
+    const auto safeFps = std::max(1, fps);
+    auto       interval = std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<double>(1.0 / safeFps));
+    if (interval <= Time::steady_dur::zero())
+        interval = std::chrono::milliseconds(1);
+    return interval;
 }
 
 std::filesystem::path uniqueOutputPath(const CaptureDefaults& defaults) {
@@ -299,6 +335,9 @@ class RawVideoEncoder {
         const auto ffmpeg = trustedFfmpegPath();
         if (!ffmpeg)
             return {.success = false, .error = "no trusted ffmpeg executable found"};
+        const auto vaapiDevice = isVaapiCodec(m_codec) ? findVaapiRenderDevice() : std::optional<std::string>{};
+        if (isVaapiCodec(m_codec) && !vaapiDevice)
+            return {.success = false, .error = "no writable VAAPI render device found"};
 
         auto pipe = makePipe();
         if (!pipe)
@@ -309,6 +348,14 @@ class RawVideoEncoder {
             "-hide_banner",
             "-loglevel",
             "error",
+        };
+
+        if (vaapiDevice) {
+            args.push_back("-vaapi_device");
+            args.push_back(*vaapiDevice);
+        }
+
+        const std::vector<std::string> inputArgs{
             "-f",
             "rawvideo",
             "-pix_fmt",
@@ -320,9 +367,22 @@ class RawVideoEncoder {
             "-i",
             "pipe:0",
             "-an",
-            "-c:v",
-            m_codec,
         };
+        args.insert(args.end(), inputArgs.begin(), inputArgs.end());
+
+        if (isVaapiCodec(m_codec)) {
+            args.push_back("-vf");
+            args.push_back("format=nv12,hwupload");
+            args.push_back("-c:v");
+            args.push_back(m_codec);
+            args.push_back("-qp");
+            args.push_back("23");
+            args.push_back("-quality");
+            args.push_back("7");
+        } else {
+            args.push_back("-c:v");
+            args.push_back(m_codec);
+        }
 
         if (m_codec == "libx264" || m_codec == "libx264rgb") {
             args.push_back("-preset");
@@ -330,7 +390,13 @@ class RawVideoEncoder {
             args.push_back("-crf");
             args.push_back("23");
         }
-        if (m_codec != "libx264rgb") {
+        if (isNvencCodec(m_codec)) {
+            args.push_back("-preset");
+            args.push_back("p1");
+            args.push_back("-cq");
+            args.push_back("23");
+        }
+        if (m_codec != "libx264rgb" && !isHardwareCodec(m_codec)) {
             args.push_back("-pix_fmt");
             args.push_back("yuv420p");
         }
@@ -480,7 +546,7 @@ struct ActiveRecording {
     RecordingFrameRequest                    request;
     std::unique_ptr<RawVideoEncoder>         encoder;
     SP<CEventLoopTimer>                      timer;
-    std::chrono::milliseconds                interval{33};
+    Time::steady_dur                         interval{std::chrono::milliseconds(33)};
     Time::steady_tp                          startedAt;
     std::filesystem::path                    outputPath;
     int                                      width = 0;
@@ -596,7 +662,7 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
     g_recording = std::make_unique<ActiveRecording>();
     g_recording->request = std::move(frameRequest);
     g_recording->encoder = std::move(encoder);
-    g_recording->interval = std::chrono::milliseconds(std::max(1, 1000 / fps));
+    g_recording->interval = frameIntervalForFps(fps);
     g_recording->startedAt = Time::steadyNow();
     g_recording->outputPath = outputPath;
     g_recording->width = width;
