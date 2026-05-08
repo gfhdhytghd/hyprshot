@@ -57,6 +57,7 @@ struct PixelBounds {
 struct RealBackgroundCaptureState {
     PHLWINDOW    window;
     std::size_t  targetIndex = 0;
+    CFramebuffer* framebuffer = nullptr;
     int          cropX = 0;
     int          cropY = 0;
     int          width = 0;
@@ -133,11 +134,7 @@ struct ArtifactBudget {
 };
 
 struct RealBackgroundRecordingCache {
-    PHLWINDOW       window;
-    PHLMONITOR      monitor;
-    Rect            geometry;
-    Time::steady_tp capturedAt;
-    std::shared_ptr<const std::vector<unsigned char>> rgba;
+    SP<CFramebuffer> framebuffer;
     SP<CTexture>    texture;
     int             width = 0;
     int             height = 0;
@@ -590,6 +587,55 @@ RgbaReadback readRenderPassFramebufferRegion(CFramebuffer& framebuffer, int crop
     return readRgbaFramebufferRegion(framebuffer, cropX, cropTopY, cropWidth, cropHeight, true);
 }
 
+bool blitRenderPassFramebufferRegion(CFramebuffer& source, CFramebuffer& target, int cropX, int cropTopY, int cropWidth, int cropHeight) {
+    const int sourceWidth = positiveRoundedIntFromDouble(source.m_size.x);
+    const int sourceHeight = positiveRoundedIntFromDouble(source.m_size.y);
+    RgbaReadbackRegion region;
+    if (!prepareRgbaReadbackRegion(sourceWidth, sourceHeight, cropX, cropTopY, cropWidth, cropHeight, region))
+        return false;
+    if (region.outputWidth != positiveRoundedIntFromDouble(target.m_size.x) || region.outputHeight != positiveRoundedIntFromDouble(target.m_size.y))
+        return false;
+
+    GLint      previousReadFramebuffer = 0;
+    GLint      previousDrawFramebuffer = 0;
+    GLfloat    previousClearColor[4] = {};
+    const bool scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFramebuffer);
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, previousClearColor);
+
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_FRAMEBUFFER, target.getFBID());
+    glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    if (region.srcWidth > 0 && region.srcHeight > 0) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, source.getFBID());
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, target.getFBID());
+        glBlitFramebuffer(region.srcX,
+                          region.srcTopY,
+                          region.srcX + region.srcWidth,
+                          region.srcTopY + region.srcHeight,
+                          region.dstX,
+                          region.dstY,
+                          region.dstX + region.srcWidth,
+                          region.dstY + region.srcHeight,
+                          GL_COLOR_BUFFER_BIT,
+                          GL_NEAREST);
+    }
+
+    glClearColor(previousClearColor[0], previousClearColor[1], previousClearColor[2], previousClearColor[3]);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFramebuffer);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, previousDrawFramebuffer);
+    if (scissorEnabled)
+        glEnable(GL_SCISSOR_TEST);
+    else
+        glDisable(GL_SCISSOR_TEST);
+
+    return glGetError() == GL_NO_ERROR;
+}
+
 class RealBackgroundCapturePass final : public IPassElement {
   public:
     explicit RealBackgroundCapturePass(RealBackgroundCaptureState* state) : m_state(state) {}
@@ -598,8 +644,14 @@ class RealBackgroundCapturePass final : public IPassElement {
         if (!m_state || m_state->captured || !g_pHyprOpenGL || !g_pHyprOpenGL->m_renderData.currentFB)
             return;
 
-        m_state->readback = readRenderPassFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, m_state->cropX, m_state->cropY, m_state->width, m_state->height);
-        m_state->captured = !m_state->readback.pixels.empty();
+        if (m_state->framebuffer) {
+            m_state->captured =
+                blitRenderPassFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, *m_state->framebuffer, m_state->cropX, m_state->cropY, m_state->width, m_state->height);
+        } else {
+            m_state->readback =
+                readRenderPassFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, m_state->cropX, m_state->cropY, m_state->width, m_state->height);
+            m_state->captured = !m_state->readback.pixels.empty();
+        }
     }
 
     bool needsLiveBlur() override {
@@ -749,13 +801,19 @@ void hkRenderTextureInternal(void* openGLThisptr, SP<CTexture> texture, const CB
         return;
 
     state->awaitingBlurBackground = false;
-    auto readback = readRenderPassFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, state->cropX, state->cropY, state->width, state->height);
-    if (readback.pixels.empty())
-        return;
+    if (state->framebuffer) {
+        state->captured =
+            blitRenderPassFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, *state->framebuffer, state->cropX, state->cropY, state->width, state->height);
+        state->blurCaptured = state->captured;
+    } else {
+        auto readback = readRenderPassFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, state->cropX, state->cropY, state->width, state->height);
+        if (readback.pixels.empty())
+            return;
 
-    state->readback = std::move(readback);
-    state->captured = true;
-    state->blurCaptured = true;
+        state->readback = std::move(readback);
+        state->captured = true;
+        state->blurCaptured = true;
+    }
 }
 
 void hkRenderTextureWithBlurInternal(void* openGLThisptr, SP<CTexture> texture, const CBox& box, const CHyprOpenGLImpl::STextureRenderData& data) {
@@ -1253,6 +1311,72 @@ std::vector<RgbaReadback> renderRealBackgroundReadbacksForMonitor(const PHLMONIT
     return readbacks;
 }
 
+bool renderRealBackgroundFramebufferForMonitor(const PHLMONITOR& monitor,
+                                               const Time::steady_tp& frozenTime,
+                                               const RealBackgroundCaptureTarget& target,
+                                               CFramebuffer& targetFramebuffer) {
+    if (!monitor || !monitor->m_activeWorkspace || !target.window || !targetFramebuffer.isAllocated() || !g_pHyprRenderer || !g_pHyprOpenGL)
+        return false;
+
+    const int framebufferWidth = positiveRoundedIntFromDouble(monitor->m_pixelSize.x);
+    const int framebufferHeight = positiveRoundedIntFromDouble(monitor->m_pixelSize.y);
+    std::size_t framebufferBytes = 0;
+    if (!checkedRgbaByteSize(framebufferWidth, framebufferHeight, framebufferBytes))
+        return false;
+
+    const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
+    CBox         cropBox = target.artifactBox.copy().translate(-monitor->m_position).scale(scale).round();
+    RealBackgroundCaptureState state;
+    state.window = target.window;
+    state.framebuffer = &targetFramebuffer;
+    state.cropX = clampedIntFromDouble(cropBox.x);
+    state.cropY = clampedIntFromDouble(cropBox.y);
+    state.width = positiveIntFromDouble(cropBox.w);
+    state.height = positiveIntFromDouble(cropBox.h);
+    if (state.width <= 0 || state.height <= 0)
+        return false;
+
+    std::vector<RealBackgroundCaptureState> states;
+    states.push_back(std::move(state));
+
+    CFramebuffer framebuffer;
+    const auto drmFormat = monitor->m_output && monitor->m_output->state ? monitor->m_output->state->state().drmFormat : DRM_FORMAT_ABGR8888;
+    if (!framebuffer.alloc(framebufferWidth, framebufferHeight, DRM_FORMAT_ABGR8888) && !framebuffer.alloc(framebufferWidth, framebufferHeight, drmFormat))
+        return false;
+
+    if (!ensureRealBackgroundHooks())
+        return false;
+
+    RealBackgroundRenderHookContext hookContext{.monitor = monitor, .states = &states};
+    g_realBackgroundRenderHookContext = &hookContext;
+    const auto clearHookContext = [&]() {
+        g_realBackgroundRenderHookContext = nullptr;
+    };
+
+    const bool previousBlockFeedback = g_pHyprRenderer->m_bBlockSurfaceFeedback;
+    const bool previousBlockShader = g_pHyprOpenGL->m_renderData.blockScreenShader;
+    CRegion    fakeDamage{0, 0, framebufferWidth, framebufferHeight};
+
+    g_pHyprRenderer->makeEGLCurrent();
+    g_pHyprRenderer->m_bBlockSurfaceFeedback = true;
+    if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &framebuffer)) {
+        g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
+        clearHookContext();
+        return false;
+    }
+
+    g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 1.0});
+    g_pHyprRenderer->renderWorkspace(monitor, monitor->m_activeWorkspace, frozenTime, CBox{0, 0, static_cast<double>(framebufferWidth), static_cast<double>(framebufferHeight)});
+    g_pHyprOpenGL->m_renderData.blockScreenShader = true;
+    g_pHyprRenderer->endRender();
+    clearHookContext();
+    g_pHyprRenderer->m_renderPass.clear();
+    g_pHyprOpenGL->m_renderData.blockScreenShader = previousBlockShader;
+    g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
+
+    return !states.empty() && states.front().captured;
+}
+
 void renderRealBackgroundArtifactsForMonitor(const PHLMONITOR& monitor,
                                              const Time::steady_tp& frozenTime,
                                              const std::vector<PendingRealBackgroundCapture*>& requests,
@@ -1512,25 +1636,39 @@ const RealBackgroundRecordingCache* captureWindowRealBackgroundRecordingFrame(co
         return nullptr;
 
     const CBox artifactBox{targetGeometry.x, targetGeometry.y, targetGeometry.width, targetGeometry.height};
-    auto       readbacks = renderRealBackgroundReadbacksForMonitor(monitor, frozenTime, {{.window = window, .artifactBox = artifactBox}});
-    if (readbacks.empty() || readbacks.front().pixels.empty())
+    const double scale = monitor->m_scale <= 0.0 ? 1.0 : monitor->m_scale;
+    CBox         cropBox = artifactBox.copy().translate(-monitor->m_position).scale(scale).round();
+    const int    width = positiveIntFromDouble(cropBox.w);
+    const int    height = positiveIntFromDouble(cropBox.h);
+    std::size_t  bytes = 0;
+    if (!checkedRgbaByteSize(width, height, bytes))
         return nullptr;
 
-    auto pixels = std::make_shared<const std::vector<unsigned char>>(std::move(readbacks.front().pixels));
-    auto texture = makeShared<CTexture>(DRM_FORMAT_ABGR8888,
-                                        const_cast<unsigned char*>(pixels->data()),
-                                        static_cast<uint32_t>(readbacks.front().width * RGBA_BYTES_PER_PIXEL),
-                                        Vector2D{static_cast<double>(readbacks.front().width), static_cast<double>(readbacks.front().height)},
-                                        false);
+    SP<CFramebuffer> framebuffer;
+    if (g_realBackgroundRecordingCache && g_realBackgroundRecordingCache->framebuffer)
+        framebuffer = g_realBackgroundRecordingCache->framebuffer;
+    else
+        framebuffer = makeShared<CFramebuffer>();
+
+    if (!framebuffer->isAllocated() || positiveRoundedIntFromDouble(framebuffer->m_size.x) != width || positiveRoundedIntFromDouble(framebuffer->m_size.y) != height) {
+        framebuffer->release();
+        const auto drmFormat = monitor->m_output && monitor->m_output->state ? monitor->m_output->state->state().drmFormat : DRM_FORMAT_ABGR8888;
+        if (!framebuffer->alloc(width, height, DRM_FORMAT_ABGR8888) && !framebuffer->alloc(width, height, drmFormat))
+            return nullptr;
+    }
+
+    if (!renderRealBackgroundFramebufferForMonitor(monitor, frozenTime, {.window = window, .artifactBox = artifactBox}, *framebuffer))
+        return nullptr;
+
+    auto texture = framebuffer->getTexture();
+    if (!texture)
+        return nullptr;
+
     g_realBackgroundRecordingCache = RealBackgroundRecordingCache{
-        .window = window,
-        .monitor = monitor,
-        .geometry = targetGeometry,
-        .capturedAt = frozenTime,
-        .rgba = std::move(pixels),
+        .framebuffer = std::move(framebuffer),
         .texture = std::move(texture),
-        .width = readbacks.front().width,
-        .height = readbacks.front().height,
+        .width = width,
+        .height = height,
     };
     return &*g_realBackgroundRecordingCache;
 }
