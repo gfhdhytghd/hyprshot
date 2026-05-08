@@ -188,6 +188,10 @@ QString codecChoiceFromConfig(const std::string& codec) {
         return QStringLiteral("h265");
     if (value == "hevc-vaapi" || value == "h265-vaapi")
         return QStringLiteral("h265-vaapi");
+    if (value == "libsvtav1" || value == "libaom-av1" || value == "librav1e" || value == "av1")
+        return QStringLiteral("av1");
+    if (value == "av1-vaapi")
+        return QStringLiteral("av1-vaapi");
     if (value == "libvpx-vp9" || value == "vp9")
         return QStringLiteral("vp9");
     if (value == "ffv1")
@@ -205,6 +209,10 @@ QString codecConfigFromChoice(const QString& choice) {
         return QStringLiteral("libx265");
     if (value == "h265-vaapi")
         return QStringLiteral("hevc_vaapi");
+    if (value == "av1")
+        return QStringLiteral("libsvtav1");
+    if (value == "av1-vaapi")
+        return QStringLiteral("av1_vaapi");
     if (value == "vp9")
         return QStringLiteral("libvpx-vp9");
     if (value == "ffv1")
@@ -1361,7 +1369,7 @@ void CaptureOverlay::buildToolbar() {
 
     m_recordCodec = new InlineSelect(this, m_recordOptions);
     m_recordCodec->setPrefix("Codec");
-    m_recordCodec->addItems(QStringList{"auto", "h264", "h264-vaapi", "h265", "h265-vaapi", "vp9", "ffv1"});
+    m_recordCodec->addItems(QStringList{"auto", "h264", "h264-vaapi", "h265", "h265-vaapi", "av1", "av1-vaapi", "vp9", "ffv1"});
     m_recordCodec->setCurrentText(codecChoiceFromConfig(m_defaults.recordCodec));
     m_recordCodec->setOnChanged(onRecordOptionChanged);
     recordLayout->addWidget(m_recordCodec);
@@ -1553,21 +1561,24 @@ QString CaptureOverlay::recordOptionsConflict() const {
     if (!m_record)
         return {};
 
-    const bool alphaRequested =
-        currentWindowBackground() == hyprcapture::WindowBackground::Real || currentWindowBackground() == hyprcapture::WindowBackground::Transparent;
+    const bool alphaRequested = currentWindowBackground() == hyprcapture::WindowBackground::Transparent;
     const QString format = currentRecordFormat();
     const QString codec = currentRecordCodec();
 
     if (alphaRequested && currentRecordBackend() == hyprcapture::RecordWindowBackend::GsrVisible)
         return QStringLiteral("selected backend does not support transparency");
-    if (alphaRequested && (format == "mp4" || format == "mov"))
-        return format + QStringLiteral(" does not support transparency");
-    if (format == "webm" && codec != "auto" && codec != "vp9")
+    if (alphaRequested && format == "mp4")
+        return QStringLiteral("mp4 does not support transparency");
+    if (alphaRequested && format == "mov")
+        return QStringLiteral("mov alpha is not supported by this encoder");
+    if (format == "webm" && alphaRequested && codec != "auto" && codec != "vp9")
         return alphaRequested ? QStringLiteral("webm transparency requires vp9") : QStringLiteral("webm requires vp9");
+    if (format == "webm" && codec != "auto" && codec != "vp9" && codec != "av1" && codec != "av1-vaapi")
+        return QStringLiteral("webm requires vp9 or av1");
     if (format == "mkv" && alphaRequested && codec != "auto" && codec != "ffv1")
         return QStringLiteral("mkv transparency requires ffv1");
     if ((format == "mp4" || format == "mov") && (codec == "vp9" || codec == "ffv1"))
-        return format + QStringLiteral(" requires h264 or h265");
+        return format + QStringLiteral(" requires h264, h265, or av1");
 
     return {};
 }

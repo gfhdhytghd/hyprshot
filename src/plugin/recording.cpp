@@ -181,8 +181,7 @@ std::string normalizedToken(std::string_view value) {
 }
 
 bool recordingNeedsAlpha(const RecordingFrameRequest& request) {
-    return request.mode == CaptureMode::Window &&
-        (request.defaults.windowBackground == WindowBackground::Real || request.defaults.windowBackground == WindowBackground::Transparent);
+    return request.mode == CaptureMode::Window && request.defaults.windowBackground == WindowBackground::Transparent;
 }
 
 std::string sanitizedRecordFormat(std::string_view format) {
@@ -370,8 +369,14 @@ std::string sanitizedCodec(std::string codec) {
         return "libx265";
     if (normalized == "h265-vaapi" || normalized == "hevc-vaapi")
         return "hevc_vaapi";
+    if (normalized == "av1")
+        return "libsvtav1";
+    if (normalized == "av1-vaapi")
+        return "av1_vaapi";
     if (normalized == "auto")
         return findVaapiRenderDevice() ? "h264_vaapi" : "libx264";
+    if (normalized == "libaom-av1" || normalized == "librav1e" || normalized == "libsvtav1")
+        return codec;
     if (normalized == "vp9" || normalized == "libvpx-vp9")
         return "libvpx-vp9";
     if (normalized == "ffv1")
@@ -402,6 +407,8 @@ std::string gsrCodec(std::string codec, std::string_view format) {
         return "h264";
     if (codec == "hevc_vaapi" || codec == "libx265")
         return "hevc";
+    if (codec == "av1_vaapi" || codec == "libsvtav1" || codec == "libaom-av1" || codec == "librav1e")
+        return "av1";
     if (codec == "libvpx-vp9")
         return "vp9";
     return codec;
@@ -633,6 +640,12 @@ class RawVideoEncoder {
             args.push_back(m_preset);
             args.push_back("-crf");
             args.push_back("23");
+        }
+        if (m_codec == "libsvtav1") {
+            args.push_back("-preset");
+            args.push_back("8");
+            args.push_back("-crf");
+            args.push_back("32");
         }
         if (isNvencCodec(m_codec)) {
             args.push_back("-preset");
