@@ -92,9 +92,11 @@ int main(int argc, char** argv) {
         {"save-dir", "Save directory.", "path", "~/Pictures/Screenshots"},
         {"filename-template", "Filename strftime template.", "template", "Screenshot-%Y-%m-%d-%H%M%S.png"},
         {"record-filename-template", "Recording filename strftime template.", "template", "Recording-%Y-%m-%d-%H%M%S.mp4"},
+        {"record-format", "Recording container format.", "format", "mp4"},
         {"record-codec", "Recording codec.", "codec", "libx264"},
         {"record-preset", "Recording preset.", "preset", "veryfast"},
         {"record-gsr-flags", "Extra gpu-screen-recorder flags.", "flags", ""},
+        {"record-window-backend", "Window recording backend.", "backend", "compositor"},
         {"record-fps", "Recording FPS.", "fps", "30"},
         {"record-window-fps-limit", "Window recording FPS cap.", "fps", "12"},
         {"record-window-real-bg-fps-limit", "Real background window recording FPS cap.", "fps", "8"},
@@ -143,9 +145,11 @@ int main(int argc, char** argv) {
     defaults.saveDir = parser.value("save-dir").toStdString();
     defaults.filenameTemplate = parser.value("filename-template").toStdString();
     defaults.recordFilenameTemplate = parser.value("record-filename-template").toStdString();
+    defaults.recordFormat = parser.value("record-format").toStdString();
     defaults.recordCodec = parser.value("record-codec").toStdString();
     defaults.recordPreset = parser.value("record-preset").toStdString();
     defaults.recordGsrFlags = parser.value("record-gsr-flags").toStdString();
+    defaults.recordWindowBackend = hyprcapture::parseRecordWindowBackend(parser.value("record-window-backend").toStdString(), defaults.recordWindowBackend);
     defaults.recordFps = boundedInt(parser.value("record-fps"), defaults.recordFps, 1, 240);
     defaults.recordWindowFpsLimit = boundedInt(parser.value("record-window-fps-limit"), defaults.recordWindowFpsLimit, 0, 240);
     defaults.recordWindowRealBgFpsLimit = boundedInt(parser.value("record-window-real-bg-fps-limit"), defaults.recordWindowRealBgFpsLimit, 0, 240);

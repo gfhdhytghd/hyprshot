@@ -95,6 +95,13 @@ class CaptureOverlay final : public QMainWindow {
     void hideOptionPopups();
     hyprcapture::FullscreenScope currentFullscreenScope() const;
     hyprcapture::WindowBackground currentWindowBackground() const;
+    QString currentRecordFormat() const;
+    QString currentRecordCodec() const;
+    int currentRecordFps() const;
+    hyprcapture::RecordWindowBackend currentRecordBackend() const;
+    QString recordOptionsConflict() const;
+    void updateRecordOptionsVisibility();
+    void updateRecordWarning();
     hyprcapture::DecorationPolicy currentWindowBorder() const;
     hyprcapture::DecorationPolicy currentWindowShadow() const;
     QRect windowFrameGeometry(const WindowArtifact& window) const;
@@ -130,6 +137,12 @@ class CaptureOverlay final : public QMainWindow {
     QPropertyAnimation* m_fadeAnimation = nullptr;
     InlineSelect* m_fullscreenScope = nullptr;
     InlineSelect* m_windowBackground = nullptr;
+    QWidget*      m_recordOptions = nullptr;
+    InlineSelect* m_recordCodec = nullptr;
+    InlineSelect* m_recordFormat = nullptr;
+    InlineSelect* m_recordFps = nullptr;
+    InlineSelect* m_recordBackend = nullptr;
+    QLabel*       m_recordWarning = nullptr;
     QPushButton*  m_recordToggle = nullptr;
     QLabel*      m_status = nullptr;
     QImage       m_desktopImage;

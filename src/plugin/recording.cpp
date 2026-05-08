@@ -170,6 +170,32 @@ bool isHardwareCodec(std::string_view codec) {
     return isVaapiCodec(codec) || isNvencCodec(codec);
 }
 
+std::string normalizedToken(std::string_view value) {
+    std::string out(value);
+    std::ranges::transform(out, out.begin(), [](unsigned char ch) {
+        if (ch == '_' || ch == '.')
+            return '-';
+        return static_cast<char>(std::tolower(ch));
+    });
+    return out;
+}
+
+bool recordingNeedsAlpha(const RecordingFrameRequest& request) {
+    return request.mode == CaptureMode::Window &&
+        (request.defaults.windowBackground == WindowBackground::Real || request.defaults.windowBackground == WindowBackground::Transparent);
+}
+
+std::string sanitizedRecordFormat(std::string_view format) {
+    const auto value = normalizedToken(format);
+    if (value == "mkv" || value == "matroska")
+        return "mkv";
+    if (value == "webm")
+        return "webm";
+    if (value == "mp4" || value == "mpeg-4")
+        return "mp4";
+    return "mp4";
+}
+
 bool allowEnvironmentName(std::string_view name) {
     if (name == "HOME" || name == "USER" || name == "LOGNAME" || name == "LANG" || name == "XDG_RUNTIME_DIR" || name == "XDG_CURRENT_DESKTOP" ||
         name == "XDG_SESSION_TYPE" || name == "WAYLAND_DISPLAY" || name == "DISPLAY" || name == "DBUS_SESSION_BUS_ADDRESS" ||
@@ -333,10 +359,43 @@ std::string gsrCaptureSource(const RecordingRequest& request) {
 }
 
 std::string sanitizedCodec(std::string codec) {
-    if (codec == "auto")
+    const auto normalized = normalizedToken(codec);
+    if (normalized == "h264")
+        return "libx264";
+    if (normalized == "h264-vaapi")
+        return "h264_vaapi";
+    if (normalized == "auto")
         return findVaapiRenderDevice() ? "h264_vaapi" : "libx264";
+    if (normalized == "vp9" || normalized == "libvpx-vp9")
+        return "libvpx-vp9";
+    if (normalized == "ffv1")
+        return "ffv1";
     if (!safeCodecToken(codec))
         return "libx264";
+    return codec;
+}
+
+std::string effectiveRecordingCodec(const RecordingFrameRequest& request, std::string codec) {
+    const auto format = sanitizedRecordFormat(request.defaults.recordFormat);
+    const bool needsAlpha = recordingNeedsAlpha(request);
+    const auto normalizedCodec = normalizedToken(codec);
+    if (format == "webm" && (codec.empty() || normalizedCodec == "auto"))
+        return "libvpx-vp9";
+    if (needsAlpha && format == "mkv" && (codec.empty() || normalizedCodec == "auto"))
+        return "ffv1";
+    return sanitizedCodec(std::move(codec));
+}
+
+std::string gsrCodec(std::string codec, std::string_view format) {
+    const auto normalizedCodec = normalizedToken(codec);
+    if (normalizedCodec.empty() || normalizedCodec == "auto")
+        return sanitizedRecordFormat(format) == "webm" ? "vp9" : "h264";
+
+    codec = sanitizedCodec(std::move(codec));
+    if (codec == "h264_vaapi" || codec == "libx264" || codec == "libx264rgb")
+        return "h264";
+    if (codec == "libvpx-vp9")
+        return "vp9";
     return codec;
 }
 
@@ -380,8 +439,8 @@ std::filesystem::path uniqueOutputPath(const CaptureDefaults& defaults) {
     std::filesystem::path filename(makeTimestampedFilename(defaults.recordFilenameTemplate));
     if (filename.empty() || filename == "." || filename == "..")
         filename = "Recording.mp4";
-    if (filename.extension().empty())
-        filename += ".mp4";
+    const auto format = sanitizedRecordFormat(defaults.recordFormat);
+    filename.replace_extension("." + format);
 
     const auto stem = filename.stem().string().empty() ? std::string("Recording") : filename.stem().string();
     const auto ext = filename.extension().string().empty() ? std::string(".mp4") : filename.extension().string();
@@ -531,6 +590,26 @@ class RawVideoEncoder {
             args.push_back("23");
             args.push_back("-quality");
             args.push_back("7");
+        } else if (m_codec == "libvpx-vp9") {
+            args.push_back("-c:v");
+            args.push_back(m_codec);
+            args.push_back("-pix_fmt");
+            args.push_back("yuva420p");
+            args.push_back("-deadline");
+            args.push_back("realtime");
+            args.push_back("-cpu-used");
+            args.push_back("6");
+            args.push_back("-b:v");
+            args.push_back("0");
+            args.push_back("-crf");
+            args.push_back("32");
+        } else if (m_codec == "ffv1") {
+            args.push_back("-c:v");
+            args.push_back(m_codec);
+            args.push_back("-level");
+            args.push_back("3");
+            args.push_back("-pix_fmt");
+            args.push_back("rgba");
         } else {
             args.push_back("-c:v");
             args.push_back(m_codec);
@@ -548,7 +627,7 @@ class RawVideoEncoder {
             args.push_back("-cq");
             args.push_back("23");
         }
-        if (m_codec != "libx264rgb" && !isHardwareCodec(m_codec)) {
+        if (m_codec != "libx264rgb" && m_codec != "libvpx-vp9" && m_codec != "ffv1" && !isHardwareCodec(m_codec)) {
             args.push_back("-pix_fmt");
             args.push_back("yuv420p");
         }
@@ -902,16 +981,18 @@ LaunchResult spawnGpuScreenRecorder(const RecordingRequest& request, const std::
         return {.success = false, .error = flagsError.empty() ? "invalid record_gsr_flags" : flagsError};
 
     const int fps = std::clamp<int>(static_cast<int>(request.defaults.recordFps), 1, 240);
-    std::vector<std::string> args{
-        *executable,
-        "-w",
-        gsrCaptureSource(request),
-        "-f",
-        std::to_string(fps),
-        "-cursor",
-        request.defaults.includeCursor ? "yes" : "no",
-    };
+    std::vector<std::string> args{*executable};
     args.insert(args.end(), extraFlags->begin(), extraFlags->end());
+    args.push_back("-c");
+    args.push_back(sanitizedRecordFormat(request.defaults.recordFormat));
+    args.push_back("-k");
+    args.push_back(gsrCodec(request.defaults.recordCodec, request.defaults.recordFormat));
+    args.push_back("-f");
+    args.push_back(std::to_string(fps));
+    args.push_back("-cursor");
+    args.push_back(request.defaults.includeCursor ? "yes" : "no");
+    args.push_back("-w");
+    args.push_back(gsrCaptureSource(request));
     args.push_back("-o");
     args.push_back(outputPath.string());
 
@@ -998,7 +1079,7 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
                                                      firstFrame->width,
                                                      firstFrame->height,
                                                      fps,
-                                                     sanitizedCodec(request->defaults.recordCodec),
+                                                     effectiveRecordingCodec(frameRequest, request->defaults.recordCodec),
                                                      sanitizedPreset(request->defaults.recordPreset));
     if (const auto result = encoder->start(); !result.success)
         return result;

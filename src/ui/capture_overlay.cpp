@@ -57,6 +57,7 @@ class InlineSelect final : public QWidget {
 
     void addItems(const QStringList& items);
     void setPrefix(const QString& prefix);
+    void setOnChanged(std::function<void()> onChanged);
     void setCurrentText(const QString& text);
     QString currentText() const;
     void setControlVisible(bool visible);
@@ -77,6 +78,7 @@ class InlineSelect final : public QWidget {
     QStringList  m_items;
     QString      m_current;
     QString      m_prefix;
+    std::function<void()> m_onChanged;
 };
 
 namespace {
@@ -120,6 +122,73 @@ const char* kSelectArrowSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.
 
 QString qString(const std::string& value) {
     return QString::fromStdString(value);
+}
+
+QString normalizedChoice(QString value) {
+    value = value.trimmed().toLower();
+    value.replace(QLatin1Char('_'), QLatin1Char('-'));
+    value.replace(QLatin1Char('.'), QLatin1Char('-'));
+    return value;
+}
+
+QString normalizedRecordFormat(QString value) {
+    value = normalizedChoice(value);
+    if (value == "matroska")
+        return QStringLiteral("mkv");
+    if (value == "webm" || value == "mkv" || value == "mp4")
+        return value;
+    return QStringLiteral("mp4");
+}
+
+QString recordFormatFromTemplate(const std::string& filenameTemplate) {
+    const QString suffix = QFileInfo(qString(filenameTemplate)).suffix().toLower();
+    if (suffix == "webm" || suffix == "mkv" || suffix == "mp4")
+        return suffix;
+    return QStringLiteral("mp4");
+}
+
+QString defaultRecordFormat(const hyprcapture::CaptureDefaults& defaults) {
+    const QString configured = normalizedRecordFormat(qString(defaults.recordFormat));
+    if (!configured.isEmpty())
+        return configured;
+    return recordFormatFromTemplate(defaults.recordFilenameTemplate);
+}
+
+QString codecChoiceFromConfig(const std::string& codec) {
+    const QString value = normalizedChoice(qString(codec));
+    if (value == "libx264" || value == "h264")
+        return QStringLiteral("h264");
+    if (value == "h264-vaapi")
+        return QStringLiteral("h264-vaapi");
+    if (value == "libvpx-vp9" || value == "vp9")
+        return QStringLiteral("vp9");
+    if (value == "ffv1")
+        return QStringLiteral("ffv1");
+    return QStringLiteral("auto");
+}
+
+QString codecConfigFromChoice(const QString& choice) {
+    const QString value = normalizedChoice(choice);
+    if (value == "h264")
+        return QStringLiteral("libx264");
+    if (value == "h264-vaapi")
+        return QStringLiteral("h264_vaapi");
+    if (value == "vp9")
+        return QStringLiteral("libvpx-vp9");
+    if (value == "ffv1")
+        return QStringLiteral("ffv1");
+    return QStringLiteral("auto");
+}
+
+QString recordTemplateWithFormat(const std::string& filenameTemplate, const QString& format) {
+    QString value = qString(filenameTemplate);
+    if (value.trimmed().isEmpty())
+        value = QStringLiteral("Recording-%Y-%m-%d-%H%M%S");
+    QFileInfo info(value);
+    const QString suffix = info.suffix();
+    if (!suffix.isEmpty())
+        value.chop(suffix.size() + 1);
+    return value + QLatin1Char('.') + normalizedRecordFormat(format);
 }
 
 bool timingEnabled() {
@@ -873,6 +942,10 @@ void InlineSelect::setPrefix(const QString& prefix) {
         m_button->setText(buttonText(m_current));
 }
 
+void InlineSelect::setOnChanged(std::function<void()> onChanged) {
+    m_onChanged = std::move(onChanged);
+}
+
 void InlineSelect::setCurrentText(const QString& text) {
     m_current = text;
     m_button->setText(buttonText(text));
@@ -953,6 +1026,8 @@ void InlineSelect::showPopup() {
 void InlineSelect::choose(const QString& text) {
     setCurrentText(text);
     hidePopup();
+    if (m_onChanged)
+        m_onChanged();
 }
 
 CaptureOverlay::CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick, bool record, bool recordActive, QString sessionJson, QWidget* parent)
@@ -1136,9 +1211,15 @@ void CaptureOverlay::buildToolbar() {
     m_toolbarOpacity->setOpacity(m_overlayOpacity);
     m_toolbar->setGraphicsEffect(m_toolbarOpacity);
 
-    auto* layout = new QHBoxLayout(m_toolbar);
-    layout->setContentsMargins(10, 7, 10, 7);
-    layout->setSizeConstraint(QLayout::SetFixedSize);
+    auto* rootLayout = new QVBoxLayout(m_toolbar);
+    rootLayout->setContentsMargins(10, 7, 10, 7);
+    rootLayout->setSpacing(5);
+    rootLayout->setSizeConstraint(QLayout::SetFixedSize);
+
+    auto* layout = new QHBoxLayout();
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+    rootLayout->addLayout(layout);
 
     auto* group = new QButtonGroup(this);
     const auto addMode = [&](const QString& tooltip, hyprcapture::CaptureMode mode, const QIcon& icon) {
@@ -1171,6 +1252,22 @@ void CaptureOverlay::buildToolbar() {
     addMode("Region", hyprcapture::CaptureMode::Region, iconFromSvg(kRegionSvg));
     addMode("Window", hyprcapture::CaptureMode::Window, iconFromSvg(kWindowSvg));
 
+    m_fullscreenScope = new InlineSelect(this, m_toolbar);
+    m_fullscreenScope->setPrefix("Full");
+    m_fullscreenScope->addItems(QStringList{"all", "current", "per-monitor"});
+    m_fullscreenScope->setCurrentText(qString(hyprcapture::toString(m_defaults.fullscreenScope)));
+    layout->addWidget(m_fullscreenScope);
+
+    m_windowBackground = new InlineSelect(this, m_toolbar);
+    m_windowBackground->setPrefix("Bg");
+    m_windowBackground->addItems(QStringList{"follow-system", "white", "black", "real", "transparent"});
+    m_windowBackground->setCurrentText(qString(hyprcapture::toString(m_defaults.windowBackground)));
+    m_windowBackground->setOnChanged([this] {
+        updateRecordWarning();
+        updateStatus();
+    });
+    layout->addWidget(m_windowBackground);
+
     m_recordToggle = new QPushButton(m_toolbar);
     m_recordToggle->setObjectName("recordToggleButton");
     m_recordToggle->setFlat(true);
@@ -1193,21 +1290,10 @@ void CaptureOverlay::buildToolbar() {
 
         m_recordError.clear();
         m_record = m_recordToggle->isChecked();
+        updateRecordOptionsVisibility();
         updateStatus();
         update();
     });
-
-    m_fullscreenScope = new InlineSelect(this, m_toolbar);
-    m_fullscreenScope->setPrefix("Full");
-    m_fullscreenScope->addItems(QStringList{"all", "current", "per-monitor"});
-    m_fullscreenScope->setCurrentText(qString(hyprcapture::toString(m_defaults.fullscreenScope)));
-    layout->addWidget(m_fullscreenScope);
-
-    m_windowBackground = new InlineSelect(this, m_toolbar);
-    m_windowBackground->setPrefix("Bg");
-    m_windowBackground->addItems(QStringList{"follow-system", "white", "black", "real", "transparent"});
-    m_windowBackground->setCurrentText(qString(hyprcapture::toString(m_defaults.windowBackground)));
-    layout->addWidget(m_windowBackground);
 
     auto* cancel = new QPushButton(m_toolbar);
     cancel->setFlat(true);
@@ -1223,7 +1309,55 @@ void CaptureOverlay::buildToolbar() {
     m_status = new QLabel(m_toolbar);
     m_status->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     layout->addWidget(m_status);
+
+    m_recordOptions = new QWidget(m_toolbar);
+    auto* recordLayout = new QHBoxLayout(m_recordOptions);
+    recordLayout->setContentsMargins(0, 0, 0, 0);
+    recordLayout->setSpacing(5);
+
+    const auto onRecordOptionChanged = [this] {
+        m_recordError.clear();
+        updateRecordWarning();
+        updateStatus();
+    };
+
+    m_recordCodec = new InlineSelect(this, m_recordOptions);
+    m_recordCodec->setPrefix("Codec");
+    m_recordCodec->addItems(QStringList{"auto", "h264", "h264-vaapi", "vp9", "ffv1"});
+    m_recordCodec->setCurrentText(codecChoiceFromConfig(m_defaults.recordCodec));
+    m_recordCodec->setOnChanged(onRecordOptionChanged);
+    recordLayout->addWidget(m_recordCodec);
+
+    m_recordFormat = new InlineSelect(this, m_recordOptions);
+    m_recordFormat->setPrefix("Format");
+    m_recordFormat->addItems(QStringList{"mp4", "webm", "mkv"});
+    m_recordFormat->setCurrentText(defaultRecordFormat(m_defaults));
+    m_recordFormat->setOnChanged(onRecordOptionChanged);
+    recordLayout->addWidget(m_recordFormat);
+
+    m_recordFps = new InlineSelect(this, m_recordOptions);
+    m_recordFps->setPrefix("FPS");
+    m_recordFps->addItems(QStringList{"30", "60", "120", "240"});
+    m_recordFps->setCurrentText(QString::number(std::clamp<std::int64_t>(m_defaults.recordFps, 1, 240)));
+    m_recordFps->setOnChanged(onRecordOptionChanged);
+    recordLayout->addWidget(m_recordFps);
+
+    m_recordBackend = new InlineSelect(this, m_recordOptions);
+    m_recordBackend->setPrefix("Backend");
+    m_recordBackend->addItems(QStringList{"compositor", "gsr-visible"});
+    m_recordBackend->setCurrentText(qString(hyprcapture::toString(m_defaults.recordWindowBackend)));
+    m_recordBackend->setOnChanged(onRecordOptionChanged);
+    recordLayout->addWidget(m_recordBackend);
+
+    rootLayout->addWidget(m_recordOptions);
+
+    m_recordWarning = new QLabel(m_toolbar);
+    m_recordWarning->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    m_recordWarning->setStyleSheet(QStringLiteral("color: rgba(242, 170, 55, 255); padding: 2px 4px;"));
+    rootLayout->addWidget(m_recordWarning);
+
     updateToolbarControlsForMode();
+    updateRecordOptionsVisibility();
     updateStatus();
     relayoutToolbar();
 }
@@ -1294,6 +1428,14 @@ void CaptureOverlay::hideOptionPopups() {
         m_fullscreenScope->hidePopup();
     if (m_windowBackground)
         m_windowBackground->hidePopup();
+    if (m_recordCodec)
+        m_recordCodec->hidePopup();
+    if (m_recordFormat)
+        m_recordFormat->hidePopup();
+    if (m_recordFps)
+        m_recordFps->hidePopup();
+    if (m_recordBackend)
+        m_recordBackend->hidePopup();
 }
 
 void CaptureOverlay::setMode(hyprcapture::CaptureMode mode) {
@@ -1316,6 +1458,7 @@ void CaptureOverlay::updateToolbarControlsForMode() {
         m_windowBackground->setControlVisible(visible);
     }
 
+    updateRecordOptionsVisibility();
     relayoutToolbar();
 }
 
@@ -1340,6 +1483,105 @@ hyprcapture::WindowBackground CaptureOverlay::currentWindowBackground() const {
     if (!m_windowBackground)
         return m_defaults.windowBackground;
     return hyprcapture::parseWindowBackground(m_windowBackground->currentText().toStdString(), m_defaults.windowBackground);
+}
+
+QString CaptureOverlay::currentRecordFormat() const {
+    if (!m_recordFormat)
+        return defaultRecordFormat(m_defaults);
+    return normalizedRecordFormat(m_recordFormat->currentText());
+}
+
+QString CaptureOverlay::currentRecordCodec() const {
+    if (!m_recordCodec)
+        return codecChoiceFromConfig(m_defaults.recordCodec);
+    return normalizedChoice(m_recordCodec->currentText());
+}
+
+int CaptureOverlay::currentRecordFps() const {
+    if (!m_recordFps)
+        return std::clamp<std::int64_t>(m_defaults.recordFps, 1, 240);
+    bool ok = false;
+    const int fps = m_recordFps->currentText().toInt(&ok);
+    return ok ? std::clamp(fps, 1, 240) : std::clamp<std::int64_t>(m_defaults.recordFps, 1, 240);
+}
+
+hyprcapture::RecordWindowBackend CaptureOverlay::currentRecordBackend() const {
+    if (!m_recordBackend)
+        return m_defaults.recordWindowBackend;
+    return hyprcapture::parseRecordWindowBackend(m_recordBackend->currentText().toStdString(), m_defaults.recordWindowBackend);
+}
+
+QString CaptureOverlay::recordOptionsConflict() const {
+    if (!m_record)
+        return {};
+
+    const bool alphaRequested = m_mode == hyprcapture::CaptureMode::Window &&
+        (currentWindowBackground() == hyprcapture::WindowBackground::Real || currentWindowBackground() == hyprcapture::WindowBackground::Transparent);
+    const QString format = currentRecordFormat();
+    const QString codec = currentRecordCodec();
+
+    if (alphaRequested && currentRecordBackend() == hyprcapture::RecordWindowBackend::GsrVisible)
+        return QStringLiteral("selected backend does not support transparency");
+    if (alphaRequested && format == "mp4")
+        return QStringLiteral("mp4 does not support transparency");
+    if (format == "webm" && codec != "auto" && codec != "vp9")
+        return alphaRequested ? QStringLiteral("webm transparency requires vp9") : QStringLiteral("webm requires vp9");
+    if (format == "mkv" && alphaRequested && codec != "auto" && codec != "ffv1")
+        return QStringLiteral("mkv transparency requires ffv1");
+    if (format == "mp4" && (codec == "vp9" || codec == "ffv1"))
+        return QStringLiteral("mp4 requires h264");
+
+    return {};
+}
+
+void CaptureOverlay::updateRecordWarning() {
+    if (!m_recordWarning)
+        return;
+
+    const QString conflict = recordOptionsConflict();
+    if (conflict.isEmpty()) {
+        m_recordWarning->clear();
+        m_recordWarning->hide();
+        m_recordWarning->setFixedSize(0, 0);
+        m_recordWarning->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+        relayoutToolbar();
+        return;
+    }
+
+    m_recordWarning->setText(QStringLiteral("⚠️: ") + conflict);
+    m_recordWarning->setVisible(true);
+    m_recordWarning->setMinimumSize(0, 0);
+    m_recordWarning->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    m_recordWarning->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    m_recordWarning->adjustSize();
+    relayoutToolbar();
+}
+
+void CaptureOverlay::updateRecordOptionsVisibility() {
+    if (!m_recordOptions)
+        return;
+
+    const bool visible = m_record && !m_recordActive;
+    const auto updateSelect = [visible](InlineSelect* select) {
+        if (select)
+            select->setControlVisible(visible);
+    };
+    updateSelect(m_recordCodec);
+    updateSelect(m_recordFormat);
+    updateSelect(m_recordFps);
+    updateSelect(m_recordBackend);
+
+    m_recordOptions->setVisible(visible);
+    m_recordOptions->setSizePolicy(visible ? QSizePolicy::Fixed : QSizePolicy::Ignored, visible ? QSizePolicy::Fixed : QSizePolicy::Ignored);
+    if (!visible) {
+        m_recordOptions->setFixedSize(0, 0);
+    } else {
+        m_recordOptions->setMinimumSize(0, 0);
+        m_recordOptions->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        m_recordOptions->adjustSize();
+    }
+
+    updateRecordWarning();
 }
 
 hyprcapture::DecorationPolicy CaptureOverlay::currentWindowBorder() const {
@@ -1919,7 +2161,18 @@ QString CaptureOverlay::prepareRecordingRequest() {
     request.defaults.windowBackground = currentWindowBackground();
     request.defaults.windowBorder = currentWindowBorder();
     request.defaults.windowShadow = currentWindowShadow();
+    request.defaults.recordFormat = currentRecordFormat().toStdString();
+    request.defaults.recordFilenameTemplate = recordTemplateWithFormat(m_defaults.recordFilenameTemplate, currentRecordFormat()).toStdString();
+    request.defaults.recordCodec = codecConfigFromChoice(currentRecordCodec()).toStdString();
+    request.defaults.recordFps = currentRecordFps();
+    request.defaults.recordWindowBackend = currentRecordBackend();
     request.mode = m_mode;
+
+    const QString conflict = recordOptionsConflict();
+    if (!conflict.isEmpty()) {
+        updateRecordWarning();
+        return {};
+    }
 
     if (m_mode == hyprcapture::CaptureMode::Window) {
         const auto* window = hoveredWindow();

@@ -328,12 +328,16 @@ LaunchResult launchHelper(const LaunchRequest& request) {
     args.push_back(request.defaults.filenameTemplate);
     args.push_back("--record-filename-template");
     args.push_back(request.defaults.recordFilenameTemplate);
+    args.push_back("--record-format");
+    args.push_back(request.defaults.recordFormat);
     args.push_back("--record-codec");
     args.push_back(request.defaults.recordCodec);
     args.push_back("--record-preset");
     args.push_back(request.defaults.recordPreset);
     args.push_back("--record-gsr-flags");
     args.push_back(request.defaults.recordGsrFlags);
+    args.push_back("--record-window-backend");
+    args.push_back(toString(request.defaults.recordWindowBackend));
     args.push_back("--record-fps");
     args.push_back(std::to_string(request.defaults.recordFps));
     args.push_back("--record-window-fps-limit");
