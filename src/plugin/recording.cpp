@@ -881,6 +881,7 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
                                        .targetGeometry = request->targetGeometry,
                                        .windowAddress = request->windowAddress};
 
+    resetRecordingCaptureState();
     auto firstFrame = captureRecordingFrame(frameRequest);
     if (!firstFrame || !makeEvenFrame(*firstFrame))
         return {.success = false, .error = "failed to capture first recording frame"};

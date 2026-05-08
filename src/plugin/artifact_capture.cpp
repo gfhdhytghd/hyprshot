@@ -13,7 +13,7 @@
 #include <hyprland/src/render/Renderer.hpp>
 #undef private
 
-#include <GLES2/gl2.h>
+#include <GLES3/gl3.h>
 #include <drm_fourcc.h>
 
 #include <algorithm>
@@ -114,6 +114,7 @@ struct RgbaReadbackRegion {
 struct WindowRenderOptions {
     CHyprColor clearColor{0.0, 0.0, 0.0, 0.0};
     SP<CTexture> backgroundTexture;
+    bool       asyncReadback = false;
     bool       postprocessAlpha = true;
 };
 
@@ -142,6 +143,19 @@ struct RealBackgroundRecordingCache {
     int             width = 0;
     int             height = 0;
 };
+
+struct AsyncPboReadbackState {
+    static constexpr int BUFFER_COUNT = 3;
+
+    GLuint      buffers[BUFFER_COUNT] = {0, 0, 0};
+    std::size_t bytes = 0;
+    int         width = 0;
+    int         height = 0;
+    int         pending = 0;
+    int         next = 0;
+};
+
+AsyncPboReadbackState g_windowRecordingPboReadback;
 
 Rect toRect(const CBox& box) {
     return {.x = box.x, .y = box.y, .width = box.w, .height = box.h};
@@ -454,7 +468,66 @@ RgbaReadback cropReadback(const RgbaReadback& readback, const PixelBounds& bound
     return cropped;
 }
 
-RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int cropTopY, int cropWidth, int cropHeight, bool directGlY = false) {
+void resetAsyncPboReadback(AsyncPboReadbackState& state) {
+    if (std::any_of(std::begin(state.buffers), std::end(state.buffers), [](GLuint buffer) { return buffer != 0; }))
+        glDeleteBuffers(AsyncPboReadbackState::BUFFER_COUNT, state.buffers);
+    state = {};
+}
+
+bool ensureAsyncPboReadback(AsyncPboReadbackState& state, int width, int height, std::size_t bytes) {
+    if (std::all_of(std::begin(state.buffers), std::end(state.buffers), [](GLuint buffer) { return buffer != 0; }) && state.width == width &&
+        state.height == height && state.bytes == bytes)
+        return true;
+
+    resetAsyncPboReadback(state);
+    glGenBuffers(AsyncPboReadbackState::BUFFER_COUNT, state.buffers);
+    if (!std::all_of(std::begin(state.buffers), std::end(state.buffers), [](GLuint buffer) { return buffer != 0; })) {
+        resetAsyncPboReadback(state);
+        return false;
+    }
+
+    state.width = width;
+    state.height = height;
+    state.bytes = bytes;
+    state.next = 0;
+    return true;
+}
+
+bool issueAsyncPboReadback(AsyncPboReadbackState& state, const RgbaReadbackRegion& region, int framebufferHeight, bool directGlY) {
+    if (state.pending >= AsyncPboReadbackState::BUFFER_COUNT)
+        return false;
+
+    const int target = state.next;
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, state.buffers[target]);
+    glBufferData(GL_PIXEL_PACK_BUFFER, static_cast<GLsizeiptr>(state.bytes), nullptr, GL_STREAM_READ);
+    const int readY = directGlY ? region.srcTopY : framebufferHeight - region.srcTopY - region.srcHeight;
+    glReadPixels(region.srcX, readY, region.srcWidth, region.srcHeight, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    ++state.pending;
+    state.next = (target + 1) % AsyncPboReadbackState::BUFFER_COUNT;
+    return true;
+}
+
+bool mapPendingPboReadback(AsyncPboReadbackState& state, RgbaReadback& readback, bool force = false) {
+    if (state.pending <= 0 || (!force && state.pending < AsyncPboReadbackState::BUFFER_COUNT - 1))
+        return false;
+
+    const int source = (state.next + AsyncPboReadbackState::BUFFER_COUNT - state.pending) % AsyncPboReadbackState::BUFFER_COUNT;
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, state.buffers[source]);
+    const auto* ptr = static_cast<const unsigned char*>(glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, static_cast<GLsizeiptr>(state.bytes), GL_MAP_READ_BIT));
+    if (!ptr) {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        return false;
+    }
+
+    std::copy(ptr, ptr + state.bytes, readback.pixels.data());
+    glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    --state.pending;
+    return true;
+}
+
+RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int cropTopY, int cropWidth, int cropHeight, bool directGlY = false, bool asyncPbo = false) {
     const int framebufferWidth = positiveRoundedIntFromDouble(framebuffer.m_size.x);
     const int framebufferHeight = positiveRoundedIntFromDouble(framebuffer.m_size.y);
     RgbaReadbackRegion region;
@@ -470,6 +543,7 @@ RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int
 
     if (region.srcWidth > 0 && region.srcHeight > 0) {
         const bool canReadDirectly = region.srcWidth == region.outputWidth && region.srcHeight == region.outputHeight && region.dstX == 0 && region.dstY == 0;
+        const bool useAsyncPbo = asyncPbo && canReadDirectly && region.sourceBytes == region.outputBytes && region.outputBytes > 0;
         std::vector<unsigned char> rows;
         if (!canReadDirectly)
             rows.assign(region.sourceBytes, 0);
@@ -478,8 +552,26 @@ RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer.getFBID());
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        const int readY = directGlY ? region.srcTopY : framebufferHeight - region.srcTopY - region.srcHeight;
-        glReadPixels(region.srcX, readY, region.srcWidth, region.srcHeight, GL_RGBA, GL_UNSIGNED_BYTE, target);
+
+        if (useAsyncPbo && ensureAsyncPboReadback(g_windowRecordingPboReadback, region.outputWidth, region.outputHeight, region.outputBytes)) {
+            bool hasMappedFrame = mapPendingPboReadback(g_windowRecordingPboReadback, readback);
+            if (!issueAsyncPboReadback(g_windowRecordingPboReadback, region, framebufferHeight, directGlY)) {
+                hasMappedFrame = mapPendingPboReadback(g_windowRecordingPboReadback, readback, true);
+                if (!hasMappedFrame)
+                    resetAsyncPboReadback(g_windowRecordingPboReadback);
+                else
+                    issueAsyncPboReadback(g_windowRecordingPboReadback, region, framebufferHeight, directGlY);
+            }
+            if (!hasMappedFrame) {
+                const int readY = directGlY ? region.srcTopY : framebufferHeight - region.srcTopY - region.srcHeight;
+                glReadPixels(region.srcX, readY, region.srcWidth, region.srcHeight, GL_RGBA, GL_UNSIGNED_BYTE, target);
+            }
+        } else {
+            if (asyncPbo)
+                resetAsyncPboReadback(g_windowRecordingPboReadback);
+            const int readY = directGlY ? region.srcTopY : framebufferHeight - region.srcTopY - region.srcHeight;
+            glReadPixels(region.srcX, readY, region.srcWidth, region.srcHeight, GL_RGBA, GL_UNSIGNED_BYTE, target);
+        }
         glBindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFramebuffer);
 
         if (!canReadDirectly) {
@@ -947,7 +1039,7 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
     const int cropX = clampedIntFromDouble(renderCropBox.x);
     const int cropY = clampedIntFromDouble(renderCropBox.y);
     auto readback = trimToAlphaBounds ? readRgbaFramebufferRegion(framebuffer, 0, 0, framebufferWidth, framebufferHeight) :
-                                        readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height);
+                                        readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height, false, options.asyncReadback);
     if (readback.pixels.empty())
         return {};
 
@@ -1473,6 +1565,7 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     int  height = 0;
     CBox artifactBox;
     WindowRenderOptions renderOptions;
+    renderOptions.asyncReadback = true;
     const auto          solidBackground = recordingSolidBackgroundColor(request.defaults.windowBackground);
     const auto          frozenTime = Time::steadyNow();
     if (solidBackground) {
@@ -1625,6 +1718,13 @@ std::optional<RecordingFrame> captureRecordingFrame(const RecordingFrameRequest&
     return captureDesktopRegionRecordingFrame(request.targetGeometry);
 }
 
+void resetRecordingCaptureState() {
+    if (g_pHyprRenderer)
+        g_pHyprRenderer->makeEGLCurrent();
+    resetAsyncPboReadback(g_windowRecordingPboReadback);
+    g_realBackgroundRecordingCache.reset();
+}
+
 std::string writeCompositorSessionJsonFile(const CaptureSession& session, std::string_view json) {
     if (json.empty() || json.size() > MAX_SESSION_JSON_BYTES)
         return {};
@@ -1677,6 +1777,9 @@ void cleanupCompositorArtifacts(const CaptureSession& session) {
 }
 
 void shutdownArtifactCapture() {
+    if (g_pHyprRenderer)
+        g_pHyprRenderer->makeEGLCurrent();
+    resetAsyncPboReadback(g_windowRecordingPboReadback);
     g_realBackgroundRecordingCache.reset();
     shutdownRealBackgroundHooks();
 }
