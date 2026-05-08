@@ -76,6 +76,8 @@ Json defaultsJson(const CaptureDefaults& defaults) {
         {"recordCodec", boundedString(defaults.recordCodec, MAX_METADATA_STRING_BYTES)},
         {"recordPreset", boundedString(defaults.recordPreset, MAX_METADATA_STRING_BYTES)},
         {"recordFps", std::clamp<std::int64_t>(defaults.recordFps, 1, MAX_RECORD_FPS)},
+        {"recordWindowFpsLimit", std::clamp<std::int64_t>(defaults.recordWindowFpsLimit, 0, MAX_RECORD_FPS)},
+        {"recordWindowRealBgFpsLimit", std::clamp<std::int64_t>(defaults.recordWindowRealBgFpsLimit, 0, MAX_RECORD_FPS)},
         {"recordMaxSeconds", std::clamp<std::int64_t>(defaults.recordMaxSeconds, 0, MAX_RECORD_SECONDS)},
         {"thumbnailTimeoutMs", std::clamp<std::int64_t>(defaults.thumbnailTimeoutMs, 0, 60 * 60 * 1000)},
         {"watermark", boundedString(defaults.watermark, MAX_PATH_BYTES)},
@@ -209,6 +211,8 @@ bool parseDefaults(const Json& obj, CaptureDefaults& defaults) {
         stringValue(obj, "recordCodec", defaults.recordCodec, MAX_METADATA_STRING_BYTES, false) &&
         stringValue(obj, "recordPreset", defaults.recordPreset, MAX_METADATA_STRING_BYTES, false) &&
         int64Value(obj, "recordFps", defaults.recordFps, 1, MAX_RECORD_FPS, false) &&
+        int64Value(obj, "recordWindowFpsLimit", defaults.recordWindowFpsLimit, 0, MAX_RECORD_FPS, false) &&
+        int64Value(obj, "recordWindowRealBgFpsLimit", defaults.recordWindowRealBgFpsLimit, 0, MAX_RECORD_FPS, false) &&
         int64Value(obj, "recordMaxSeconds", defaults.recordMaxSeconds, 0, MAX_RECORD_SECONDS, false) &&
         int64Value(obj, "thumbnailTimeoutMs", defaults.thumbnailTimeoutMs, 0, 60 * 60 * 1000, false) &&
         stringValue(obj, "watermark", defaults.watermark, MAX_PATH_BYTES, false) &&

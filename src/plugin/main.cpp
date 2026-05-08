@@ -78,6 +78,8 @@ hyprcapture::CaptureDefaults readDefaults() {
     defaults.recordCodec = configString("record_codec", defaults.recordCodec);
     defaults.recordPreset = configString("record_preset", defaults.recordPreset);
     defaults.recordFps = configInt("record_fps", defaults.recordFps);
+    defaults.recordWindowFpsLimit = configInt("record_window_fps_limit", defaults.recordWindowFpsLimit);
+    defaults.recordWindowRealBgFpsLimit = configInt("record_window_real_bg_fps_limit", defaults.recordWindowRealBgFpsLimit);
     defaults.recordMaxSeconds = configInt("record_max_seconds", defaults.recordMaxSeconds);
     defaults.thumbnailTimeoutMs = configInt("thumbnail_timeout_ms", defaults.thumbnailTimeoutMs);
     defaults.watermark = configString("watermark", defaults.watermark);
@@ -189,6 +191,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:filename_template", Hyprlang::STRING{"Screenshot-%Y-%m-%d-%H%M%S.png"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_filename_template", Hyprlang::STRING{"Recording-%Y-%m-%d-%H%M%S.mp4"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_fps", Hyprlang::INT{30});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_window_fps_limit", Hyprlang::INT{12});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_window_real_bg_fps_limit", Hyprlang::INT{8});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_codec", Hyprlang::STRING{"libx264"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_preset", Hyprlang::STRING{"veryfast"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_max_seconds", Hyprlang::INT{0});

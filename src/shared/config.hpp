@@ -32,6 +32,8 @@ struct CaptureDefaults {
     std::string      recordCodec = "libx264";
     std::string      recordPreset = "veryfast";
     std::int64_t     recordFps = 30;
+    std::int64_t     recordWindowFpsLimit = 12;
+    std::int64_t     recordWindowRealBgFpsLimit = 8;
     std::int64_t     recordMaxSeconds = 0;
     std::int64_t     thumbnailTimeoutMs = 5000;
     std::string      watermark;

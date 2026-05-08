@@ -208,6 +208,8 @@ plugin {
         filename_template = Screenshot-%Y-%m-%d-%H%M%S.png
         record_filename_template = Recording-%Y-%m-%d-%H%M%S.mp4
         record_fps = 30
+        record_window_fps_limit = 12
+        record_window_real_bg_fps_limit = 8
         record_codec = libx264
         record_preset = veryfast
         record_max_seconds = 0
@@ -245,6 +247,8 @@ plugin {
 | `filename_template` | string | `Screenshot-%Y-%m-%d-%H%M%S.png` | `strftime` template for saved screenshot filenames. |
 | `record_filename_template` | string | `Recording-%Y-%m-%d-%H%M%S.mp4` | `strftime` template for saved recording filenames. |
 | `record_fps` | int | `30` | Recording frame rate. Higher values increase compositor readback and encoder load. |
+| `record_window_fps_limit` | int | `12` | Safety cap for window recording with the current compositor-readback backend. Use `0` to disable the cap. |
+| `record_window_real_bg_fps_limit` | int | `8` | Additional safety cap for window recording with `window_background = real`. Use `0` to disable the cap. |
 | `record_codec` | string | `libx264` | FFmpeg video encoder name. The default is broadly compatible. Use `auto` or `h264_vaapi` on VAAPI systems to offload encoding for 60 fps recording. |
 | `record_preset` | string | `veryfast` | FFmpeg preset used with `libx264`/`libx264rgb`. |
 | `record_max_seconds` | int | `0` | Optional automatic stop in seconds. `0` means no duration limit. |
@@ -259,6 +263,8 @@ record_codec = auto
 ```
 
 `auto` currently prefers VAAPI when a writable `/dev/dri/renderD*` device exists and falls back to `libx264`. This still uses HyprCapture's compositor-side capture path; it does not use `wf-recorder`, screencopy, portal sessions, or Hyprland screenshare managed sessions.
+
+The current window recording path uses synchronous compositor readback. To avoid making Hyprland sluggish, window recordings are capped by `record_window_fps_limit` until the GPU-only encoder path lands.
 
 ### Watermark options
 

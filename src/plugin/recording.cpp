@@ -255,6 +255,24 @@ Time::steady_dur frameIntervalForFps(int fps) {
     return interval;
 }
 
+int effectiveRecordingFps(const RecordingFrameRequest& request, int requestedFps) {
+    int fps = std::clamp(requestedFps, 1, 240);
+    if (request.mode != CaptureMode::Window)
+        return fps;
+
+    const int windowLimit = std::clamp<int>(static_cast<int>(request.defaults.recordWindowFpsLimit), 0, 240);
+    if (windowLimit > 0)
+        fps = std::min(fps, windowLimit);
+
+    if (request.defaults.windowBackground == WindowBackground::Real) {
+        const int realBgLimit = std::clamp<int>(static_cast<int>(request.defaults.recordWindowRealBgFpsLimit), 0, 240);
+        if (realBgLimit > 0)
+            fps = std::min(fps, realBgLimit);
+    }
+
+    return std::max(1, fps);
+}
+
 std::filesystem::path uniqueOutputPath(const CaptureDefaults& defaults) {
     auto dir = expandUserPath(defaults.saveDir);
     std::error_code ec;
@@ -644,7 +662,8 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
     if (!firstFrame || !makeEvenFrame(*firstFrame))
         return {.success = false, .error = "failed to capture first recording frame"};
 
-    const int fps = std::clamp<int>(static_cast<int>(request->defaults.recordFps), 1, 240);
+    const int requestedFps = std::clamp<int>(static_cast<int>(request->defaults.recordFps), 1, 240);
+    const int fps = effectiveRecordingFps(frameRequest, requestedFps);
     const auto outputPath = uniqueOutputPath(request->defaults);
     auto encoder = std::make_unique<RawVideoEncoder>(outputPath,
                                                      firstFrame->width,
@@ -669,6 +688,8 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
     g_recording->height = height;
     scheduleRecordingTimer();
 
+    if (fps < requestedFps)
+        notifyRecording("window recording limited to " + std::to_string(fps) + " fps to avoid compositor stalls", CHyprColor(1.0, 0.72, 0.2, 1.0), 5000);
     notifyRecording("recording started: " + outputPath.string());
     return {.success = true};
 }
