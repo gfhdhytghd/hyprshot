@@ -1903,12 +1903,12 @@ QImage CaptureOverlay::renderResultImage() const {
     return image;
 }
 
-bool CaptureOverlay::startRecording() {
+QString CaptureOverlay::prepareRecordingRequest() {
     m_recordError.clear();
     QRect cap = captureRectForMode();
     if (!cap.isValid()) {
         m_recordError = QStringLiteral("invalid record target");
-        return false;
+        return {};
     }
 
     hyprcapture::RecordingRequest request;
@@ -1925,7 +1925,7 @@ bool CaptureOverlay::startRecording() {
         const auto* window = hoveredWindow();
         if (!window || window->address.isEmpty()) {
             m_recordError = QStringLiteral("invalid record window");
-            return false;
+            return {};
         }
         request.windowAddress = window->address.toStdString();
         cap = globalToLocalRect(windowFrameGeometry(*window));
@@ -1934,7 +1934,7 @@ bool CaptureOverlay::startRecording() {
     const QRect globalRect = localToDesktopLogicalRect(cap);
     if (!globalRect.isValid()) {
         m_recordError = QStringLiteral("invalid record geometry");
-        return false;
+        return {};
     }
     request.targetGeometry = {.x = static_cast<double>(globalRect.x()),
                               .y = static_cast<double>(globalRect.y()),
@@ -1945,6 +1945,15 @@ bool CaptureOverlay::startRecording() {
     const std::string json = hyprcapture::encodeRecordingRequestJson(request);
     if (!writePrivateTextFile(requestPath, QByteArray(json.data(), static_cast<qsizetype>(json.size())))) {
         m_recordError = QStringLiteral("record request write failed");
+        return {};
+    }
+
+    return requestPath;
+}
+
+bool CaptureOverlay::startRecording(const QString& requestPath) {
+    if (requestPath.isEmpty()) {
+        m_recordError = QStringLiteral("invalid record request");
         return false;
     }
 
@@ -1966,13 +1975,24 @@ void CaptureOverlay::finishCapture() {
     m_finishing = true;
 
     if (m_record) {
-        if (!startRecording()) {
+        const QString requestPath = prepareRecordingRequest();
+        if (requestPath.isEmpty()) {
             m_finishing = false;
             updateStatus();
             return;
         }
-        traceTiming(QStringLiteral("record_start"));
-        fadeOutThen([] { qApp->quit(); });
+        hide();
+        qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
+        QTimer::singleShot(120, this, [this, requestPath] {
+            if (!startRecording(requestPath)) {
+                show();
+                m_finishing = false;
+                updateStatus();
+                return;
+            }
+            traceTiming(QStringLiteral("record_start"));
+            qApp->quit();
+        });
         return;
     }
 

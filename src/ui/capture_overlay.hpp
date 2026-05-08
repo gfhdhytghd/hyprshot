@@ -68,7 +68,8 @@ class CaptureOverlay final : public QMainWindow {
     void updateToolbarControlsForMode();
     void finishCapture();
     void cancelCapture();
-    bool startRecording();
+    QString prepareRecordingRequest();
+    bool startRecording(const QString& requestPath);
     bool stopRecording();
     void saveImage(const QImage& image, hyprcapture::ui::ClipboardSnapshotData clipboardSnapshot);
     QImage renderResultImage() const;
