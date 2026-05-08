@@ -2,6 +2,7 @@
 
 #include "plugin/artifact_capture.hpp"
 #include "plugin/session_launcher.hpp"
+#include "plugin/timing.hpp"
 #include "shared/config.hpp"
 #include "shared/protocol.hpp"
 
@@ -585,6 +586,8 @@ class RawVideoEncoder {
 
   private:
     bool writeAll(const std::vector<unsigned char>& frame) {
+        ScopedTiming timing("record.encoder_write");
+
         const auto* data = reinterpret_cast<const char*>(frame.data());
         std::size_t written = 0;
         while (written < frame.size()) {
@@ -656,6 +659,7 @@ struct ActiveRecording {
     SP<CEventLoopTimer>                      timer;
     Time::steady_dur                         interval{std::chrono::milliseconds(33)};
     Time::steady_tp                          startedAt;
+    Time::steady_tp                          nextFrameAt;
     std::filesystem::path                    outputPath;
     int                                      width = 0;
     int                                      height = 0;
@@ -744,6 +748,8 @@ void scheduleGsrStopTimer(int maxSeconds) {
 }
 
 void captureRecordingTick(SP<CEventLoopTimer> self) {
+    ScopedTiming timing("record.tick_total");
+
     if (!g_recording || g_recording->timer.get() != self.get())
         return;
 
@@ -755,13 +761,31 @@ void captureRecordingTick(SP<CEventLoopTimer> self) {
     }
 
     if (g_recording->encoder && g_recording->encoder->hasQueueSpace()) {
-        auto frame = captureRecordingFrame(g_recording->request);
-        if (frame && makeEvenFrame(*frame) && resizeFrameNearest(*frame, g_recording->width, g_recording->height) &&
-            g_recording->encoder->enqueue(std::move(*frame))) {
+        std::optional<RecordingFrame> frame;
+        {
+            ScopedTiming timing("record.capture_frame");
+            frame = captureRecordingFrame(g_recording->request);
+        }
+
+        bool processed = false;
+        if (frame) {
+            ScopedTiming timing("record.cpu_postprocess");
+            processed = makeEvenFrame(*frame) && resizeFrameNearest(*frame, g_recording->width, g_recording->height);
+        }
+
+        bool enqueued = false;
+        if (processed) {
+            ScopedTiming timing("record.enqueue");
+            enqueued = g_recording->encoder->enqueue(std::move(*frame));
+        }
+
+        if (enqueued) {
             g_recording->consecutiveFrameFailures = 0;
         } else {
             ++g_recording->consecutiveFrameFailures;
         }
+    } else {
+        traceTiming("record.queue_full");
     }
 
     if (g_recording && g_recording->consecutiveFrameFailures >= MAX_CONSECUTIVE_FRAME_FAILURES) {
@@ -769,16 +793,30 @@ void captureRecordingTick(SP<CEventLoopTimer> self) {
         return;
     }
 
-    if (g_recording && g_recording->timer)
-        self->updateTimeout(g_recording->interval);
+    if (g_recording && g_recording->timer) {
+        const auto afterTick = Time::steadyNow();
+        if (g_recording->nextFrameAt.time_since_epoch().count() == 0)
+            g_recording->nextFrameAt = afterTick + g_recording->interval;
+        while (g_recording->nextFrameAt <= afterTick)
+            g_recording->nextFrameAt += g_recording->interval;
+
+        auto timeout = g_recording->nextFrameAt - afterTick;
+        if (timeout < std::chrono::milliseconds(1))
+            timeout = std::chrono::milliseconds(1);
+        self->updateTimeout(timeout);
+    }
 }
 
 void scheduleRecordingTimer() {
     if (!g_recording || !g_pEventLoopManager)
         return;
 
+    auto timeout = g_recording->nextFrameAt - Time::steadyNow();
+    if (timeout < std::chrono::milliseconds(1))
+        timeout = std::chrono::milliseconds(1);
+
     g_recording->timer = makeShared<CEventLoopTimer>(
-        g_recording->interval,
+        timeout,
         [](SP<CEventLoopTimer> self, void*) {
             captureRecordingTick(self);
         },
@@ -907,6 +945,7 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
     g_recording->encoder = std::move(encoder);
     g_recording->interval = frameIntervalForFps(fps);
     g_recording->startedAt = Time::steadyNow();
+    g_recording->nextFrameAt = g_recording->startedAt + g_recording->interval;
     g_recording->outputPath = outputPath;
     g_recording->width = width;
     g_recording->height = height;

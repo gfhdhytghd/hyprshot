@@ -208,6 +208,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:watermark_position", Hyprlang::STRING{"central"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:watermark_width", Hyprlang::STRING{"20%"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:watermark_offset", Hyprlang::STRING{"0 0"});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:timing", Hyprlang::INT{0});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:timing_file", Hyprlang::STRING{""});
 
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:open", dispatchOpen);
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:quick", dispatchQuick);

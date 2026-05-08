@@ -33,6 +33,7 @@ add_library(hyprcapture SHARED
   src/plugin/artifact_capture.cpp
   src/plugin/recording.cpp
   src/plugin/session_launcher.cpp
+  src/plugin/timing.cpp
   src/shared/config.cpp
   src/shared/protocol.cpp
 )

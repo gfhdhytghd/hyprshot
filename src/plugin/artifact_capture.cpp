@@ -1,5 +1,7 @@
 #include "plugin/artifact_capture.hpp"
 
+#include "plugin/timing.hpp"
+
 #include <hyprland/src/plugins/PluginAPI.hpp>
 
 #define private public
@@ -588,6 +590,8 @@ RgbaReadback readRenderPassFramebufferRegion(CFramebuffer& framebuffer, int crop
 }
 
 bool blitRenderPassFramebufferRegion(CFramebuffer& source, CFramebuffer& target, int cropX, int cropTopY, int cropWidth, int cropHeight) {
+    ScopedTiming timing("realbg.blit_framebuffer");
+
     const int sourceWidth = positiveRoundedIntFromDouble(source.m_size.x);
     const int sourceHeight = positiveRoundedIntFromDouble(source.m_size.y);
     RgbaReadbackRegion region;
@@ -644,6 +648,7 @@ class RealBackgroundCapturePass final : public IPassElement {
         if (!m_state || m_state->captured || !g_pHyprOpenGL || !g_pHyprOpenGL->m_renderData.currentFB)
             return;
 
+        ScopedTiming timing("realbg.capture_pass");
         if (m_state->framebuffer) {
             m_state->captured =
                 blitRenderPassFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, *m_state->framebuffer, m_state->cropX, m_state->cropY, m_state->width, m_state->height);
@@ -801,6 +806,7 @@ void hkRenderTextureInternal(void* openGLThisptr, SP<CTexture> texture, const CB
         return;
 
     state->awaitingBlurBackground = false;
+    ScopedTiming timing("realbg.blur_capture");
     if (state->framebuffer) {
         state->captured =
             blitRenderPassFramebufferRegion(*g_pHyprOpenGL->m_renderData.currentFB, *state->framebuffer, state->cropX, state->cropY, state->width, state->height);
@@ -1067,6 +1073,7 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
     const bool previousRenderingSnapshot = g_pHyprRenderer->m_bRenderingSnapshot;
 
     const auto renderIntoFramebuffer = [&]() {
+        ScopedTiming timing("window.render");
         CRegion fakeDamage{0, 0, framebufferWidth, framebufferHeight};
         g_pHyprRenderer->makeEGLCurrent();
         g_pHyprRenderer->m_bBlockSurfaceFeedback = true;
@@ -1095,8 +1102,12 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
 
     const int cropX = clampedIntFromDouble(renderCropBox.x);
     const int cropY = clampedIntFromDouble(renderCropBox.y);
-    auto readback = trimToAlphaBounds ? readRgbaFramebufferRegion(framebuffer, 0, 0, framebufferWidth, framebufferHeight) :
-                                        readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height, false, options.asyncReadback);
+    RgbaReadback readback;
+    {
+        ScopedTiming timing("window.readback");
+        readback = trimToAlphaBounds ? readRgbaFramebufferRegion(framebuffer, 0, 0, framebufferWidth, framebufferHeight) :
+                                       readRgbaFramebufferRegion(framebuffer, cropX, cropY, width, height, false, options.asyncReadback);
+    }
     if (readback.pixels.empty())
         return {};
 
@@ -1115,6 +1126,7 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
     artifactBox = CBox{fullBox.x + (readback.cropX - cropX) / scale, fullBox.y + (readback.cropTopY - cropY) / scale, width / scale, height / scale};
 
     if (options.postprocessAlpha) {
+        ScopedTiming timing("window.alpha_postprocess");
         repairTopTransparentSeam(readback);
         unpremultiplyAlpha(readback);
     }
@@ -1315,6 +1327,8 @@ bool renderRealBackgroundFramebufferForMonitor(const PHLMONITOR& monitor,
                                                const Time::steady_tp& frozenTime,
                                                const RealBackgroundCaptureTarget& target,
                                                CFramebuffer& targetFramebuffer) {
+    ScopedTiming timing("realbg.framebuffer_total");
+
     if (!monitor || !monitor->m_activeWorkspace || !target.window || !targetFramebuffer.isAllocated() || !g_pHyprRenderer || !g_pHyprOpenGL)
         return false;
 
@@ -1366,7 +1380,10 @@ bool renderRealBackgroundFramebufferForMonitor(const PHLMONITOR& monitor,
     }
 
     g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 1.0});
-    g_pHyprRenderer->renderWorkspace(monitor, monitor->m_activeWorkspace, frozenTime, CBox{0, 0, static_cast<double>(framebufferWidth), static_cast<double>(framebufferHeight)});
+    {
+        ScopedTiming timing("realbg.render_workspace");
+        g_pHyprRenderer->renderWorkspace(monitor, monitor->m_activeWorkspace, frozenTime, CBox{0, 0, static_cast<double>(framebufferWidth), static_cast<double>(framebufferHeight)});
+    }
     g_pHyprOpenGL->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
     clearHookContext();
@@ -1674,6 +1691,8 @@ const RealBackgroundRecordingCache* captureWindowRealBackgroundRecordingFrame(co
 }
 
 std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRequest& request) {
+    ScopedTiming timing("record.capture_window_total");
+
     const auto window = findWindowByAddress(request.windowAddress);
     if (!window || !shouldCaptureWindow(window))
         return std::nullopt;
@@ -1697,12 +1716,20 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
         renderOptions.postprocessAlpha = false;
     } else if (request.defaults.windowBackground == WindowBackground::Real) {
         const CBox fullBox = renderedWindowBox(window, window->getFullWindowBoundingBox());
-        if (auto background = captureWindowRealBackgroundRecordingFrame(window, monitor, frozenTime, toRect(fullBox))) {
+        const auto captureBackground = [&]() {
+            ScopedTiming timing("record.realbg_capture");
+            return captureWindowRealBackgroundRecordingFrame(window, monitor, frozenTime, toRect(fullBox));
+        };
+        if (auto background = captureBackground()) {
             renderOptions.backgroundTexture = background->texture;
             renderOptions.postprocessAlpha = false;
         }
     }
-    auto       readback = renderWindowArtifactReadback(window, monitor, frozenTime, renderDecorations, width, height, artifactBox, nullptr, false, renderOptions);
+    RgbaReadback readback;
+    {
+        ScopedTiming timing("record.window_readback");
+        readback = renderWindowArtifactReadback(window, monitor, frozenTime, renderDecorations, width, height, artifactBox, nullptr, false, renderOptions);
+    }
     if (readback.pixels.empty())
         return std::nullopt;
 
