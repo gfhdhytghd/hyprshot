@@ -91,6 +91,14 @@ int main(int argc, char** argv) {
         {{"fushion-mode", "fusion-mode"}, "Enable fushion toolbar behavior.", "0|1", "0"},
         {"save-dir", "Save directory.", "path", "~/Pictures/Screenshots"},
         {"filename-template", "Filename strftime template.", "template", "Screenshot-%Y-%m-%d-%H%M%S.png"},
+        {"record-filename-template", "Recording filename strftime template.", "template", "Recording-%Y-%m-%d-%H%M%S.mp4"},
+        {"record-codec", "Recording codec.", "codec", "libx264"},
+        {"record-preset", "Recording preset.", "preset", "veryfast"},
+        {"record-gsr-flags", "Extra gpu-screen-recorder flags.", "flags", ""},
+        {"record-fps", "Recording FPS.", "fps", "30"},
+        {"record-window-fps-limit", "Window recording FPS cap.", "fps", "12"},
+        {"record-window-real-bg-fps-limit", "Real background window recording FPS cap.", "fps", "8"},
+        {"record-max-seconds", "Recording max seconds.", "seconds", "0"},
         {"thumbnail-timeout-ms", "Thumbnail timeout.", "ms", "5000"},
         {"watermark", "Watermark image path or built-in id.", "path|id", ""},
         {"watermark-position", "Watermark position.", "position", "central"},
@@ -134,6 +142,14 @@ int main(int argc, char** argv) {
     defaults.fushionMode = flagValue(parser, "fushion-mode", defaults.fushionMode);
     defaults.saveDir = parser.value("save-dir").toStdString();
     defaults.filenameTemplate = parser.value("filename-template").toStdString();
+    defaults.recordFilenameTemplate = parser.value("record-filename-template").toStdString();
+    defaults.recordCodec = parser.value("record-codec").toStdString();
+    defaults.recordPreset = parser.value("record-preset").toStdString();
+    defaults.recordGsrFlags = parser.value("record-gsr-flags").toStdString();
+    defaults.recordFps = boundedInt(parser.value("record-fps"), defaults.recordFps, 1, 240);
+    defaults.recordWindowFpsLimit = boundedInt(parser.value("record-window-fps-limit"), defaults.recordWindowFpsLimit, 0, 240);
+    defaults.recordWindowRealBgFpsLimit = boundedInt(parser.value("record-window-real-bg-fps-limit"), defaults.recordWindowRealBgFpsLimit, 0, 240);
+    defaults.recordMaxSeconds = boundedInt(parser.value("record-max-seconds"), defaults.recordMaxSeconds, 0, 24 * 60 * 60);
     defaults.thumbnailTimeoutMs = boundedInt(parser.value("thumbnail-timeout-ms"), defaults.thumbnailTimeoutMs, 0, MAX_THUMBNAIL_TIMEOUT_MS);
     defaults.watermark = parser.value("watermark").toStdString();
     defaults.watermarkPosition = hyprcapture::parseWatermarkPosition(parser.value("watermark-position").toStdString(), defaults.watermarkPosition);

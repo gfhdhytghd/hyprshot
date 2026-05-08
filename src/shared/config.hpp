@@ -31,6 +31,7 @@ struct CaptureDefaults {
     std::string      recordFilenameTemplate = "Recording-%Y-%m-%d-%H%M%S.mp4";
     std::string      recordCodec = "libx264";
     std::string      recordPreset = "veryfast";
+    std::string      recordGsrFlags;
     std::int64_t     recordFps = 30;
     std::int64_t     recordWindowFpsLimit = 12;
     std::int64_t     recordWindowRealBgFpsLimit = 8;

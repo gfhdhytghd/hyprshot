@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <cctype>
 #include <condition_variable>
 #include <csignal>
@@ -116,6 +117,14 @@ std::optional<std::string> trustedExecutablePath(const std::string& candidate) {
 
 std::optional<std::string> trustedFfmpegPath() {
     for (const auto& candidate : {"/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg", "/bin/ffmpeg"}) {
+        if (const auto trusted = trustedExecutablePath(candidate))
+            return trusted;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> trustedGpuScreenRecorderPath() {
+    for (const auto& candidate : {"/usr/local/bin/gpu-screen-recorder", "/usr/bin/gpu-screen-recorder", "/bin/gpu-screen-recorder"}) {
         if (const auto trusted = trustedExecutablePath(candidate))
             return trusted;
     }
@@ -233,6 +242,82 @@ bool safeCodecToken(std::string_view token) {
     });
 }
 
+std::vector<std::string> splitShellLikeFlags(std::string_view raw, std::string& error) {
+    std::vector<std::string> out;
+    std::string              current;
+    char                     quote = '\0';
+    bool                     escape = false;
+
+    for (const char ch : raw) {
+        if (escape) {
+            current.push_back(ch);
+            escape = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escape = true;
+            continue;
+        }
+        if (quote != '\0') {
+            if (ch == quote)
+                quote = '\0';
+            else
+                current.push_back(ch);
+            continue;
+        }
+        if (ch == '\'' || ch == '"') {
+            quote = ch;
+            continue;
+        }
+        if (std::isspace(static_cast<unsigned char>(ch))) {
+            if (!current.empty()) {
+                out.push_back(std::move(current));
+                current.clear();
+            }
+            continue;
+        }
+        current.push_back(ch);
+    }
+
+    if (escape || quote != '\0') {
+        error = "invalid record_gsr_flags quoting";
+        return {};
+    }
+    if (!current.empty())
+        out.push_back(std::move(current));
+    return out;
+}
+
+std::optional<std::vector<std::string>> sanitizedGsrExtraFlags(std::string_view raw, std::string& error) {
+    auto tokens = splitShellLikeFlags(raw, error);
+    if (!error.empty())
+        return std::nullopt;
+
+    std::vector<std::string> out;
+    out.reserve(tokens.size());
+    for (std::size_t i = 0; i < tokens.size(); ++i) {
+        const auto& token = tokens[i];
+        if (token == "-w" || token == "-o" || token.starts_with("-w=") || token.starts_with("-o=")) {
+            error = "record_gsr_flags may not contain -w or -o";
+            return std::nullopt;
+        }
+        out.push_back(token);
+    }
+    return out;
+}
+
+std::string gsrCaptureSource(const RecordingRequest& request) {
+    if (request.mode == CaptureMode::Region ||
+        (request.mode == CaptureMode::Fullscreen && request.targetGeometry.width > 0.0 && request.targetGeometry.height > 0.0)) {
+        const int width = std::max(1, static_cast<int>(std::round(request.targetGeometry.width)));
+        const int height = std::max(1, static_cast<int>(std::round(request.targetGeometry.height)));
+        const int x = static_cast<int>(std::round(request.targetGeometry.x));
+        const int y = static_cast<int>(std::round(request.targetGeometry.y));
+        return std::to_string(width) + "x" + std::to_string(height) + "+" + std::to_string(x) + "+" + std::to_string(y);
+    }
+    return "screen";
+}
+
 std::string sanitizedCodec(std::string codec) {
     if (codec == "auto")
         return findVaapiRenderDevice() ? "h264_vaapi" : "libx264";
@@ -293,6 +378,12 @@ std::filesystem::path uniqueOutputPath(const CaptureDefaults& defaults) {
     }
 
     return dir / (stem + "-" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ext);
+}
+
+void setOwnerOnlyPermissions(const std::filesystem::path& path) {
+    std::error_code ec;
+    if (!path.empty())
+        std::filesystem::permissions(path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, ec);
 }
 
 bool resizeFrameNearest(RecordingFrame& frame, int width, int height) {
@@ -517,9 +608,7 @@ class RawVideoEncoder {
         while (waitpid(m_pid, &status, 0) < 0 && errno == EINTR) {
         }
         m_pid = -1;
-        std::error_code ec;
-        if (!m_outputPath.empty())
-            std::filesystem::permissions(m_outputPath, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, ec);
+        setOwnerOnlyPermissions(m_outputPath);
     }
 
     void workerMain() {
@@ -574,12 +663,56 @@ struct ActiveRecording {
 
 std::unique_ptr<ActiveRecording> g_recording;
 
+struct ActiveGsrRecording {
+    pid_t                 pid = -1;
+    SP<CEventLoopTimer>   timer;
+    std::filesystem::path outputPath;
+};
+
+std::unique_ptr<ActiveGsrRecording> g_gsrRecording;
+
 void notifyRecording(const std::string& message, const CHyprColor& color = CHyprColor(0.2, 0.8, 0.3, 1.0), float timeoutMs = 3000) {
     if (g_pluginHandle)
         HyprlandAPI::addNotification(g_pluginHandle, "[hyprcapture] " + message, color, timeoutMs);
 }
 
+bool reapGsrRecordingIfExited() {
+    if (!g_gsrRecording)
+        return false;
+
+    int status = 0;
+    const pid_t result = waitpid(g_gsrRecording->pid, &status, WNOHANG);
+    if (result == 0)
+        return true;
+    if (result == g_gsrRecording->pid || (result < 0 && errno == ECHILD)) {
+        auto recording = std::move(g_gsrRecording);
+        if (recording->timer && g_pEventLoopManager)
+            g_pEventLoopManager->removeTimer(recording->timer);
+        setOwnerOnlyPermissions(recording->outputPath);
+        notifyRecording("recording finished: " + recording->outputPath.string());
+        return false;
+    }
+
+    return true;
+}
+
 LaunchResult stopRecordingInternal(const std::string& reason, bool drain) {
+    if (g_gsrRecording) {
+        auto recording = std::move(g_gsrRecording);
+        if (recording->timer && g_pEventLoopManager)
+            g_pEventLoopManager->removeTimer(recording->timer);
+        recording->timer.reset();
+        if (recording->pid > 0) {
+            kill(recording->pid, SIGINT);
+            int status = 0;
+            while (waitpid(recording->pid, &status, 0) < 0 && errno == EINTR) {
+            }
+        }
+        setOwnerOnlyPermissions(recording->outputPath);
+        notifyRecording("recording " + reason + ": " + recording->outputPath.string());
+        return {.success = true};
+    }
+
     if (!g_recording)
         return {.success = false, .error = "no active recording"};
 
@@ -592,6 +725,21 @@ LaunchResult stopRecordingInternal(const std::string& reason, bool drain) {
 
     notifyRecording("recording " + reason + ": " + recording->outputPath.string());
     return {.success = true};
+}
+
+void scheduleGsrStopTimer(int maxSeconds) {
+    if (!g_gsrRecording || !g_pEventLoopManager || maxSeconds <= 0)
+        return;
+
+    g_gsrRecording->timer = makeShared<CEventLoopTimer>(
+        std::chrono::seconds(maxSeconds),
+        [](SP<CEventLoopTimer> self, void*) {
+            if (!g_gsrRecording || g_gsrRecording->timer.get() != self.get())
+                return;
+            stopRecordingInternal("stopped at max duration", true);
+        },
+        nullptr);
+    g_pEventLoopManager->addTimer(g_gsrRecording->timer);
 }
 
 void captureRecordingTick(SP<CEventLoopTimer> self) {
@@ -637,10 +785,80 @@ void scheduleRecordingTimer() {
     g_pEventLoopManager->addTimer(g_recording->timer);
 }
 
+LaunchResult spawnGpuScreenRecorder(const RecordingRequest& request, const std::filesystem::path& outputPath, pid_t& pid) {
+    const auto executable = trustedGpuScreenRecorderPath();
+    if (!executable)
+        return {.success = false, .error = "no trusted gpu-screen-recorder executable found"};
+
+    std::string flagsError;
+    auto        extraFlags = sanitizedGsrExtraFlags(request.defaults.recordGsrFlags, flagsError);
+    if (!extraFlags)
+        return {.success = false, .error = flagsError.empty() ? "invalid record_gsr_flags" : flagsError};
+
+    const int fps = std::clamp<int>(static_cast<int>(request.defaults.recordFps), 1, 240);
+    std::vector<std::string> args{
+        *executable,
+        "-w",
+        gsrCaptureSource(request),
+        "-f",
+        std::to_string(fps),
+        "-cursor",
+        request.defaults.includeCursor ? "yes" : "no",
+    };
+    args.insert(args.end(), extraFlags->begin(), extraFlags->end());
+    args.push_back("-o");
+    args.push_back(outputPath.string());
+
+    std::vector<char*> argv;
+    argv.reserve(args.size() + 1);
+    for (auto& arg : args)
+        argv.push_back(arg.data());
+    argv.push_back(nullptr);
+
+    auto childEnv = childEnvironment();
+    std::vector<char*> envp;
+    envp.reserve(childEnv.size() + 1);
+    for (auto& env : childEnv)
+        envp.push_back(env.data());
+    envp.push_back(nullptr);
+
+    posix_spawn_file_actions_t fileActions {};
+    if (const int error = posix_spawn_file_actions_init(&fileActions); error != 0)
+        return {.success = false, .error = std::string("spawn setup failed: ") + std::strerror(error)};
+#if defined(__GLIBC__) && defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 34)
+    posix_spawn_file_actions_addclosefrom_np(&fileActions, 3);
+#endif
+
+    const int spawnError = posix_spawn(&pid, argv[0], &fileActions, nullptr, argv.data(), envp.data());
+    posix_spawn_file_actions_destroy(&fileActions);
+    if (spawnError != 0)
+        return {.success = false, .error = std::string("gpu-screen-recorder exec failed: ") + std::strerror(spawnError)};
+
+    return {.success = true};
+}
+
+LaunchResult startGsrRecording(const RecordingRequest& request) {
+    if (request.mode == CaptureMode::Region && (request.targetGeometry.width <= 0.0 || request.targetGeometry.height <= 0.0))
+        return {.success = false, .error = "invalid recording geometry"};
+
+    const auto outputPath = uniqueOutputPath(request.defaults);
+    pid_t      pid = -1;
+    if (const auto result = spawnGpuScreenRecorder(request, outputPath, pid); !result.success)
+        return result;
+
+    g_gsrRecording = std::make_unique<ActiveGsrRecording>();
+    g_gsrRecording->pid = pid;
+    g_gsrRecording->outputPath = outputPath;
+    scheduleGsrStopTimer(std::clamp<int>(static_cast<int>(request.defaults.recordMaxSeconds), 0, 24 * 60 * 60));
+
+    notifyRecording("recording started via gpu-screen-recorder: " + outputPath.string());
+    return {.success = true};
+}
+
 } // namespace
 
 LaunchResult startRecordingFromRequestFile(const std::string& path) {
-    if (g_recording)
+    if (g_recording || reapGsrRecordingIfExited())
         return {.success = false, .error = "recording already active"};
     if (!g_pEventLoopManager)
         return {.success = false, .error = "Hyprland event loop unavailable"};
@@ -652,6 +870,9 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
     const auto request = decodeRecordingRequestJson(*requestJson);
     if (!request)
         return {.success = false, .error = "invalid recording request metadata"};
+
+    if (request->mode == CaptureMode::Fullscreen || request->mode == CaptureMode::Region)
+        return startGsrRecording(*request);
 
     RecordingFrameRequest frameRequest{.defaults = request->defaults,
                                        .mode = request->mode,
@@ -699,11 +920,11 @@ LaunchResult stopRecording(const std::string& reason) {
 }
 
 bool isRecordingActive() {
-    return static_cast<bool>(g_recording);
+    return static_cast<bool>(g_recording) || reapGsrRecordingIfExited();
 }
 
 void shutdownRecording() {
-    if (g_recording)
+    if (g_recording || g_gsrRecording)
         stopRecordingInternal("stopped during plugin unload", false);
 }
 

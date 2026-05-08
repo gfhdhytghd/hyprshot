@@ -115,6 +115,7 @@ int main() {
     recording.defaults.recordFps = 60;
     recording.defaults.recordWindowFpsLimit = 12;
     recording.defaults.recordWindowRealBgFpsLimit = 8;
+    recording.defaults.recordGsrFlags = "-k h264 -q very_high";
     recording.defaults.recordFilenameTemplate = "Recording-%Y.mp4";
     recording.mode = CaptureMode::Window;
     recording.targetGeometry = {.x = 10, .y = 20, .width = 640, .height = 480};
@@ -123,6 +124,7 @@ int main() {
     require(recordingJson.find("\"recordFps\":60") != std::string::npos, "record fps json");
     require(recordingJson.find("\"recordWindowFpsLimit\":12") != std::string::npos, "record window fps limit json");
     require(recordingJson.find("\"recordWindowRealBgFpsLimit\":8") != std::string::npos, "record window real bg fps limit json");
+    require(recordingJson.find("\"recordGsrFlags\":\"-k h264 -q very_high\"") != std::string::npos, "record gsr flags json");
     require(recordingJson.find("\"recordFilenameTemplate\":\"Recording-%Y.mp4\"") != std::string::npos, "record filename json");
     const auto decodedRecording = decodeRecordingRequestJson(recordingJson);
     require(decodedRecording.has_value(), "encoded recording request decodes");
@@ -131,6 +133,7 @@ int main() {
     require(decodedRecording->defaults.recordFps == 60, "decoded recording fps");
     require(decodedRecording->defaults.recordWindowFpsLimit == 12, "decoded recording window fps limit");
     require(decodedRecording->defaults.recordWindowRealBgFpsLimit == 8, "decoded recording window real bg fps limit");
+    require(decodedRecording->defaults.recordGsrFlags == "-k h264 -q very_high", "decoded recording gsr flags");
     require(!decodeRecordingRequestJson("{}").has_value(), "missing recording request fields rejected");
 
     require(!decodeSessionJson("{not json").has_value(), "malformed json is rejected");
