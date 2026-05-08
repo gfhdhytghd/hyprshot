@@ -918,6 +918,11 @@ CFramebuffer& reusableWindowRecordingMaskFramebuffer() {
     return framebuffer;
 }
 
+CFramebuffer& reusableWindowRecordingFullMaskFramebuffer() {
+    static CFramebuffer framebuffer;
+    return framebuffer;
+}
+
 CBox renderedWindowBox(const PHLWINDOW& window, CBox box) {
     if (window->m_workspace && !window->m_pinned)
         box.translate(window->m_workspace->m_renderOffset->value());
@@ -1107,9 +1112,16 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
         return true;
     };
 
+    const int cropX = clampedIntFromDouble(renderCropBox.x);
+    const int cropY = clampedIntFromDouble(renderCropBox.y);
+
     if (options.backgroundTexture && options.clipBackgroundToWindow) {
+        auto& fullMaskFramebuffer = reusableWindowRecordingFullMaskFramebuffer();
+        if (!fullMaskFramebuffer.alloc(framebufferWidth, framebufferHeight, DRM_FORMAT_ABGR8888) && !fullMaskFramebuffer.alloc(framebufferWidth, framebufferHeight, drmFormat))
+            return {};
+
         auto& matteFramebuffer = reusableWindowRecordingMaskFramebuffer();
-        if (!matteFramebuffer.alloc(framebufferWidth, framebufferHeight, DRM_FORMAT_ABGR8888) && !matteFramebuffer.alloc(framebufferWidth, framebufferHeight, drmFormat))
+        if (!matteFramebuffer.alloc(width, height, DRM_FORMAT_ABGR8888) && !matteFramebuffer.alloc(width, height, drmFormat))
             return {};
 
         const auto renderMask = [&]() {
@@ -1117,7 +1129,7 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
             CRegion fakeDamage{0, 0, framebufferWidth, framebufferHeight};
             g_pHyprRenderer->makeEGLCurrent();
             g_pHyprRenderer->m_bBlockSurfaceFeedback = true;
-            if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &matteFramebuffer)) {
+            if (!g_pHyprRenderer->beginRender(monitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &fullMaskFramebuffer)) {
                 g_pHyprRenderer->m_bBlockSurfaceFeedback = previousBlockFeedback;
                 return false;
             }
@@ -1135,14 +1147,13 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
             return true;
         };
 
-        if (!renderMask() || !renderIntoFramebuffer(framebuffer, &matteFramebuffer))
+        if (!renderMask() || !blitRenderPassFramebufferRegion(fullMaskFramebuffer, matteFramebuffer, cropX, cropY, width, height) ||
+            !renderIntoFramebuffer(framebuffer, &matteFramebuffer))
             return {};
     } else if (!renderIntoFramebuffer(framebuffer)) {
         return {};
     }
 
-    const int cropX = clampedIntFromDouble(renderCropBox.x);
-    const int cropY = clampedIntFromDouble(renderCropBox.y);
     RgbaReadback readback;
     {
         ScopedTiming timing("window.readback");
