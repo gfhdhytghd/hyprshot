@@ -69,6 +69,15 @@ DecorationPolicy parseDecorationPolicy(std::string_view value, DecorationPolicy 
     return fallback;
 }
 
+RecordWindowBackend parseRecordWindowBackend(std::string_view value, RecordWindowBackend fallback) {
+    const auto v = normalized(value);
+    if (v == "compositor" || v == "hyprcapture" || v == "exact")
+        return RecordWindowBackend::Compositor;
+    if (v == "gsr-visible" || v == "visible-gsr" || v == "gsr" || v == "region")
+        return RecordWindowBackend::GsrVisible;
+    return fallback;
+}
+
 WatermarkPosition parseWatermarkPosition(std::string_view value, WatermarkPosition fallback) {
     const auto v = normalized(value);
     if (v == "up-left" || v == "top-left" || v == "upper-left")
@@ -127,6 +136,14 @@ std::string toString(DecorationPolicy value) {
         case DecorationPolicy::Remove: return "remove";
     }
     return "keep";
+}
+
+std::string toString(RecordWindowBackend value) {
+    switch (value) {
+        case RecordWindowBackend::Compositor: return "compositor";
+        case RecordWindowBackend::GsrVisible: return "gsr-visible";
+    }
+    return "compositor";
 }
 
 std::string toString(WatermarkPosition value) {

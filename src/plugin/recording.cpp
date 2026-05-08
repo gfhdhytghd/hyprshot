@@ -308,6 +308,7 @@ std::optional<std::vector<std::string>> sanitizedGsrExtraFlags(std::string_view 
 
 std::string gsrCaptureSource(const RecordingRequest& request) {
     if (request.mode == CaptureMode::Region ||
+        request.mode == CaptureMode::Window ||
         (request.mode == CaptureMode::Fullscreen && request.targetGeometry.width > 0.0 && request.targetGeometry.height > 0.0)) {
         const int width = std::max(1, static_cast<int>(std::round(request.targetGeometry.width)));
         const int height = std::max(1, static_cast<int>(std::round(request.targetGeometry.height)));
@@ -838,7 +839,7 @@ LaunchResult spawnGpuScreenRecorder(const RecordingRequest& request, const std::
 }
 
 LaunchResult startGsrRecording(const RecordingRequest& request) {
-    if (request.mode == CaptureMode::Region && (request.targetGeometry.width <= 0.0 || request.targetGeometry.height <= 0.0))
+    if ((request.mode == CaptureMode::Region || request.mode == CaptureMode::Window) && (request.targetGeometry.width <= 0.0 || request.targetGeometry.height <= 0.0))
         return {.success = false, .error = "invalid recording geometry"};
 
     const auto outputPath = uniqueOutputPath(request.defaults);
@@ -871,7 +872,8 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
     if (!request)
         return {.success = false, .error = "invalid recording request metadata"};
 
-    if (request->mode == CaptureMode::Fullscreen || request->mode == CaptureMode::Region)
+    if (request->mode == CaptureMode::Fullscreen || request->mode == CaptureMode::Region ||
+        (request->mode == CaptureMode::Window && request->defaults.recordWindowBackend == RecordWindowBackend::GsrVisible))
         return startGsrRecording(*request);
 
     RecordingFrameRequest frameRequest{.defaults = request->defaults,

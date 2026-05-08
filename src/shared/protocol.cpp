@@ -76,6 +76,7 @@ Json defaultsJson(const CaptureDefaults& defaults) {
         {"recordCodec", boundedString(defaults.recordCodec, MAX_METADATA_STRING_BYTES)},
         {"recordPreset", boundedString(defaults.recordPreset, MAX_METADATA_STRING_BYTES)},
         {"recordGsrFlags", boundedString(defaults.recordGsrFlags, MAX_METADATA_STRING_BYTES)},
+        {"recordWindowBackend", toString(defaults.recordWindowBackend)},
         {"recordFps", std::clamp<std::int64_t>(defaults.recordFps, 1, MAX_RECORD_FPS)},
         {"recordWindowFpsLimit", std::clamp<std::int64_t>(defaults.recordWindowFpsLimit, 0, MAX_RECORD_FPS)},
         {"recordWindowRealBgFpsLimit", std::clamp<std::int64_t>(defaults.recordWindowRealBgFpsLimit, 0, MAX_RECORD_FPS)},
@@ -200,6 +201,10 @@ bool parseDefaults(const Json& obj, CaptureDefaults& defaults) {
         return false;
     if (stringValue(obj, "windowShadow", value, MAX_METADATA_STRING_BYTES, false))
         defaults.windowShadow = parseDecorationPolicy(value, defaults.windowShadow);
+    else
+        return false;
+    if (stringValue(obj, "recordWindowBackend", value, MAX_METADATA_STRING_BYTES, false))
+        defaults.recordWindowBackend = parseRecordWindowBackend(value, defaults.recordWindowBackend);
     else
         return false;
 

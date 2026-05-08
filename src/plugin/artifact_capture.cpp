@@ -105,6 +105,11 @@ struct RgbaReadbackRegion {
     std::size_t sourceBytes = 0;
 };
 
+struct WindowRenderOptions {
+    CHyprColor clearColor{0.0, 0.0, 0.0, 0.0};
+    bool       postprocessAlpha = true;
+};
+
 struct ArtifactBudget {
     std::size_t remaining = MAX_SESSION_ARTIFACT_BYTES;
 
@@ -446,20 +451,26 @@ RgbaReadback readRgbaFramebufferRegion(CFramebuffer& framebuffer, int cropX, int
     readback.pixels.assign(region.outputBytes, 0);
 
     if (region.srcWidth > 0 && region.srcHeight > 0) {
-        std::vector<unsigned char> rows(region.sourceBytes);
+        const bool canReadDirectly = region.srcWidth == region.outputWidth && region.srcHeight == region.outputHeight && region.dstX == 0 && region.dstY == 0;
+        std::vector<unsigned char> rows;
+        if (!canReadDirectly)
+            rows.assign(region.sourceBytes, 0);
+        unsigned char* target = canReadDirectly ? readback.pixels.data() : rows.data();
         GLint previousReadFramebuffer = 0;
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer.getFBID());
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         const int readY = directGlY ? region.srcTopY : framebufferHeight - region.srcTopY - region.srcHeight;
-        glReadPixels(region.srcX, readY, region.srcWidth, region.srcHeight, GL_RGBA, GL_UNSIGNED_BYTE, rows.data());
+        glReadPixels(region.srcX, readY, region.srcWidth, region.srcHeight, GL_RGBA, GL_UNSIGNED_BYTE, target);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFramebuffer);
 
-        for (int y = 0; y < region.srcHeight; ++y) {
-            const auto* src = rows.data() + static_cast<std::size_t>(y) * region.srcWidth * RGBA_BYTES_PER_PIXEL;
-            auto*       dst = readback.pixels.data() +
-                (static_cast<std::size_t>(region.dstY + y) * region.outputWidth + region.dstX) * RGBA_BYTES_PER_PIXEL;
-            std::copy(src, src + static_cast<std::size_t>(region.srcWidth) * RGBA_BYTES_PER_PIXEL, dst);
+        if (!canReadDirectly) {
+            for (int y = 0; y < region.srcHeight; ++y) {
+                const auto* src = rows.data() + static_cast<std::size_t>(y) * region.srcWidth * RGBA_BYTES_PER_PIXEL;
+                auto*       dst = readback.pixels.data() +
+                    (static_cast<std::size_t>(region.dstY + y) * region.outputWidth + region.dstX) * RGBA_BYTES_PER_PIXEL;
+                std::copy(src, src + static_cast<std::size_t>(region.srcWidth) * RGBA_BYTES_PER_PIXEL, dst);
+            }
         }
     }
 
@@ -719,6 +730,11 @@ void unpremultiplyAlpha(RgbaReadback& readback) {
     }
 }
 
+CFramebuffer& reusableWindowRecordingFramebuffer() {
+    static CFramebuffer framebuffer;
+    return framebuffer;
+}
+
 CBox renderedWindowBox(const PHLWINDOW& window, CBox box) {
     if (window->m_workspace && !window->m_pinned)
         box.translate(window->m_workspace->m_renderOffset->value());
@@ -841,7 +857,8 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
                                           int& height,
                                           CBox& artifactBox,
                                           ArtifactBudget* budget = nullptr,
-                                          bool trimToAlphaBounds = true) {
+                                          bool trimToAlphaBounds = true,
+                                          const WindowRenderOptions& options = {}) {
     if (!window || !monitor || !g_pHyprRenderer || !g_pHyprOpenGL)
         return {};
 
@@ -868,7 +885,8 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
     windowGoal.setPositionOffset(renderOffset);
     CBox renderCropBox = fullBox.copy().translate(renderOffset).translate(-monitor->m_position).scale(scale).round();
 
-    CFramebuffer framebuffer;
+    CFramebuffer localFramebuffer;
+    CFramebuffer& framebuffer = (!budget && !trimToAlphaBounds) ? reusableWindowRecordingFramebuffer() : localFramebuffer;
     const auto drmFormat = monitor->m_output && monitor->m_output->state ? monitor->m_output->state->state().drmFormat : DRM_FORMAT_ABGR8888;
     if (!framebuffer.alloc(framebufferWidth, framebufferHeight, DRM_FORMAT_ABGR8888) && !framebuffer.alloc(framebufferWidth, framebufferHeight, drmFormat))
         return {};
@@ -888,7 +906,7 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
 
         g_pHyprRenderer->m_bRenderingSnapshot = true;
         FullSurfaceVisibleRegionOverride fullVisibleRegion(window);
-        g_pHyprOpenGL->clear(CHyprColor{0.0, 0.0, 0.0, 0.0});
+        g_pHyprOpenGL->clear(options.clearColor);
         g_pHyprRenderer->renderWindow(window, monitor, frozenTime, decorate, RENDER_PASS_ALL, false, false);
         g_pHyprRenderer->m_bRenderingSnapshot = previousRenderingSnapshot;
 
@@ -923,8 +941,10 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
     height = readback.height;
     artifactBox = CBox{fullBox.x + (readback.cropX - cropX) / scale, fullBox.y + (readback.cropTopY - cropY) / scale, width / scale, height / scale};
 
-    repairTopTransparentSeam(readback);
-    unpremultiplyAlpha(readback);
+    if (options.postprocessAlpha) {
+        repairTopTransparentSeam(readback);
+        unpremultiplyAlpha(readback);
+    }
 
     return readback;
 }
@@ -1344,6 +1364,17 @@ void compositeRealBackground(RgbaReadback& frame, const RecordingFrame& backgrou
     compositeWindowOverBackground(frame, std::move(realBackground));
 }
 
+std::optional<CHyprColor> recordingSolidBackgroundColor(WindowBackground background) {
+    switch (background) {
+        case WindowBackground::White: return CHyprColor{1.0, 1.0, 1.0, 1.0};
+        case WindowBackground::Black: return CHyprColor{0.0, 0.0, 0.0, 1.0};
+        case WindowBackground::FollowSystem: return CHyprColor{17.0 / 255.0, 19.0 / 255.0, 23.0 / 255.0, 1.0};
+        case WindowBackground::Real:
+        case WindowBackground::Transparent: return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 PHLWINDOW findWindowByAddress(const std::string& address) {
     if (address.empty() || !g_pCompositor)
         return {};
@@ -1428,7 +1459,13 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     int  width = 0;
     int  height = 0;
     CBox artifactBox;
-    auto readback = renderWindowArtifactReadback(window, monitor, Time::steadyNow(), renderDecorations, width, height, artifactBox, nullptr, false);
+    WindowRenderOptions renderOptions;
+    const auto          solidBackground = recordingSolidBackgroundColor(request.defaults.windowBackground);
+    if (solidBackground) {
+        renderOptions.clearColor = *solidBackground;
+        renderOptions.postprocessAlpha = false;
+    }
+    auto readback = renderWindowArtifactReadback(window, monitor, Time::steadyNow(), renderDecorations, width, height, artifactBox, nullptr, false, renderOptions);
     if (readback.pixels.empty())
         return std::nullopt;
 
@@ -1467,12 +1504,6 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
             compositeRealBackground(readback, *background);
         else
             compositeSolidBackground(readback, 30, 34, 38);
-    } else if (request.defaults.windowBackground == WindowBackground::White) {
-        compositeSolidBackground(readback, 255, 255, 255);
-    } else if (request.defaults.windowBackground == WindowBackground::Black) {
-        compositeSolidBackground(readback, 0, 0, 0);
-    } else if (request.defaults.windowBackground == WindowBackground::FollowSystem) {
-        compositeSolidBackground(readback, 17, 19, 23);
     }
 
     return RecordingFrame{.rgba = std::move(readback.pixels), .width = readback.width, .height = readback.height};

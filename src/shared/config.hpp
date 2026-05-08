@@ -11,6 +11,7 @@ enum class CaptureMode { Fullscreen, Region, Window };
 enum class FullscreenScope { All, Current, PerMonitor };
 enum class WindowBackground { White, Black, FollowSystem, Real, Transparent };
 enum class DecorationPolicy { Keep, Remove };
+enum class RecordWindowBackend { Compositor, GsrVisible };
 enum class WatermarkPosition { UpLeft, UpMiddle, UpRight, LeftMiddle, Central, RightMiddle, DownLeft, DownMiddle, DownRight };
 
 struct CaptureDefaults {
@@ -32,6 +33,7 @@ struct CaptureDefaults {
     std::string      recordCodec = "libx264";
     std::string      recordPreset = "veryfast";
     std::string      recordGsrFlags;
+    RecordWindowBackend recordWindowBackend = RecordWindowBackend::Compositor;
     std::int64_t     recordFps = 30;
     std::int64_t     recordWindowFpsLimit = 12;
     std::int64_t     recordWindowRealBgFpsLimit = 8;
@@ -47,12 +49,14 @@ CaptureMode parseCaptureMode(std::string_view value, CaptureMode fallback = Capt
 FullscreenScope parseFullscreenScope(std::string_view value, FullscreenScope fallback = FullscreenScope::All);
 WindowBackground parseWindowBackground(std::string_view value, WindowBackground fallback = WindowBackground::FollowSystem);
 DecorationPolicy parseDecorationPolicy(std::string_view value, DecorationPolicy fallback = DecorationPolicy::Keep);
+RecordWindowBackend parseRecordWindowBackend(std::string_view value, RecordWindowBackend fallback = RecordWindowBackend::Compositor);
 WatermarkPosition parseWatermarkPosition(std::string_view value, WatermarkPosition fallback = WatermarkPosition::Central);
 
 std::string toString(CaptureMode value);
 std::string toString(FullscreenScope value);
 std::string toString(WindowBackground value);
 std::string toString(DecorationPolicy value);
+std::string toString(RecordWindowBackend value);
 std::string toString(WatermarkPosition value);
 
 std::filesystem::path expandUserPath(std::string_view path);

@@ -169,11 +169,11 @@ bind = SUPER SHIFT, F, hyprcapture:open,fullscreen
 
 ### Recording
 
-Recording is toggled from the normal screenshot overlay toolbar. Click the record icon, then choose fullscreen, drag a region, or choose a window exactly like a screenshot. Fullscreen and region recordings are handed to `gpu-screen-recorder`; window recordings still use HyprCapture's compositor offscreen renderer.
+Recording is toggled from the normal screenshot overlay toolbar. Click the record icon, then choose fullscreen, drag a region, or choose a window exactly like a screenshot. Fullscreen and region recordings are handed to `gpu-screen-recorder`; window recordings use HyprCapture's compositor offscreen renderer by default, with an optional visible-region `gpu-screen-recorder` backend.
 
 To stop an active recording, open the same overlay and click the checked record icon.
 
-Current recording output is a single video file under `save_dir`. Fullscreen and region recordings require `gpu-screen-recorder` and avoid Hyprland's screencopy, portal, and screenshare session paths. Window recording still uses FFmpeg rawvideo input and CPU-side RGBA readback until the GPU-only window backend lands.
+Current recording output is a single video file under `save_dir`. Fullscreen and region recordings require `gpu-screen-recorder` and avoid Hyprland's screencopy, portal, and screenshare session paths. The default window backend still uses FFmpeg rawvideo input and compositor RGBA readback for offscreen/occlusion-safe capture. `record_window_backend = gsr-visible` records the selected on-screen window rectangle through `gpu-screen-recorder` for lower overhead, without portal or managed screenshare sessions, but it captures what is visibly present in that screen region.
 
 ### Thumbnail
 
@@ -213,6 +213,7 @@ plugin {
         record_codec = libx264
         record_preset = veryfast
         record_gsr_flags =
+        record_window_backend = compositor
         record_max_seconds = 0
         include_cursor = 0
         thumbnail_timeout_ms = 5000
@@ -253,6 +254,7 @@ plugin {
 | `record_codec` | string | `libx264` | FFmpeg video encoder name. The default is broadly compatible. Use `auto` or `h264_vaapi` on VAAPI systems to offload encoding for 60 fps recording. |
 | `record_preset` | string | `veryfast` | FFmpeg preset used with `libx264`/`libx264rgb`. |
 | `record_gsr_flags` | string | empty | Extra flags passed to `gpu-screen-recorder` for fullscreen and region recordings. `-w` and `-o` are rejected because HyprCapture owns the capture target and output path. |
+| `record_window_backend` | string | `compositor` | Window recording backend. `compositor` preserves HyprCapture's offscreen window capture and background behavior. `gsr-visible` records the selected visible screen rectangle with `gpu-screen-recorder` for much lower overhead; occlusion/hidden-window capture and background replacement are not guaranteed. |
 | `record_max_seconds` | int | `0` | Optional automatic stop in seconds. `0` means no duration limit. |
 | `thumbnail_timeout_ms` | int | `5000` | Thumbnail auto-close timeout in milliseconds. Use `0` to keep it open until user action. |
 | `helper` | string | empty | Optional absolute helper override. By default the plugin tries `HYPRCAPTURE_HELPER`, then `$HOME/.local/bin/hyprcapture-ui`, then trusted system install paths. |
@@ -266,7 +268,7 @@ record_codec = auto
 
 `auto` currently prefers VAAPI when a writable `/dev/dri/renderD*` device exists and falls back to `libx264` for the window-recording FFmpeg backend. For fullscreen and region recordings, use `record_gsr_flags` for `gpu-screen-recorder` options such as `-k h264 -q very_high`.
 
-The current window recording path uses synchronous compositor readback. To avoid making Hyprland sluggish, window recordings are capped by `record_window_fps_limit` until the GPU-only encoder path lands.
+The compositor window recording path uses synchronous compositor readback. To avoid making Hyprland sluggish, window recordings are capped by `record_window_fps_limit` until the GPU-only encoder path lands. For visible on-screen windows where 60 fps matters more than offscreen/occlusion-safe capture, set `record_window_backend = gsr-visible`.
 
 ### Watermark options
 
