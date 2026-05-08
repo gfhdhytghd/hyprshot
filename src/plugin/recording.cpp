@@ -48,6 +48,13 @@ constexpr int         MAX_FRAME_QUEUE = 2;
 constexpr int         MAX_CONSECUTIVE_FRAME_FAILURES = 30;
 constexpr int         RGBA_BYTES_PER_PIXEL = 4;
 
+struct RgbaColor {
+    unsigned char r = 0;
+    unsigned char g = 0;
+    unsigned char b = 0;
+    unsigned char a = 0;
+};
+
 struct QueuedEncoderFrame {
     std::shared_ptr<const std::vector<unsigned char>> pixels;
     int                                               repeats = 1;
@@ -393,26 +400,55 @@ void setOwnerOnlyPermissions(const std::filesystem::path& path) {
         std::filesystem::permissions(path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, ec);
 }
 
-bool resizeFrameNearest(RecordingFrame& frame, int width, int height) {
+std::optional<RgbaColor> recordingCanvasFill(WindowBackground background) {
+    switch (background) {
+        case WindowBackground::White: return RgbaColor{255, 255, 255, 255};
+        case WindowBackground::Black: return RgbaColor{0, 0, 0, 255};
+        case WindowBackground::FollowSystem: return RgbaColor{17, 19, 23, 255};
+        case WindowBackground::Real:
+        case WindowBackground::Transparent: return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+bool fitFrameIntoCanvasNearest(RecordingFrame& frame, int width, int height, std::optional<RgbaColor> fillColor) {
     if (frame.width == width && frame.height == height)
         return true;
     if (frame.rgba.empty() || frame.width <= 0 || frame.height <= 0 || width <= 0 || height <= 0)
         return false;
 
-    std::vector<unsigned char> resized(static_cast<std::size_t>(width) * height * RGBA_BYTES_PER_PIXEL);
-    for (int y = 0; y < height; ++y) {
-        const int srcY = std::clamp(static_cast<int>((static_cast<long long>(y) * frame.height) / height), 0, frame.height - 1);
-        for (int x = 0; x < width; ++x) {
-            const int srcX = std::clamp(static_cast<int>((static_cast<long long>(x) * frame.width) / width), 0, frame.width - 1);
+    const double scale = std::min({1.0, static_cast<double>(width) / frame.width, static_cast<double>(height) / frame.height});
+    if (!std::isfinite(scale) || scale <= 0.0)
+        return false;
+
+    const int drawWidth = std::clamp(static_cast<int>(std::lround(frame.width * scale)), 1, width);
+    const int drawHeight = std::clamp(static_cast<int>(std::lround(frame.height * scale)), 1, height);
+    const int dstX0 = (width - drawWidth) / 2;
+    const int dstY0 = (height - drawHeight) / 2;
+
+    std::vector<unsigned char> canvas(static_cast<std::size_t>(width) * height * RGBA_BYTES_PER_PIXEL, 0);
+    if (fillColor) {
+        for (std::size_t i = 0; i + 3 < canvas.size(); i += RGBA_BYTES_PER_PIXEL) {
+            canvas[i + 0] = fillColor->r;
+            canvas[i + 1] = fillColor->g;
+            canvas[i + 2] = fillColor->b;
+            canvas[i + 3] = fillColor->a;
+        }
+    }
+
+    for (int y = 0; y < drawHeight; ++y) {
+        const int srcY = std::clamp(static_cast<int>((static_cast<long long>(y) * frame.height) / drawHeight), 0, frame.height - 1);
+        for (int x = 0; x < drawWidth; ++x) {
+            const int srcX = std::clamp(static_cast<int>((static_cast<long long>(x) * frame.width) / drawWidth), 0, frame.width - 1);
             const auto src = (static_cast<std::size_t>(srcY) * frame.width + srcX) * RGBA_BYTES_PER_PIXEL;
-            const auto dst = (static_cast<std::size_t>(y) * width + x) * RGBA_BYTES_PER_PIXEL;
-            std::copy(frame.rgba.data() + src, frame.rgba.data() + src + RGBA_BYTES_PER_PIXEL, resized.data() + dst);
+            const auto dst = (static_cast<std::size_t>(dstY0 + y) * width + (dstX0 + x)) * RGBA_BYTES_PER_PIXEL;
+            std::copy(frame.rgba.data() + src, frame.rgba.data() + src + RGBA_BYTES_PER_PIXEL, canvas.data() + dst);
         }
     }
 
     frame.width = width;
     frame.height = height;
-    frame.rgba = std::move(resized);
+    frame.rgba = std::move(canvas);
     return true;
 }
 
@@ -798,7 +834,8 @@ void captureRecordingTick(SP<CEventLoopTimer> self) {
         bool processed = false;
         if (frame) {
             ScopedTiming timing("record.cpu_postprocess");
-            processed = makeEvenFrame(*frame) && resizeFrameNearest(*frame, g_recording->width, g_recording->height);
+            processed = makeEvenFrame(*frame) &&
+                fitFrameIntoCanvasNearest(*frame, g_recording->width, g_recording->height, recordingCanvasFill(g_recording->request.defaults.windowBackground));
         }
 
         bool enqueued = false;
