@@ -19,6 +19,7 @@
 #include <drm_fourcc.h>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cctype>
 #include <chrono>
@@ -923,6 +924,24 @@ CFramebuffer& reusableWindowRecordingFullMaskFramebuffer() {
     return framebuffer;
 }
 
+void renderTextureWithAlphaMatte(SP<CTexture> texture, const CBox& box, CFramebuffer& matte) {
+    auto matteTexture = matte.getTexture();
+    if (!matteTexture) {
+        g_pHyprOpenGL->renderTextureMatte(texture, box, matte);
+        return;
+    }
+
+    glActiveTexture(GL_TEXTURE0 + 1);
+    matteTexture->bind();
+    matteTexture->swizzle(std::array<GLint, 4>{GL_ALPHA, GL_GREEN, GL_BLUE, GL_ALPHA});
+
+    g_pHyprOpenGL->renderTextureMatte(texture, box, matte);
+
+    glActiveTexture(GL_TEXTURE0 + 1);
+    matteTexture->bind();
+    matteTexture->swizzle(std::array<GLint, 4>{GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA});
+}
+
 CBox renderedWindowBox(const PHLWINDOW& window, CBox box) {
     if (window->m_workspace && !window->m_pinned)
         box.translate(window->m_workspace->m_renderOffset->value());
@@ -1098,7 +1117,7 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
         g_pHyprOpenGL->clear(options.clearColor);
         if (options.backgroundTexture) {
             if (backgroundMatte)
-                g_pHyprOpenGL->renderTextureMatte(options.backgroundTexture, renderCropBox, *backgroundMatte);
+                renderTextureWithAlphaMatte(options.backgroundTexture, renderCropBox, *backgroundMatte);
             else
                 g_pHyprOpenGL->renderTexture(options.backgroundTexture, renderCropBox, {.a = 1.0F});
         }
