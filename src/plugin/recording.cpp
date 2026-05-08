@@ -482,7 +482,7 @@ class RawVideoEncoder {
 
         if (isVaapiCodec(m_codec)) {
             args.push_back("-vf");
-            args.push_back("format=nv12,hwupload");
+            args.push_back("format=rgba,hwupload,scale_vaapi=format=nv12");
             args.push_back("-c:v");
             args.push_back(m_codec);
             args.push_back("-qp");

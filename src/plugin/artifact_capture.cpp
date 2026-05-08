@@ -113,6 +113,7 @@ struct RgbaReadbackRegion {
 
 struct WindowRenderOptions {
     CHyprColor clearColor{0.0, 0.0, 0.0, 0.0};
+    SP<CTexture> backgroundTexture;
     bool       postprocessAlpha = true;
 };
 
@@ -136,7 +137,10 @@ struct RealBackgroundRecordingCache {
     PHLMONITOR      monitor;
     Rect            geometry;
     Time::steady_tp capturedAt;
-    RgbaReadback    readback;
+    std::shared_ptr<const std::vector<unsigned char>> rgba;
+    SP<CTexture>    texture;
+    int             width = 0;
+    int             height = 0;
 };
 
 Rect toRect(const CBox& box) {
@@ -925,6 +929,8 @@ RgbaReadback renderWindowArtifactReadback(const PHLWINDOW& window,
         g_pHyprRenderer->m_bRenderingSnapshot = true;
         FullSurfaceVisibleRegionOverride fullVisibleRegion(window);
         g_pHyprOpenGL->clear(options.clearColor);
+        if (options.backgroundTexture)
+            g_pHyprOpenGL->renderTexture(options.backgroundTexture, renderCropBox, {.a = 1.0F});
         g_pHyprRenderer->renderWindow(window, monitor, frozenTime, decorate, RENDER_PASS_ALL, false, false);
         g_pHyprRenderer->m_bRenderingSnapshot = previousRenderingSnapshot;
 
@@ -1304,29 +1310,6 @@ bool isWindowContentPixel(const unsigned char* px) {
     return maxRgb > WINDOW_SHADOW_MAX_RGB || alpha > WINDOW_SHADOW_MAX_ALPHA;
 }
 
-void reconstructRealWindowBackground(RgbaReadback& background, const RgbaReadback& artifact) {
-    if (!readbackHasSize(background, artifact.width, artifact.height) || artifact.pixels.empty())
-        return;
-
-    // The desktop-region render includes the selected window. Invert source-over
-    // for translucent window pixels so real-bg does not composite the window twice.
-    for (int y = 0; y < background.height; ++y) {
-        for (int x = 0; x < background.width; ++x) {
-            const auto i = (static_cast<std::size_t>(y) * background.width + x) * RGBA_BYTES_PER_PIXEL;
-            const int alpha = artifact.pixels[i + 3];
-            if (alpha <= 0 || alpha >= 255)
-                continue;
-
-            const int inverseAlpha = 255 - alpha;
-            for (int channel = 0; channel < 3; ++channel) {
-                const int value = (background.pixels[i + channel] * 255 - artifact.pixels[i + channel] * alpha + inverseAlpha / 2) / inverseAlpha;
-                background.pixels[i + channel] = static_cast<unsigned char>(std::clamp(value, 0, 255));
-            }
-            background.pixels[i + 3] = 255;
-        }
-    }
-}
-
 void compositeWindowOverBackground(RgbaReadback& frame, const RgbaReadback& background) {
     if (!readbackHasSize(frame, background.width, background.height))
         return;
@@ -1354,17 +1337,6 @@ void compositeWindowOverBackground(RgbaReadback& frame, const RgbaReadback& back
 
 void compositeSolidBackground(RgbaReadback& frame, unsigned char r, unsigned char g, unsigned char b) {
     compositeWindowOverBackground(frame, solidBackgroundReadback(frame.width, frame.height, r, g, b));
-}
-
-void compositeRealBackground(RgbaReadback& frame, const RgbaReadback& background, bool backgroundContainsWindow) {
-    if (backgroundContainsWindow) {
-        RgbaReadback realBackground = background;
-        reconstructRealWindowBackground(realBackground, frame);
-        compositeWindowOverBackground(frame, realBackground);
-        return;
-    }
-
-    compositeWindowOverBackground(frame, background);
 }
 
 std::optional<CHyprColor> recordingSolidBackgroundColor(WindowBackground background) {
@@ -1447,18 +1419,18 @@ std::optional<RecordingFrame> captureDesktopRegionRecordingFrame(const Rect& tar
     return frame;
 }
 
-const RgbaReadback* captureWindowRealBackgroundRecordingFrame(const PHLWINDOW& window,
-                                                              const PHLMONITOR& monitor,
-                                                              const Time::steady_tp& frozenTime,
-                                                              const Rect& targetGeometry) {
+const RealBackgroundRecordingCache* captureWindowRealBackgroundRecordingFrame(const PHLWINDOW& window,
+                                                                              const PHLMONITOR& monitor,
+                                                                              const Time::steady_tp& frozenTime,
+                                                                              const Rect& targetGeometry) {
     if (!window || !monitor || targetGeometry.width <= 0.0 || targetGeometry.height <= 0.0)
         return nullptr;
 
     if (g_realBackgroundRecordingCache && g_realBackgroundRecordingCache->window && g_realBackgroundRecordingCache->window.get() == window.get() &&
         g_realBackgroundRecordingCache->monitor && g_realBackgroundRecordingCache->monitor.get() == monitor.get() &&
-        sameGeometry(g_realBackgroundRecordingCache->geometry, targetGeometry) && !g_realBackgroundRecordingCache->readback.pixels.empty() &&
+        sameGeometry(g_realBackgroundRecordingCache->geometry, targetGeometry) && g_realBackgroundRecordingCache->texture &&
         frozenTime - g_realBackgroundRecordingCache->capturedAt < REAL_BACKGROUND_RECORDING_REFRESH_INTERVAL) {
-        return &g_realBackgroundRecordingCache->readback;
+        return &*g_realBackgroundRecordingCache;
     }
 
     const CBox artifactBox{targetGeometry.x, targetGeometry.y, targetGeometry.width, targetGeometry.height};
@@ -1466,14 +1438,23 @@ const RgbaReadback* captureWindowRealBackgroundRecordingFrame(const PHLWINDOW& w
     if (readbacks.empty() || readbacks.front().pixels.empty())
         return nullptr;
 
+    auto pixels = std::make_shared<const std::vector<unsigned char>>(std::move(readbacks.front().pixels));
+    auto texture = makeShared<CTexture>(DRM_FORMAT_ABGR8888,
+                                        const_cast<unsigned char*>(pixels->data()),
+                                        static_cast<uint32_t>(readbacks.front().width * RGBA_BYTES_PER_PIXEL),
+                                        Vector2D{static_cast<double>(readbacks.front().width), static_cast<double>(readbacks.front().height)},
+                                        false);
     g_realBackgroundRecordingCache = RealBackgroundRecordingCache{
         .window = window,
         .monitor = monitor,
         .geometry = targetGeometry,
         .capturedAt = frozenTime,
-        .readback = std::move(readbacks.front()),
+        .rgba = std::move(pixels),
+        .texture = std::move(texture),
+        .width = readbacks.front().width,
+        .height = readbacks.front().height,
     };
-    return &g_realBackgroundRecordingCache->readback;
+    return &*g_realBackgroundRecordingCache;
 }
 
 std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRequest& request) {
@@ -1493,19 +1474,20 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     CBox artifactBox;
     WindowRenderOptions renderOptions;
     const auto          solidBackground = recordingSolidBackgroundColor(request.defaults.windowBackground);
+    const auto          frozenTime = Time::steadyNow();
     if (solidBackground) {
         renderOptions.clearColor = *solidBackground;
         renderOptions.postprocessAlpha = false;
+    } else if (request.defaults.windowBackground == WindowBackground::Real) {
+        const CBox fullBox = renderedWindowBox(window, window->getFullWindowBoundingBox());
+        if (auto background = captureWindowRealBackgroundRecordingFrame(window, monitor, frozenTime, toRect(fullBox))) {
+            renderOptions.backgroundTexture = background->texture;
+            renderOptions.postprocessAlpha = false;
+        }
     }
-    const auto frozenTime = Time::steadyNow();
     auto       readback = renderWindowArtifactReadback(window, monitor, frozenTime, renderDecorations, width, height, artifactBox, nullptr, false, renderOptions);
     if (readback.pixels.empty())
         return std::nullopt;
-
-    const int artifactCropX = readback.cropX;
-    const int artifactCropY = readback.cropTopY;
-    const int artifactWidth = readback.width;
-    const int artifactHeight = readback.height;
 
     const bool cropDecorations = request.defaults.windowBorder == DecorationPolicy::Remove || request.defaults.windowShadow == DecorationPolicy::Remove;
     if (cropDecorations) {
@@ -1525,17 +1507,8 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     if (readback.pixels.empty())
         return std::nullopt;
 
-    const double artifactScaleX = artifactBox.w / std::max(1.0, static_cast<double>(artifactWidth));
-    const double artifactScaleY = artifactBox.h / std::max(1.0, static_cast<double>(artifactHeight));
-    const Rect   readbackLogicalBox = {.x = artifactBox.x + (readback.cropX - artifactCropX) * artifactScaleX,
-                                       .y = artifactBox.y + (readback.cropTopY - artifactCropY) * artifactScaleY,
-                                       .width = readback.width * artifactScaleX,
-                                       .height = readback.height * artifactScaleY};
-
     if (request.defaults.windowBackground == WindowBackground::Real) {
-        if (auto background = captureWindowRealBackgroundRecordingFrame(window, monitor, frozenTime, readbackLogicalBox))
-            compositeRealBackground(readback, *background, false);
-        else
+        if (!renderOptions.backgroundTexture)
             compositeSolidBackground(readback, 30, 34, 38);
     }
 
