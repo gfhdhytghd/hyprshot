@@ -191,6 +191,8 @@ std::string sanitizedRecordFormat(std::string_view format) {
         return "mkv";
     if (value == "webm")
         return "webm";
+    if (value == "mov" || value == "quicktime")
+        return "mov";
     if (value == "mp4" || value == "mpeg-4")
         return "mp4";
     return "mp4";
@@ -364,6 +366,10 @@ std::string sanitizedCodec(std::string codec) {
         return "libx264";
     if (normalized == "h264-vaapi")
         return "h264_vaapi";
+    if (normalized == "h265" || normalized == "hevc")
+        return "libx265";
+    if (normalized == "h265-vaapi" || normalized == "hevc-vaapi")
+        return "hevc_vaapi";
     if (normalized == "auto")
         return findVaapiRenderDevice() ? "h264_vaapi" : "libx264";
     if (normalized == "vp9" || normalized == "libvpx-vp9")
@@ -394,9 +400,16 @@ std::string gsrCodec(std::string codec, std::string_view format) {
     codec = sanitizedCodec(std::move(codec));
     if (codec == "h264_vaapi" || codec == "libx264" || codec == "libx264rgb")
         return "h264";
+    if (codec == "hevc_vaapi" || codec == "libx265")
+        return "hevc";
     if (codec == "libvpx-vp9")
         return "vp9";
     return codec;
+}
+
+std::string gsrContainerFormat(std::string_view format) {
+    const auto sanitized = sanitizedRecordFormat(format);
+    return sanitized == "mov" ? "mp4" : sanitized;
 }
 
 std::string sanitizedPreset(std::string preset) {
@@ -615,7 +628,7 @@ class RawVideoEncoder {
             args.push_back(m_codec);
         }
 
-        if (m_codec == "libx264" || m_codec == "libx264rgb") {
+        if (m_codec == "libx264" || m_codec == "libx264rgb" || m_codec == "libx265") {
             args.push_back("-preset");
             args.push_back(m_preset);
             args.push_back("-crf");
@@ -984,7 +997,7 @@ LaunchResult spawnGpuScreenRecorder(const RecordingRequest& request, const std::
     std::vector<std::string> args{*executable};
     args.insert(args.end(), extraFlags->begin(), extraFlags->end());
     args.push_back("-c");
-    args.push_back(sanitizedRecordFormat(request.defaults.recordFormat));
+    args.push_back(gsrContainerFormat(request.defaults.recordFormat));
     args.push_back("-k");
     args.push_back(gsrCodec(request.defaults.recordCodec, request.defaults.recordFormat));
     args.push_back("-f");

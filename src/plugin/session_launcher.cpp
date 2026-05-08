@@ -340,6 +340,8 @@ LaunchResult launchHelper(const LaunchRequest& request) {
     args.push_back(toString(request.defaults.recordWindowBackend));
     args.push_back("--record-fps");
     args.push_back(std::to_string(request.defaults.recordFps));
+    args.push_back("--record-fps-options");
+    args.push_back(request.defaults.recordFpsOptions);
     args.push_back("--record-window-fps-limit");
     args.push_back(std::to_string(request.defaults.recordWindowFpsLimit));
     args.push_back("--record-window-real-bg-fps-limit");

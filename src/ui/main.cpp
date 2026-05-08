@@ -98,6 +98,7 @@ int main(int argc, char** argv) {
         {"record-gsr-flags", "Extra gpu-screen-recorder flags.", "flags", ""},
         {"record-window-backend", "Window recording backend.", "backend", "compositor"},
         {"record-fps", "Recording FPS.", "fps", "30"},
+        {"record-fps-options", "Recording FPS choices.", "fps-list", "15 24 30 60"},
         {"record-window-fps-limit", "Window recording FPS cap.", "fps", "12"},
         {"record-window-real-bg-fps-limit", "Real background window recording FPS cap.", "fps", "8"},
         {"record-max-seconds", "Recording max seconds.", "seconds", "0"},
@@ -151,6 +152,7 @@ int main(int argc, char** argv) {
     defaults.recordGsrFlags = parser.value("record-gsr-flags").toStdString();
     defaults.recordWindowBackend = hyprcapture::parseRecordWindowBackend(parser.value("record-window-backend").toStdString(), defaults.recordWindowBackend);
     defaults.recordFps = boundedInt(parser.value("record-fps"), defaults.recordFps, 1, 240);
+    defaults.recordFpsOptions = parser.value("record-fps-options").toStdString();
     defaults.recordWindowFpsLimit = boundedInt(parser.value("record-window-fps-limit"), defaults.recordWindowFpsLimit, 0, 240);
     defaults.recordWindowRealBgFpsLimit = boundedInt(parser.value("record-window-real-bg-fps-limit"), defaults.recordWindowRealBgFpsLimit, 0, 240);
     defaults.recordMaxSeconds = boundedInt(parser.value("record-max-seconds"), defaults.recordMaxSeconds, 0, 24 * 60 * 60);

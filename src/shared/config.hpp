@@ -36,6 +36,7 @@ struct CaptureDefaults {
     std::string      recordGsrFlags;
     RecordWindowBackend recordWindowBackend = RecordWindowBackend::Compositor;
     std::int64_t     recordFps = 30;
+    std::string      recordFpsOptions = "15 24 30 60";
     std::int64_t     recordWindowFpsLimit = 12;
     std::int64_t     recordWindowRealBgFpsLimit = 8;
     std::int64_t     recordMaxSeconds = 0;

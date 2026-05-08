@@ -35,6 +35,7 @@
 #include <QProcess>
 #include <QPropertyAnimation>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QSizePolicy>
 #include <QStringList>
@@ -135,14 +136,16 @@ QString normalizedRecordFormat(QString value) {
     value = normalizedChoice(value);
     if (value == "matroska")
         return QStringLiteral("mkv");
-    if (value == "webm" || value == "mkv" || value == "mp4")
+    if (value == "quicktime")
+        return QStringLiteral("mov");
+    if (value == "webm" || value == "mkv" || value == "mp4" || value == "mov")
         return value;
     return QStringLiteral("mp4");
 }
 
 QString recordFormatFromTemplate(const std::string& filenameTemplate) {
     const QString suffix = QFileInfo(qString(filenameTemplate)).suffix().toLower();
-    if (suffix == "webm" || suffix == "mkv" || suffix == "mp4")
+    if (suffix == "webm" || suffix == "mkv" || suffix == "mp4" || suffix == "mov")
         return suffix;
     return QStringLiteral("mp4");
 }
@@ -154,12 +157,37 @@ QString defaultRecordFormat(const hyprcapture::CaptureDefaults& defaults) {
     return recordFormatFromTemplate(defaults.recordFilenameTemplate);
 }
 
+QStringList recordFpsChoices(const hyprcapture::CaptureDefaults& defaults) {
+    QStringList choices;
+    const QStringList tokens = qString(defaults.recordFpsOptions).split(QRegularExpression(QStringLiteral("[,;\\s]+")), Qt::SkipEmptyParts);
+    for (const QString& token : tokens) {
+        bool ok = false;
+        const int fps = token.toInt(&ok);
+        if (!ok || fps < 1 || fps > 240)
+            continue;
+        const QString value = QString::number(fps);
+        if (!choices.contains(value))
+            choices.push_back(value);
+    }
+
+    const QString current = QString::number(std::clamp<std::int64_t>(defaults.recordFps, 1, 240));
+    if (!choices.contains(current))
+        choices.push_back(current);
+    if (choices.isEmpty())
+        choices = QStringList{"15", "24", "30", "60"};
+    return choices;
+}
+
 QString codecChoiceFromConfig(const std::string& codec) {
     const QString value = normalizedChoice(qString(codec));
     if (value == "libx264" || value == "h264")
         return QStringLiteral("h264");
     if (value == "h264-vaapi")
         return QStringLiteral("h264-vaapi");
+    if (value == "libx265" || value == "h265" || value == "hevc")
+        return QStringLiteral("h265");
+    if (value == "hevc-vaapi" || value == "h265-vaapi")
+        return QStringLiteral("h265-vaapi");
     if (value == "libvpx-vp9" || value == "vp9")
         return QStringLiteral("vp9");
     if (value == "ffv1")
@@ -173,6 +201,10 @@ QString codecConfigFromChoice(const QString& choice) {
         return QStringLiteral("libx264");
     if (value == "h264-vaapi")
         return QStringLiteral("h264_vaapi");
+    if (value == "h265")
+        return QStringLiteral("libx265");
+    if (value == "h265-vaapi")
+        return QStringLiteral("hevc_vaapi");
     if (value == "vp9")
         return QStringLiteral("libvpx-vp9");
     if (value == "ffv1")
@@ -439,6 +471,7 @@ QString toolbarStyleSheet(const QPalette& palette) {
     const QColor hover = mixedColor(button, highlight, 0.16);
     const QColor checked = mixedColor(button, highlight, 0.32);
     const QColor modeChecked = mixedColor(text, window, 0.72);
+    const QColor recordArmed = mixedColor(text, window, 0.68);
     const QColor recordChecked(212, 48, 62);
     const QColor recordPressed(176, 35, 48);
 
@@ -455,7 +488,11 @@ QString toolbarStyleSheet(const QPalette& palette) {
                "QPushButton#recordToggleButton { padding: 4px 6px; background: transparent; border: none; outline: none; }"
                "QPushButton#recordToggleButton:hover { background: transparent; }"
                "QPushButton#recordToggleButton:checked { background: %9; border-radius: 7px; }"
-               "QPushButton#recordToggleButton:pressed { background: %10; border-radius: 7px; }"
+               "QPushButton#recordToggleButton:pressed { background: %9; border-radius: 7px; }"
+               "QPushButton#recordActiveButton { padding: 4px 6px; background: transparent; border: none; outline: none; }"
+               "QPushButton#recordActiveButton:hover { background: transparent; }"
+               "QPushButton#recordActiveButton:checked { background: %10; border-radius: 7px; }"
+               "QPushButton#recordActiveButton:pressed { background: %11; border-radius: 7px; }"
                "QLabel { color: %3; }")
         .arg(cssRgba(window, 238),
              cssRgba(border, 150),
@@ -465,6 +502,7 @@ QString toolbarStyleSheet(const QPalette& palette) {
              cssRgba(highlightedText),
              cssRgba(highlight),
              cssRgba(modeChecked),
+             cssRgba(recordArmed, 190),
              cssRgba(recordChecked, 220),
              cssRgba(recordPressed, 230));
 }
@@ -1269,7 +1307,7 @@ void CaptureOverlay::buildToolbar() {
     layout->addWidget(m_windowBackground);
 
     m_recordToggle = new QPushButton(m_toolbar);
-    m_recordToggle->setObjectName("recordToggleButton");
+    m_recordToggle->setObjectName(m_recordActive ? "recordActiveButton" : "recordToggleButton");
     m_recordToggle->setFlat(true);
     m_recordToggle->setFocusPolicy(Qt::NoFocus);
     m_recordToggle->setIcon(iconFromSvg(kRecordSvg));
@@ -1323,21 +1361,21 @@ void CaptureOverlay::buildToolbar() {
 
     m_recordCodec = new InlineSelect(this, m_recordOptions);
     m_recordCodec->setPrefix("Codec");
-    m_recordCodec->addItems(QStringList{"auto", "h264", "h264-vaapi", "vp9", "ffv1"});
+    m_recordCodec->addItems(QStringList{"auto", "h264", "h264-vaapi", "h265", "h265-vaapi", "vp9", "ffv1"});
     m_recordCodec->setCurrentText(codecChoiceFromConfig(m_defaults.recordCodec));
     m_recordCodec->setOnChanged(onRecordOptionChanged);
     recordLayout->addWidget(m_recordCodec);
 
     m_recordFormat = new InlineSelect(this, m_recordOptions);
     m_recordFormat->setPrefix("Format");
-    m_recordFormat->addItems(QStringList{"mp4", "webm", "mkv"});
+    m_recordFormat->addItems(QStringList{"mp4", "mov", "webm", "mkv"});
     m_recordFormat->setCurrentText(defaultRecordFormat(m_defaults));
     m_recordFormat->setOnChanged(onRecordOptionChanged);
     recordLayout->addWidget(m_recordFormat);
 
     m_recordFps = new InlineSelect(this, m_recordOptions);
     m_recordFps->setPrefix("FPS");
-    m_recordFps->addItems(QStringList{"30", "60", "120", "240"});
+    m_recordFps->addItems(recordFpsChoices(m_defaults));
     m_recordFps->setCurrentText(QString::number(std::clamp<std::int64_t>(m_defaults.recordFps, 1, 240)));
     m_recordFps->setOnChanged(onRecordOptionChanged);
     recordLayout->addWidget(m_recordFps);
@@ -1515,21 +1553,21 @@ QString CaptureOverlay::recordOptionsConflict() const {
     if (!m_record)
         return {};
 
-    const bool alphaRequested = m_mode == hyprcapture::CaptureMode::Window &&
-        (currentWindowBackground() == hyprcapture::WindowBackground::Real || currentWindowBackground() == hyprcapture::WindowBackground::Transparent);
+    const bool alphaRequested =
+        currentWindowBackground() == hyprcapture::WindowBackground::Real || currentWindowBackground() == hyprcapture::WindowBackground::Transparent;
     const QString format = currentRecordFormat();
     const QString codec = currentRecordCodec();
 
     if (alphaRequested && currentRecordBackend() == hyprcapture::RecordWindowBackend::GsrVisible)
         return QStringLiteral("selected backend does not support transparency");
-    if (alphaRequested && format == "mp4")
-        return QStringLiteral("mp4 does not support transparency");
+    if (alphaRequested && (format == "mp4" || format == "mov"))
+        return format + QStringLiteral(" does not support transparency");
     if (format == "webm" && codec != "auto" && codec != "vp9")
         return alphaRequested ? QStringLiteral("webm transparency requires vp9") : QStringLiteral("webm requires vp9");
     if (format == "mkv" && alphaRequested && codec != "auto" && codec != "ffv1")
         return QStringLiteral("mkv transparency requires ffv1");
-    if (format == "mp4" && (codec == "vp9" || codec == "ffv1"))
-        return QStringLiteral("mp4 requires h264");
+    if ((format == "mp4" || format == "mov") && (codec == "vp9" || codec == "ffv1"))
+        return format + QStringLiteral(" requires h264 or h265");
 
     return {};
 }
@@ -1968,7 +2006,7 @@ void CaptureOverlay::updateStatus() {
     }
 
     if (m_mode != hyprcapture::CaptureMode::Window) {
-        setStatusText(m_record ? QStringLiteral("record target") : QString{});
+        setStatusText(QString{});
         relayoutToolbar();
         return;
     }
@@ -1985,7 +2023,7 @@ void CaptureOverlay::updateStatus() {
     }
 
     if (hoveredWindow())
-        setStatusText(m_record ? QStringLiteral("record target") : QString{});
+        setStatusText(QString{});
     else
         setStatusText("choose window");
     relayoutToolbar();
