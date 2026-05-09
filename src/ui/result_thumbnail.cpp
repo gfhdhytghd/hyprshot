@@ -289,7 +289,7 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     if (canDeleteThumbnailPath(m_path, m_deleteRoot))
         addAction("Delete", [this] { deleteAndClose(); });
     addAction("Close", [this] { close(); });
-    shellLayout->addWidget(m_menuPanel);
+    m_menuPanel->setFixedSize(m_menuPanel->sizeHint());
 
     m_openWithPanel = new QWidget(m_menuShell);
     m_openWithPanel->setObjectName("thumbnailOpenWithMenu");
@@ -317,6 +317,7 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     openWithLayout->addWidget(otherButton);
     m_openWithPanel->hide();
     shellLayout->addWidget(m_openWithPanel);
+    shellLayout->addWidget(m_menuPanel);
 
     m_menuShell->hide();
     layout->addWidget(m_menuShell, 0, Qt::AlignRight);
@@ -485,11 +486,14 @@ bool ResultThumbnail::openWithApp(const QString& appId, const QString& path) {
     }
 
     GList* files = g_list_append(nullptr, file);
+    GAppLaunchContext* context = g_app_launch_context_new();
+    g_app_launch_context_unsetenv(context, "QT_WAYLAND_SHELL_INTEGRATION");
     GError* error = nullptr;
-    const bool launched = g_app_info_launch(G_APP_INFO(app), files, nullptr, &error);
+    const bool launched = g_app_info_launch(G_APP_INFO(app), files, context, &error);
     if (error)
         g_error_free(error);
     g_list_free(files);
+    g_object_unref(context);
     g_object_unref(file);
     g_object_unref(app);
     return launched;
