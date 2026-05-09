@@ -1831,7 +1831,7 @@ double hyprlandRoundedShadowPixelMultiplier(int x,
                                             double rounding,
                                             double roundingPower,
                                             int    shadowPower) {
-    constexpr int SAMPLE_GRID = 4;
+    constexpr int SAMPLE_GRID = 8;
 
     const double windowLeft = range;
     const double windowTop = range;
@@ -1995,11 +1995,10 @@ void repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, co
                 repairedAlpha = reconstructedShadowAlpha(px, color);
 
             px[3] = static_cast<unsigned char>(repairedAlpha);
-            if (px[3] <= 2) {
+            if (px[3] == 0) {
                 px[0] = 0;
                 px[1] = 0;
                 px[2] = 0;
-                px[3] = 0;
                 continue;
             }
             px[0] = static_cast<unsigned char>(color.r);
