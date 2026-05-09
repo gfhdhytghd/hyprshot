@@ -78,6 +78,7 @@ Json defaultsJson(const CaptureDefaults& defaults) {
         {"recordTransparentFormat", boundedString(defaults.recordTransparentFormat, MAX_METADATA_STRING_BYTES)},
         {"recordCodec", boundedString(defaults.recordCodec, MAX_METADATA_STRING_BYTES)},
         {"recordTransparentCodec", boundedString(defaults.recordTransparentCodec, MAX_METADATA_STRING_BYTES)},
+        {"recordSolidAlpha", defaults.recordSolidAlpha},
         {"recordPreset", boundedString(defaults.recordPreset, MAX_METADATA_STRING_BYTES)},
         {"recordGsrFlags", boundedString(defaults.recordGsrFlags, MAX_METADATA_STRING_BYTES)},
         {"recordWindowBackend", toString(defaults.recordWindowBackend)},
@@ -224,6 +225,7 @@ bool parseDefaults(const Json& obj, CaptureDefaults& defaults) {
         stringValue(obj, "recordTransparentFormat", defaults.recordTransparentFormat, MAX_METADATA_STRING_BYTES, false) &&
         stringValue(obj, "recordCodec", defaults.recordCodec, MAX_METADATA_STRING_BYTES, false) &&
         stringValue(obj, "recordTransparentCodec", defaults.recordTransparentCodec, MAX_METADATA_STRING_BYTES, false) &&
+        boolValue(obj, "recordSolidAlpha", defaults.recordSolidAlpha, false) &&
         stringValue(obj, "recordPreset", defaults.recordPreset, MAX_METADATA_STRING_BYTES, false) &&
         stringValue(obj, "recordGsrFlags", defaults.recordGsrFlags, MAX_METADATA_STRING_BYTES, false) &&
         int64Value(obj, "recordFps", defaults.recordFps, 1, MAX_RECORD_FPS, false) &&

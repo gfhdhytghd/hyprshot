@@ -180,8 +180,14 @@ std::string normalizedToken(std::string_view value) {
     return out;
 }
 
+bool solidAlphaBackground(WindowBackground background) {
+    return background == WindowBackground::White || background == WindowBackground::Black || background == WindowBackground::FollowSystem;
+}
+
 bool recordingNeedsAlpha(const RecordingFrameRequest& request) {
-    return request.mode == CaptureMode::Window && request.defaults.windowBackground == WindowBackground::Transparent;
+    return request.mode == CaptureMode::Window &&
+        (request.defaults.windowBackground == WindowBackground::Transparent ||
+         (request.defaults.recordSolidAlpha && solidAlphaBackground(request.defaults.windowBackground)));
 }
 
 std::string sanitizedRecordFormat(std::string_view format) {
@@ -397,6 +403,12 @@ std::string effectiveRecordingCodec(const RecordingFrameRequest& request, std::s
     if (needsAlpha && format == "mkv" && (codec.empty() || normalizedCodec == "auto"))
         return "ffv1";
     return sanitizedCodec(std::move(codec));
+}
+
+bool recordingEncoderSupportsAlpha(std::string_view format, std::string_view codec) {
+    const auto normalizedFormat = sanitizedRecordFormat(format);
+    const auto normalizedCodec = normalizedToken(codec);
+    return (normalizedFormat == "webm" && normalizedCodec == "libvpx-vp9") || (normalizedFormat == "mkv" && normalizedCodec == "ffv1");
 }
 
 std::string gsrCodec(std::string codec, std::string_view format) {
@@ -1153,6 +1165,10 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
                                        .mode = request->mode,
                                        .targetGeometry = request->targetGeometry,
                                        .windowAddress = request->windowAddress};
+    const auto format = sanitizedRecordFormat(frameRequest.defaults.recordFormat);
+    const auto codec = effectiveRecordingCodec(frameRequest, request->defaults.recordCodec);
+    if (frameRequest.defaults.recordSolidAlpha && solidAlphaBackground(frameRequest.defaults.windowBackground) && !recordingEncoderSupportsAlpha(format, codec))
+        frameRequest.defaults.recordSolidAlpha = false;
 
     resetRecordingCaptureState();
     auto firstFrame = captureRecordingFrame(frameRequest);
@@ -1169,7 +1185,7 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
                                                      firstFrame->width,
                                                      firstFrame->height,
                                                      fps,
-                                                     effectiveRecordingCodec(frameRequest, request->defaults.recordCodec),
+                                                     codec,
                                                      sanitizedPreset(request->defaults.recordPreset));
     if (const auto result = encoder->start(); !result.success)
         return result;

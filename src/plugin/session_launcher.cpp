@@ -338,6 +338,8 @@ LaunchResult launchHelper(const LaunchRequest& request) {
     args.push_back(request.defaults.recordCodec);
     args.push_back("--record-transparent-codec");
     args.push_back(request.defaults.recordTransparentCodec);
+    args.push_back("--record-solid-alpha");
+    args.push_back(boolArg(request.defaults.recordSolidAlpha));
     args.push_back("--record-preset");
     args.push_back(request.defaults.recordPreset);
     args.push_back("--record-gsr-flags");

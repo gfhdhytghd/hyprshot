@@ -242,6 +242,7 @@ plugin {
         record_window_real_bg_fps_limit = 8
         record_codec = libx264
         record_transparent_codec = auto
+        record_solid_alpha = 0
         record_preset = veryfast
         record_gsr_flags =
         record_window_backend = compositor
@@ -284,6 +285,7 @@ hl.config({
             record_window_real_bg_fps_limit = 8,
             record_codec = "libx264",
             record_transparent_codec = "auto",
+            record_solid_alpha = false,
             record_preset = "veryfast",
             record_gsr_flags = "",
             record_window_backend = "compositor",
@@ -365,6 +367,7 @@ The old misspelled `fushion_mode` key is still accepted as a compatibility alias
 | `record_window_real_bg_fps_limit` | int | `8` | Additional safety cap for window recording with `window_background = real`. Use `0` to disable the cap. |
 | `record_codec` | string | `libx264` | Default recording codec shown in the overlay for non-transparent window backgrounds, fullscreen recording, and region recording. Supports `auto`, `libx264`/`h264`, `h264_vaapi`, `libx265`/`h265`, `hevc_vaapi`/`h265_vaapi`, `libsvtav1`/`av1`, `av1_vaapi`, `libvpx-vp9`/`vp9`, `vp9_vaapi`, and `ffv1`. |
 | `record_transparent_codec` | string | `auto` | Default recording codec shown when `window_background = transparent`. `auto` probes a tiny FFmpeg encode/decode sample and uses a hardware alpha encoder only when it actually preserves alpha; otherwise it falls back to CPU VP9/FFV1 and shows a warning. |
+| `record_solid_alpha` | bool | `0` | For window recordings with `window_background = follow-system`, `white`, or `black`, keep alpha outside the window content when the selected format/codec supports transparency. This uses the same edge behavior as screenshot output and falls back to opaque recording when unsupported. |
 | `record_preset` | string | `veryfast` | FFmpeg preset used with `libx264`/`libx264rgb`. |
 | `record_gsr_flags` | string | empty | Extra default flags passed to `gpu-screen-recorder` for fullscreen and region recordings. `-w` and `-o` are rejected because HyprCapture owns the capture target and output path. If defaults conflict with overlay-controlled format, codec, FPS, cursor, target, or output settings, the overlay settings are appended later and take precedence. |
 | `record_window_backend` | string | `compositor` | Window recording backend. `compositor` preserves HyprCapture's offscreen window capture and background behavior. `gsr-visible` records the selected visible screen rectangle with `gpu-screen-recorder` for much lower overhead; occlusion/hidden-window capture and background replacement are not guaranteed. |
@@ -409,5 +412,5 @@ Temporary compositor artifacts and thumbnail/clipboard scratch files are written
 
 - The repository includes a root [`hyprpm.toml`](hyprpm.toml) manifest, which is expected by `hyprpm`.
 - `window_background = real` uses compositor-captured real background data when available and falls back to reconstructing from the frozen desktop snapshot.
-- Recording applies window decoration cropping and solid/follow-system backgrounds in the compositor-side path. Since plugin-side recording cannot query the helper's Qt palette, `window_background = follow-system` uses the same light fallback color as the screenshot helper. `window_background = real` uses live compositor background data for window recordings and is treated as opaque for recording-format validation. Transparent output requires an alpha-capable format such as `webm`/VP9 or `mkv`/FFV1; MP4/MOV H.264/H.265 output is intentionally rejected for transparent recordings.
+- Recording applies window decoration cropping and solid/follow-system backgrounds in the compositor-side path. Since plugin-side recording cannot query the helper's Qt palette, `window_background = follow-system` uses the same light fallback color as the screenshot helper. `record_solid_alpha = 1` lets follow-system/white/black window recordings keep transparent pixels outside the window content when the selected format/codec supports alpha. `window_background = real` uses live compositor background data for window recordings and is treated as opaque for recording-format validation. Transparent output requires an alpha-capable format such as `webm`/VP9 or `mkv`/FFV1; MP4/MOV H.264/H.265 output is intentionally rejected for transparent recordings.
 - Do not run `hyprpm update` or reload the plugin while an active screenshot overlay is being used.

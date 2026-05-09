@@ -1807,6 +1807,17 @@ void compositeSolidBackground(RgbaReadback& frame, unsigned char r, unsigned cha
     compositeWindowOverBackground(frame, solidBackgroundReadback(frame.width, frame.height, r, g, b));
 }
 
+std::optional<std::array<unsigned char, 3>> recordingSolidBackgroundRgb(WindowBackground background) {
+    switch (background) {
+        case WindowBackground::White: return std::array<unsigned char, 3>{255, 255, 255};
+        case WindowBackground::Black: return std::array<unsigned char, 3>{0, 0, 0};
+        case WindowBackground::FollowSystem: return std::array<unsigned char, 3>{245, 245, 245};
+        case WindowBackground::Real:
+        case WindowBackground::Transparent: return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 std::optional<CHyprColor> recordingSolidBackgroundColor(WindowBackground background) {
     switch (background) {
         case WindowBackground::White: return CHyprColor{1.0, 1.0, 1.0, 1.0};
@@ -1946,9 +1957,13 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     CBox artifactBox;
     WindowRenderOptions renderOptions;
     renderOptions.asyncReadback = true;
-    const auto          solidBackground = recordingSolidBackgroundColor(request.defaults.windowBackground);
-    const auto          frozenTime = Time::steadyNow();
-    if (solidBackground) {
+    const bool solidAlpha = request.defaults.recordSolidAlpha &&
+        (request.defaults.windowBackground == WindowBackground::White || request.defaults.windowBackground == WindowBackground::Black ||
+         request.defaults.windowBackground == WindowBackground::FollowSystem);
+    const auto solidBackground = recordingSolidBackgroundColor(request.defaults.windowBackground);
+    const auto solidBackgroundRgb = recordingSolidBackgroundRgb(request.defaults.windowBackground);
+    const auto frozenTime = Time::steadyNow();
+    if (solidBackground && !solidAlpha) {
         renderOptions.clearColor = *solidBackground;
         renderOptions.postprocessAlpha = false;
     } else if (request.defaults.windowBackground == WindowBackground::Real) {
@@ -1984,7 +1999,7 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
             bounds.height = std::max(1, static_cast<int>(std::ceil(visibleBox.h * scaleY)));
             readback = cropReadbackToBounds(readback, bounds);
         }
-    } else if (request.defaults.windowBackground == WindowBackground::Transparent && request.defaults.windowShadow == DecorationPolicy::Keep) {
+    } else if ((request.defaults.windowBackground == WindowBackground::Transparent || solidAlpha) && request.defaults.windowShadow == DecorationPolicy::Keep) {
         repairTransparentRecordingShadow(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window));
     }
 
@@ -1994,6 +2009,8 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     if (request.defaults.windowBackground == WindowBackground::Real) {
         if (!renderOptions.backgroundTexture)
             compositeSolidBackground(readback, 30, 34, 38);
+    } else if (solidAlpha && solidBackgroundRgb) {
+        compositeSolidBackground(readback, (*solidBackgroundRgb)[0], (*solidBackgroundRgb)[1], (*solidBackgroundRgb)[2]);
     }
 
     return RecordingFrame{.rgba = std::move(readback.pixels), .width = readback.width, .height = readback.height};

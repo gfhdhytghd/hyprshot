@@ -190,6 +190,7 @@ int main(int argc, char** argv) {
         {"record-transparent-format", "Transparent window recording container format.", "format", "webm"},
         {"record-codec", "Recording codec.", "codec", "libx264"},
         {"record-transparent-codec", "Transparent window recording codec.", "codec", "auto"},
+        {"record-solid-alpha", "Keep alpha outside follow-system/white/black window recording content when supported.", "0|1", "0"},
         {"record-preset", "Recording preset.", "preset", "veryfast"},
         {"record-gsr-flags", "Extra gpu-screen-recorder flags.", "flags", ""},
         {"record-window-backend", "Window recording backend.", "backend", "compositor"},
@@ -248,6 +249,7 @@ int main(int argc, char** argv) {
     defaults.recordTransparentFormat = parser.value("record-transparent-format").toStdString();
     defaults.recordCodec = parser.value("record-codec").toStdString();
     defaults.recordTransparentCodec = parser.value("record-transparent-codec").toStdString();
+    defaults.recordSolidAlpha = flagValue(parser, "record-solid-alpha", defaults.recordSolidAlpha);
     defaults.recordPreset = parser.value("record-preset").toStdString();
     defaults.recordGsrFlags = parser.value("record-gsr-flags").toStdString();
     defaults.recordWindowBackend = hyprcapture::parseRecordWindowBackend(parser.value("record-window-backend").toStdString(), defaults.recordWindowBackend);

@@ -133,6 +133,7 @@ void registerConfigValues() {
     addIntConfig("record_window_real_bg_fps_limit", "Real-background window recording FPS cap", 8);
     addStringConfig("record_codec", "Default recording codec", "libx264");
     addStringConfig("record_transparent_codec", "Default transparent recording codec", "auto");
+    addBoolConfig("record_solid_alpha", "Keep alpha outside follow-system/white/black window recording content when the encoder supports it", false);
     addStringConfig("record_preset", "FFmpeg preset", "veryfast");
     addStringConfig("record_gsr_flags", "Extra gpu-screen-recorder flags", "");
     addStringConfig("record_window_backend", "Window recording backend", "compositor");
@@ -175,6 +176,7 @@ hyprcapture::CaptureDefaults readDefaults() {
     defaults.recordTransparentFormat = configString("record_transparent_format", defaults.recordTransparentFormat);
     defaults.recordCodec = configString("record_codec", defaults.recordCodec);
     defaults.recordTransparentCodec = configString("record_transparent_codec", defaults.recordTransparentCodec);
+    defaults.recordSolidAlpha = configBool("record_solid_alpha", defaults.recordSolidAlpha);
     defaults.recordPreset = configString("record_preset", defaults.recordPreset);
     defaults.recordGsrFlags = configString("record_gsr_flags", defaults.recordGsrFlags);
     defaults.recordWindowBackend =

@@ -35,6 +35,7 @@ struct CaptureDefaults {
     std::string      recordTransparentFormat = "webm";
     std::string      recordCodec = "libx264";
     std::string      recordTransparentCodec = "auto";
+    bool             recordSolidAlpha = false;
     std::string      recordPreset = "veryfast";
     std::string      recordGsrFlags;
     RecordWindowBackend recordWindowBackend = RecordWindowBackend::Compositor;

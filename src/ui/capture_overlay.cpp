@@ -166,8 +166,21 @@ QString defaultRecordFormat(const hyprcapture::CaptureDefaults& defaults) {
     return recordFormatFromTemplate(defaults.recordFilenameTemplate);
 }
 
+bool solidAlphaBackground(hyprcapture::WindowBackground background) {
+    return background == hyprcapture::WindowBackground::White || background == hyprcapture::WindowBackground::Black ||
+        background == hyprcapture::WindowBackground::FollowSystem;
+}
+
+bool solidAlphaRecordingRequested(const hyprcapture::CaptureDefaults& defaults, hyprcapture::WindowBackground background) {
+    return defaults.recordSolidAlpha && solidAlphaBackground(background);
+}
+
+bool alphaRecordingRequested(const hyprcapture::CaptureDefaults& defaults, hyprcapture::WindowBackground background) {
+    return background == hyprcapture::WindowBackground::Transparent || solidAlphaRecordingRequested(defaults, background);
+}
+
 QString defaultRecordFormatForBackground(const hyprcapture::CaptureDefaults& defaults, hyprcapture::WindowBackground background) {
-    if (background == hyprcapture::WindowBackground::Transparent)
+    if (alphaRecordingRequested(defaults, background))
         return normalizedRecordFormat(qString(defaults.recordTransparentFormat));
     return defaultRecordFormat(defaults);
 }
@@ -217,7 +230,7 @@ QString codecChoiceFromConfig(const std::string& codec) {
 }
 
 QString defaultRecordCodecForBackground(const hyprcapture::CaptureDefaults& defaults, hyprcapture::WindowBackground background) {
-    if (background == hyprcapture::WindowBackground::Transparent)
+    if (alphaRecordingRequested(defaults, background))
         return codecChoiceFromConfig(defaults.recordTransparentCodec);
     return codecChoiceFromConfig(defaults.recordCodec);
 }
@@ -1622,7 +1635,7 @@ void CaptureOverlay::buildToolbar() {
     m_recordFormat->setCurrentText(defaultRecordFormatForBackground(m_defaults, currentWindowBackground()));
     m_recordFormat->setOnChanged([this, onRecordOptionChanged] {
         m_recordFormatAuto = false;
-        if (currentWindowBackground() == hyprcapture::WindowBackground::Transparent && m_recordCodec) {
+        if (alphaRecordingRequested(m_defaults, currentWindowBackground()) && m_recordCodec) {
             const QString format = currentRecordFormat();
             if (format == "webm" || format == "mkv") {
                 m_recordCodec->setCurrentText(transparentAutoChoiceForFormat(format).codec);
@@ -1845,7 +1858,7 @@ QString CaptureOverlay::recordOptionsConflict() const {
     if (!m_record)
         return {};
 
-    const bool alphaRequested = currentWindowBackground() == hyprcapture::WindowBackground::Transparent;
+    const bool alphaRequested = alphaRecordingRequested(m_defaults, currentWindowBackground());
     const QString format = currentRecordFormat();
     const QString codec = currentRecordCodec();
 
@@ -1870,7 +1883,7 @@ QString CaptureOverlay::recordOptionsConflict() const {
 }
 
 QString CaptureOverlay::recordOptionsWarning() const {
-    if (!m_record || currentWindowBackground() != hyprcapture::WindowBackground::Transparent)
+    if (!m_record || !alphaRecordingRequested(m_defaults, currentWindowBackground()))
         return {};
 
     const QString format = currentRecordFormat();
