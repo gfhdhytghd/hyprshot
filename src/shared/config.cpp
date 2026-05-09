@@ -5,8 +5,11 @@
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
+#include <fstream>
 #include <iomanip>
+#include <optional>
 #include <sstream>
+#include <utility>
 
 namespace hyprcapture {
 namespace {
@@ -19,6 +22,102 @@ std::string normalized(std::string_view value) {
         return static_cast<char>(std::tolower(c));
     });
     return out;
+}
+
+std::filesystem::path homeConfigPath(std::string_view relativePath) {
+    if (const char* configHome = std::getenv("XDG_CONFIG_HOME"); configHome && *configHome)
+        return std::filesystem::path(configHome) / relativePath;
+    if (const char* home = std::getenv("HOME"); home && *home)
+        return std::filesystem::path(home) / ".config" / relativePath;
+    return {};
+}
+
+std::string unescapeUserDirValue(std::string_view value) {
+    std::string out;
+    out.reserve(value.size());
+    bool escaped = false;
+    for (const char ch : value) {
+        if (escaped) {
+            out.push_back(ch);
+            escaped = false;
+        } else if (ch == '\\') {
+            escaped = true;
+        } else {
+            out.push_back(ch);
+        }
+    }
+    if (escaped)
+        out.push_back('\\');
+    return out;
+}
+
+std::string expandHomeVariable(std::string value) {
+    const char* home = std::getenv("HOME");
+    if (!home || !*home)
+        return value;
+
+    if (value == "$HOME")
+        return home;
+    if (value.starts_with("$HOME/"))
+        return (std::filesystem::path(home) / value.substr(6)).string();
+    if (value == "${HOME}")
+        return home;
+    if (value.starts_with("${HOME}/"))
+        return (std::filesystem::path(home) / value.substr(8)).string();
+    return value;
+}
+
+std::optional<std::filesystem::path> configuredXdgUserDir(std::string_view variable) {
+    const auto path = homeConfigPath("user-dirs.dirs");
+    if (path.empty())
+        return std::nullopt;
+
+    std::ifstream file(path);
+    if (!file)
+        return std::nullopt;
+
+    const std::string key(variable);
+    std::string       line;
+    while (std::getline(file, line)) {
+        if (!line.starts_with(key + "=\""))
+            continue;
+        const auto valueBegin = key.size() + 2;
+        const auto valueEnd = line.find('"', valueBegin);
+        if (valueEnd == std::string::npos)
+            return std::nullopt;
+        const auto value = expandHomeVariable(unescapeUserDirValue(std::string_view(line).substr(valueBegin, valueEnd - valueBegin)));
+        if (!value.empty())
+            return std::filesystem::path(value);
+    }
+    return std::nullopt;
+}
+
+std::filesystem::path fallbackXdgUserDir(std::string_view variable) {
+    const char* home = std::getenv("HOME");
+    if (!home || !*home)
+        return {};
+    if (variable == "XDG_PICTURES_DIR")
+        return std::filesystem::path(home) / "Pictures";
+    if (variable == "XDG_VIDEOS_DIR")
+        return std::filesystem::path(home) / "Videos";
+    return {};
+}
+
+std::optional<std::pair<std::string_view, std::string_view>> splitLeadingXdgVariable(std::string_view path) {
+    if (!path.starts_with("$XDG_") && !path.starts_with("${XDG_"))
+        return std::nullopt;
+
+    if (path.starts_with("${")) {
+        const auto end = path.find('}');
+        if (end == std::string_view::npos)
+            return std::nullopt;
+        return std::pair{path.substr(2, end - 2), path.substr(end + 1)};
+    }
+
+    const auto slash = path.find('/');
+    if (slash == std::string_view::npos)
+        return std::pair{path.substr(1), std::string_view{}};
+    return std::pair{path.substr(1, slash - 1), path.substr(slash)};
 }
 
 } // namespace
@@ -170,6 +269,15 @@ std::filesystem::path expandUserPath(std::string_view path) {
         const char* home = std::getenv("HOME");
         if (home && *home)
             return std::filesystem::path(home) / p.substr(p == "~" ? 1 : 2);
+    }
+    if (const auto xdg = splitLeadingXdgVariable(p)) {
+        auto dir = configuredXdgUserDir(xdg->first).value_or(fallbackXdgUserDir(xdg->first));
+        if (!dir.empty()) {
+            std::string suffix(xdg->second);
+            while (suffix.starts_with('/'))
+                suffix.erase(suffix.begin());
+            return suffix.empty() ? dir : dir / suffix;
+        }
     }
     return std::filesystem::path(p);
 }

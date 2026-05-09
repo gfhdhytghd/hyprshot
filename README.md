@@ -230,9 +230,9 @@ plugin {
         show_thumbnail = 1
         allow_quick = 0
         fusion_mode = 0
-        save_dir = ~/Pictures/Screenshots
+        save_dir = $XDG_PICTURES_DIR/Screenshots
         filename_template = Screenshot-%Y-%m-%d-%H%M%S.png
-        record_save_dir = ~/Video/Screenrecording
+        record_save_dir = $XDG_VIDEOS_DIR/Screenrecords
         record_filename_template = Recording-%Y-%m-%d-%H%M%S.mp4
         record_format = mp4
         record_transparent_format = webm
@@ -272,9 +272,9 @@ hl.config({
             show_thumbnail = true,
             allow_quick = false,
             fusion_mode = false,
-            save_dir = "~/Pictures/Screenshots",
+            save_dir = "$XDG_PICTURES_DIR/Screenshots",
             filename_template = "Screenshot-%Y-%m-%d-%H%M%S.png",
-            record_save_dir = "~/Video/Screenrecording",
+            record_save_dir = "$XDG_VIDEOS_DIR/Screenrecords",
             record_filename_template = "Recording-%Y-%m-%d-%H%M%S.mp4",
             record_format = "mp4",
             record_transparent_format = "webm",
@@ -353,9 +353,9 @@ The old misspelled `fushion_mode` key is still accepted as a compatibility alias
 | `save` | bool | `1` | Save the output image to `save_dir` as an owner-only file. |
 | `clipboard` | bool | `1` | Copy the output image to the clipboard. Uses `wl-copy` when available so the clipboard survives helper exit. |
 | `show_thumbnail` | bool | `1` | Show the result thumbnail after capture. |
-| `save_dir` | string | `~/Pictures/Screenshots` | Output directory. `~` is expanded against `HOME`. |
+| `save_dir` | string | `$XDG_PICTURES_DIR/Screenshots` | Output directory. `~` is expanded against `HOME`; `$XDG_PICTURES_DIR` is read from XDG user-dirs with `~/Pictures` as fallback. |
 | `filename_template` | string | `Screenshot-%Y-%m-%d-%H%M%S.png` | `strftime` template for saved screenshot filenames. |
-| `record_save_dir` | string | `~/Video/Screenrecording` | Output directory for recordings. Finished recordings can be copied to the clipboard as local file URIs and shown in the thumbnail when those global output settings are enabled. |
+| `record_save_dir` | string | `$XDG_VIDEOS_DIR/Screenrecords` | Output directory for recordings. `$XDG_VIDEOS_DIR` is read from XDG user-dirs with `~/Videos` as fallback. Finished recordings can be copied to the clipboard as local file URIs and shown in the thumbnail when those global output settings are enabled. |
 | `record_filename_template` | string | `Recording-%Y-%m-%d-%H%M%S.mp4` | `strftime` template for saved recording filenames. |
 | `record_format` | string | `mp4` | Default recording container shown in the overlay for non-transparent window backgrounds, fullscreen recording, and region recording. Supports `mp4`, `mov`, `webm`, and `mkv`; the selected value replaces the filename extension. |
 | `record_transparent_format` | string | `webm` | Default recording container shown when `window_background = transparent`. |

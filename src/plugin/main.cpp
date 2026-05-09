@@ -121,9 +121,9 @@ void registerConfigValues() {
     addBoolConfig("allow_quick", "Enable no-confirmation quick capture dispatchers", false);
     addBoolConfig("fusion_mode", "Fuse region and window interactions in one overlay", false);
     addBoolConfig("fushion_mode", "Legacy alias for fusion_mode", false);
-    addStringConfig("save_dir", "Capture output directory", "~/Pictures/Screenshots");
+    addStringConfig("save_dir", "Capture output directory", "$XDG_PICTURES_DIR/Screenshots");
     addStringConfig("filename_template", "Screenshot filename strftime template", "Screenshot-%Y-%m-%d-%H%M%S.png");
-    addStringConfig("record_save_dir", "Recording output directory", "~/Video/Screenrecording");
+    addStringConfig("record_save_dir", "Recording output directory", "$XDG_VIDEOS_DIR/Screenrecords");
     addStringConfig("record_filename_template", "Recording filename strftime template", "Recording-%Y-%m-%d-%H%M%S.mp4");
     addStringConfig("record_format", "Default recording container", "mp4");
     addStringConfig("record_transparent_format", "Default transparent recording container", "webm");

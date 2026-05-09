@@ -26,10 +26,10 @@ struct CaptureDefaults {
     bool             includeCursor = false;
     bool             allowQuick = false;
     bool             fushionMode = false;
-    std::string      saveDir = "~/Pictures/Screenshots";
+    std::string      saveDir = "$XDG_PICTURES_DIR/Screenshots";
     std::string      filenameTemplate = "Screenshot-%Y-%m-%d-%H%M%S.png";
     std::string      helper;
-    std::string      recordSaveDir = "~/Video/Screenrecording";
+    std::string      recordSaveDir = "$XDG_VIDEOS_DIR/Screenrecords";
     std::string      recordFilenameTemplate = "Recording-%Y-%m-%d-%H%M%S.mp4";
     std::string      recordFormat = "mp4";
     std::string      recordTransparentFormat = "webm";
