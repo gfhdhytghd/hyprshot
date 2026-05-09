@@ -15,6 +15,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -32,6 +34,13 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
+#include <vector>
+
+#pragma push_macro("signals")
+#undef signals
+#include <gio/gdesktopappinfo.h>
+#include <gio/gio.h>
+#pragma pop_macro("signals")
 
 namespace {
 
@@ -40,6 +49,13 @@ constexpr int kThumbnailMaxHeight = 120;
 constexpr int kThumbnailScreenMargin = 24;
 constexpr double kSwipeCloseThreshold = 120.0;
 constexpr double kSwipeDeleteThreshold = 90.0;
+constexpr int kMaxOpenWithApps = 16;
+
+struct OpenWithApp {
+    QString id;
+    QString name;
+    QIcon   icon;
+};
 
 QColor interpolateColor(const QColor& from, const QColor& to, double amount) {
     amount = std::clamp(amount, 0.0, 1.0);
@@ -127,6 +143,76 @@ bool canDeleteThumbnailPath(const QString& path, const QString& deleteRoot) {
     return pathIsUnderDirectory(path, deleteRoot);
 }
 
+QIcon iconFromGIcon(GIcon* icon) {
+    if (!icon || !G_IS_THEMED_ICON(icon))
+        return {};
+
+    const char* const* names = g_themed_icon_get_names(G_THEMED_ICON(icon));
+    if (!names)
+        return {};
+
+    for (int i = 0; names[i]; ++i) {
+        const QIcon themed = QIcon::fromTheme(QString::fromUtf8(names[i]));
+        if (!themed.isNull())
+            return themed;
+    }
+    return {};
+}
+
+void appendAppInfo(std::vector<OpenWithApp>& apps, GAppInfo* app) {
+    if (!app || apps.size() >= kMaxOpenWithApps)
+        return;
+
+    const char* id = g_app_info_get_id(app);
+    if (!id || !*id)
+        return;
+
+    const QString appId = QString::fromUtf8(id);
+    if (std::any_of(apps.begin(), apps.end(), [&appId](const OpenWithApp& existing) { return existing.id == appId; }))
+        return;
+
+    const char* displayName = g_app_info_get_display_name(app);
+    if (!displayName || !*displayName)
+        displayName = g_app_info_get_name(app);
+    apps.push_back({.id = appId, .name = QString::fromUtf8(displayName ? displayName : id), .icon = iconFromGIcon(g_app_info_get_icon(app))});
+}
+
+std::vector<OpenWithApp> openWithAppsForPath(const QString& path) {
+    std::vector<OpenWithApp> apps;
+    const QString canonical = QFileInfo(path).canonicalFilePath();
+    if (canonical.isEmpty())
+        return apps;
+
+    GFile* file = g_file_new_for_path(QFile::encodeName(canonical).constData());
+    if (!file)
+        return apps;
+
+    GError* error = nullptr;
+    GFileInfo* info = g_file_query_info(file, G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE, G_FILE_QUERY_INFO_NONE, nullptr, &error);
+    if (error) {
+        g_error_free(error);
+        error = nullptr;
+    }
+
+    const char* contentType = info ? g_file_info_get_content_type(info) : nullptr;
+    if (contentType && *contentType) {
+        GAppInfo* defaultApp = g_app_info_get_default_for_type(contentType, false);
+        appendAppInfo(apps, defaultApp);
+        if (defaultApp)
+            g_object_unref(defaultApp);
+
+        GList* allApps = g_app_info_get_all_for_type(contentType);
+        for (GList* node = allApps; node && apps.size() < kMaxOpenWithApps; node = node->next)
+            appendAppInfo(apps, G_APP_INFO(node->data));
+        g_list_free_full(allApps, g_object_unref);
+    }
+
+    if (info)
+        g_object_unref(info);
+    g_object_unref(file);
+    return apps;
+}
+
 } // namespace
 
 ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString restoreClipboardPath, QString deleteRoot, int timeoutMs, bool copyFile, QWidget* parent)
@@ -146,29 +232,36 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
                       "#thumbnail { background: transparent; border: none; }"
                       "#thumbnailImage { background: rgba(%1,%2,%3,220); border: 1px solid rgba(%4,%5,%6,95); border-radius: 8px; }"
                       "#thumbnailMenu { background: rgba(%1,%2,%3,242); border: 1px solid rgba(%4,%5,%6,90); border-radius: 7px; }"
+                      "#thumbnailOpenWithMenu { background: rgba(%1,%2,%3,242); border: 1px solid rgba(%4,%5,%6,90); border-radius: 7px; }"
                       "#thumbnailMenu QPushButton { color: rgba(%4,%5,%6,255); background: transparent; padding: 7px 10px; border: none; border-radius: 5px; text-align: left; }"
-                      "#thumbnailMenu QPushButton:hover { background: rgba(%7,%8,%9,75); }")
+                      "#thumbnailOpenWithMenu QPushButton { color: rgba(%4,%5,%6,255); background: transparent; padding: 7px 10px; border: none; border-radius: 5px; text-align: left; }"
+                      "#thumbnailMenu QPushButton:hover { background: rgba(%7,%8,%9,75); }"
+                      "#thumbnailOpenWithMenu QPushButton:hover { background: rgba(%7,%8,%9,75); }")
                       .arg(bg.red()).arg(bg.green()).arg(bg.blue()).arg(fg.red()).arg(fg.green()).arg(fg.blue()).arg(highlight.red()).arg(highlight.green()).arg(highlight.blue()));
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(6);
 
-    m_menuPanel = new QWidget(this);
+    m_menuShell = new QWidget(this);
+    m_menuShell->setObjectName("thumbnailMenuShell");
+    auto* shellLayout = new QHBoxLayout(m_menuShell);
+    shellLayout->setContentsMargins(0, 0, 0, 0);
+    shellLayout->setSpacing(6);
+
+    m_menuPanel = new QWidget(m_menuShell);
     m_menuPanel->setObjectName("thumbnailMenu");
     m_menuPanel->setAttribute(Qt::WA_StyledBackground);
     auto* menuLayout = new QVBoxLayout(m_menuPanel);
     menuLayout->setContentsMargins(6, 6, 6, 6);
     menuLayout->setSpacing(2);
-    const auto addAction = [&](const QString& text, auto callback) {
+    const auto addAction = [&](const QString& text, auto callback, bool hideMenu = true, const QIcon& icon = {}) {
         auto* buttonWidget = new QPushButton(text, m_menuPanel);
-        connect(buttonWidget, &QPushButton::clicked, this, [this, callback = std::move(callback)]() mutable {
-            if (m_menuPanel && m_menuPanel->isVisible()) {
-                m_menuPanel->hide();
-                applyLayerSize();
-                if (m_closeTimer.interval() > 0)
-                    m_closeTimer.start();
-            }
+        if (!icon.isNull())
+            buttonWidget->setIcon(icon);
+        connect(buttonWidget, &QPushButton::clicked, this, [this, hideMenu, callback = std::move(callback)]() mutable {
+            if (hideMenu)
+                setMenuVisible(false);
             callback();
         });
         menuLayout->addWidget(buttonWidget);
@@ -178,9 +271,10 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
             close();
     });
     addAction("Open with", [this] {
-        if (!m_path.isEmpty() && openWithPortal(m_path))
-            close();
-    });
+        if (m_openWithPanel)
+            m_openWithPanel->setVisible(!m_openWithPanel->isVisible());
+        applyLayerSize();
+    }, false);
     addAction(m_copyFile ? "Copy file" : "Copy image", [this] {
         const auto currentPixmap = m_imageLabel->pixmap();
         if (m_copyFile && !m_path.isEmpty())
@@ -195,8 +289,37 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     if (canDeleteThumbnailPath(m_path, m_deleteRoot))
         addAction("Delete", [this] { deleteAndClose(); });
     addAction("Close", [this] { close(); });
-    m_menuPanel->hide();
-    layout->addWidget(m_menuPanel, 0, Qt::AlignRight);
+    shellLayout->addWidget(m_menuPanel);
+
+    m_openWithPanel = new QWidget(m_menuShell);
+    m_openWithPanel->setObjectName("thumbnailOpenWithMenu");
+    m_openWithPanel->setAttribute(Qt::WA_StyledBackground);
+    auto* openWithLayout = new QVBoxLayout(m_openWithPanel);
+    openWithLayout->setContentsMargins(6, 6, 6, 6);
+    openWithLayout->setSpacing(2);
+    for (const auto& app : openWithAppsForPath(m_path)) {
+        auto* appButton = new QPushButton(app.name, m_openWithPanel);
+        if (!app.icon.isNull())
+            appButton->setIcon(app.icon);
+        connect(appButton, &QPushButton::clicked, this, [this, appId = app.id] {
+            setMenuVisible(false);
+            if (openWithApp(appId, m_path))
+                close();
+        });
+        openWithLayout->addWidget(appButton);
+    }
+    auto* otherButton = new QPushButton("Other applications...", m_openWithPanel);
+    connect(otherButton, &QPushButton::clicked, this, [this] {
+        setMenuVisible(false);
+        if (!m_path.isEmpty() && openWithPortal(m_path))
+            close();
+    });
+    openWithLayout->addWidget(otherButton);
+    m_openWithPanel->hide();
+    shellLayout->addWidget(m_openWithPanel);
+
+    m_menuShell->hide();
+    layout->addWidget(m_menuShell, 0, Qt::AlignRight);
 
     const QPixmap scaledPixmap = pixmap.scaled(kThumbnailMaxWidth, kThumbnailMaxHeight, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     m_card = new QWidget(this);
@@ -346,11 +469,44 @@ bool ResultThumbnail::openWithPortal(const QString& path) {
     return reply.type() == QDBusMessage::ReplyMessage;
 }
 
+bool ResultThumbnail::openWithApp(const QString& appId, const QString& path) {
+    const QString canonical = QFileInfo(path).canonicalFilePath();
+    if (appId.isEmpty() || canonical.isEmpty())
+        return false;
+
+    GDesktopAppInfo* app = g_desktop_app_info_new(appId.toUtf8().constData());
+    if (!app)
+        return false;
+
+    GFile* file = g_file_new_for_path(QFile::encodeName(canonical).constData());
+    if (!file) {
+        g_object_unref(app);
+        return false;
+    }
+
+    GList* files = g_list_append(nullptr, file);
+    GError* error = nullptr;
+    const bool launched = g_app_info_launch(G_APP_INFO(app), files, nullptr, &error);
+    if (error)
+        g_error_free(error);
+    g_list_free(files);
+    g_object_unref(file);
+    g_object_unref(app);
+    return launched;
+}
+
 void ResultThumbnail::toggleMenu() {
     m_closeTimer.stop();
-    m_menuPanel->setVisible(!m_menuPanel->isVisible());
+    setMenuVisible(!m_menuShell->isVisible());
+}
+
+void ResultThumbnail::setMenuVisible(bool visible) {
+    if (m_menuShell)
+        m_menuShell->setVisible(visible);
+    if (m_openWithPanel && !visible)
+        m_openWithPanel->hide();
     applyLayerSize();
-    if (!m_menuPanel->isVisible() && m_closeTimer.interval() > 0)
+    if (!visible && m_closeTimer.interval() > 0)
         m_closeTimer.start();
 }
 

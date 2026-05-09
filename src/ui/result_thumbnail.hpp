@@ -31,7 +31,9 @@ class ResultThumbnail final : public QWidget {
 
     bool openPath(const QString& path);
     bool openWithPortal(const QString& path);
+    bool openWithApp(const QString& appId, const QString& path);
     void toggleMenu();
+    void setMenuVisible(bool visible);
     void applyLayerSize();
     void startFileDrag();
     void updateSwipeVisual();
@@ -47,7 +49,9 @@ class ResultThumbnail final : public QWidget {
     QWidget* m_card = nullptr;
     SwipeBackdrop* m_swipeBackdrop = nullptr;
     QLabel* m_imageLabel = nullptr;
+    QWidget* m_menuShell = nullptr;
     QWidget* m_menuPanel = nullptr;
+    QWidget* m_openWithPanel = nullptr;
     QPoint  m_pressGlobal;
     QPoint  m_imageOrigin;
     QPointF m_swipeOffset;
