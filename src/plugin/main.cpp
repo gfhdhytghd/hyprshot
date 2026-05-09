@@ -1,3 +1,4 @@
+#include <array>
 #include <chrono>
 #include <deque>
 #include <string>
@@ -29,6 +30,18 @@ namespace {
 
 constexpr const char* kOverlayLayerRuleName = "hyprcapture-ui-no-compositor-anim";
 constexpr auto        kMinDispatchInterval = std::chrono::milliseconds(750);
+constexpr std::array  kLuaFunctionNames = {
+    "open",
+    "quick",
+    "record",
+    "record_toggle",
+    "record_stop",
+    "record_start",
+    "record_start_dispatcher",
+    "record_stop_dispatcher",
+    "cancel",
+    "dispatch",
+};
 
 std::chrono::steady_clock::time_point g_lastCaptureDispatch {};
 std::chrono::steady_clock::time_point g_lastQuickRejectNotification {};
@@ -380,6 +393,14 @@ int luaDispatch(lua_State* L) {
     return lua_error(L);
 }
 
+void unregisterLuaFunctions() {
+    if (!g_pluginHandle || !Config::mgr() || Config::mgr()->type() != Config::CONFIG_LUA)
+        return;
+
+    for (const auto* name : kLuaFunctionNames)
+        HyprlandAPI::removeLuaFunction(g_pluginHandle, "hyprcapture", name);
+}
+
 } // namespace
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -411,13 +432,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     if (Config::mgr() && Config::mgr()->type() == Config::CONFIG_LUA) {
         const auto registerLuaFunction = [&](const char* name, PLUGIN_LUA_FN fn) {
-            if (!HyprlandAPI::addLuaFunction(g_pluginHandle, "hyprcapture", name, fn)) {
-                HyprlandAPI::addNotification(
-                    g_pluginHandle,
-                    std::string("[hyprcapture] failed to register lua function hl.plugin.hyprcapture.") + name,
-                    CHyprColor(1.0, 0.2, 0.2, 1.0),
-                    5000);
-            }
+            HyprlandAPI::addLuaFunction(g_pluginHandle, "hyprcapture", name, fn);
         };
 
         registerLuaFunction("open", luaOpen);
@@ -445,6 +460,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    unregisterLuaFunctions();
     hyprcapture::shutdownRecording();
     hyprcapture::shutdownArtifactCapture();
     Desktop::Rule::ruleEngine()->unregisterRule(kOverlayLayerRuleName);
