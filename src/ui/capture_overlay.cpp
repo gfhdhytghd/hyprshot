@@ -2269,7 +2269,7 @@ void CaptureOverlay::updateStatus() {
     };
 
     if (m_recordActive) {
-        setStatusText("recording");
+        setStatusText(QString{});
         relayoutToolbar();
         return;
     }
