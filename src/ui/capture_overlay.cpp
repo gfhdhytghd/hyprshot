@@ -91,6 +91,8 @@ InlineSelect* g_openSelect = nullptr;
 constexpr int kWindowBackgroundMinAlpha = 32;
 constexpr int kWindowShadowMaxRgb = 32;
 constexpr int kWindowShadowMaxAlpha = 223;
+constexpr int kTransparentShadowMaxRgb = 64;
+constexpr int kTransparentShadowMaxAlpha = 249;
 constexpr int kWindowBackgroundInteriorRadius = 1;
 constexpr double kWindowFrameFallbackRadius = 8.0;
 constexpr int kOverlayFadeDurationMs = 100;
@@ -1050,6 +1052,15 @@ bool isWindowContentPixel(const uchar* px) {
     return maxRgb > kWindowShadowMaxRgb || alpha > kWindowShadowMaxAlpha;
 }
 
+bool isTransparentShadowPixel(const uchar* px) {
+    const int alpha = px[3];
+    if (alpha <= 0 || alpha > kTransparentShadowMaxAlpha)
+        return false;
+
+    const int maxRgb = std::max({px[0], px[1], px[2]});
+    return maxRgb <= kTransparentShadowMaxRgb;
+}
+
 bool isWindowContentPixelAt(const QImage& artifact, int x, int y) {
     if (x < 0 || x >= artifact.width() || y < 0 || y >= artifact.height())
         return false;
@@ -1070,6 +1081,63 @@ bool isWindowInteriorPixel(const QImage& artifact, int x, int y) {
     }
 
     return true;
+}
+
+void repairTransparentWindowShadow(QImage& artifact, const QRect& fullGeometry, const QRect& visibleGeometry) {
+    if (artifact.format() != QImage::Format_RGBA8888 || artifact.isNull() || !fullGeometry.isValid() || !visibleGeometry.isValid())
+        return;
+
+    const QRect visible = logicalRectToImageRect(visibleGeometry, fullGeometry, artifact.size());
+    if (!visible.isValid() || visible.isEmpty())
+        return;
+    if (visible.left() <= 0 && visible.top() <= 0 && visible.right() >= artifact.width() - 1 && visible.bottom() >= artifact.height() - 1)
+        return;
+
+    const int visibleLeft = visible.left();
+    const int visibleTop = visible.top();
+    const int visibleRight = visible.right() + 1;
+    const int visibleBottom = visible.bottom() + 1;
+    const int maxExtent = std::max({visibleLeft, visibleTop, artifact.width() - visibleRight, artifact.height() - visibleBottom});
+    if (maxExtent <= 1)
+        return;
+
+    int peakAlpha = 0;
+    for (int y = 0; y < artifact.height(); ++y) {
+        const auto* row = artifact.constScanLine(y);
+        for (int x = 0; x < artifact.width(); ++x) {
+            if (x >= visibleLeft && x < visibleRight && y >= visibleTop && y < visibleBottom)
+                continue;
+
+            const auto* px = row + static_cast<qsizetype>(x) * 4;
+            if (isTransparentShadowPixel(px))
+                peakAlpha = std::max<int>(peakAlpha, px[3]);
+        }
+    }
+    if (peakAlpha <= 0)
+        return;
+    peakAlpha = std::min(peakAlpha, 96);
+
+    for (int y = 0; y < artifact.height(); ++y) {
+        auto* row = artifact.scanLine(y);
+        for (int x = 0; x < artifact.width(); ++x) {
+            if (x >= visibleLeft && x < visibleRight && y >= visibleTop && y < visibleBottom)
+                continue;
+
+            auto* px = row + static_cast<qsizetype>(x) * 4;
+            if (!isTransparentShadowPixel(px))
+                continue;
+
+            const double dx = x < visibleLeft ? (visibleLeft - x - 0.5) : (x >= visibleRight ? (x - visibleRight + 0.5) : 0.0);
+            const double dy = y < visibleTop ? (visibleTop - y - 0.5) : (y >= visibleBottom ? (y - visibleBottom + 0.5) : 0.0);
+            const double distanceFromWindow = std::hypot(dx, dy);
+            const double ratio = std::clamp((static_cast<double>(maxExtent) - distanceFromWindow + 0.5) / static_cast<double>(maxExtent), 0.0, 1.0);
+            const int    repairedAlpha = std::clamp(static_cast<int>(std::lround(peakAlpha * std::pow(ratio, 1.9))), 0, peakAlpha);
+            px[0] = 0;
+            px[1] = 0;
+            px[2] = 0;
+            px[3] = repairedAlpha <= 2 ? 0 : static_cast<uchar>(repairedAlpha);
+        }
+    }
 }
 
 void applyWindowContentAlphaMask(QImage& background, const QImage& artifact, const QRect& artifactSource) {
@@ -2431,8 +2499,11 @@ QImage CaptureOverlay::renderResultImage() const {
                                  .intersected(windowArtifact->image.rect());
         }
 
-        QImage repairedArtifact = windowArtifact->image;
+        QImage repairedArtifact =
+            windowArtifact->image.format() == QImage::Format_RGBA8888 ? windowArtifact->image : windowArtifact->image.convertToFormat(QImage::Format_RGBA8888);
         repairMissingWindowTail(repairedArtifact, windowArtifact->fullGeometry, windowArtifact->visibleGeometry, m_desktopImage, m_desktopGeometry);
+        if (currentWindowShadow() == hyprcapture::DecorationPolicy::Keep)
+            repairTransparentWindowShadow(repairedArtifact, windowArtifact->fullGeometry, windowArtifact->visibleGeometry);
 
         QImage image = boundedImage(artifactSource.size().expandedTo(QSize(1, 1)), QImage::Format_ARGB32_Premultiplied);
         if (image.isNull())
