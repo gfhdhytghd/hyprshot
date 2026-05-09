@@ -101,6 +101,7 @@ class CaptureOverlay final : public QMainWindow {
     hyprcapture::RecordWindowBackend currentRecordBackend() const;
     void applyRecordDefaultsForCurrentBackground();
     QString recordOptionsConflict() const;
+    QString recordOptionsWarning() const;
     void updateRecordOptionsVisibility();
     void updateRecordWarning();
     hyprcapture::DecorationPolicy currentWindowBorder() const;
@@ -134,7 +135,6 @@ class CaptureOverlay final : public QMainWindow {
     bool                      m_hasCursorLogicalPosition = false;
     bool                      m_recordFormatAuto = true;
     bool                      m_recordCodecAuto = true;
-    QString                   m_recordAutoWarning;
 
     QWidget*     m_toolbar = nullptr;
     QGraphicsOpacityEffect* m_toolbarOpacity = nullptr;

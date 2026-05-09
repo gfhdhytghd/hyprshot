@@ -1574,7 +1574,6 @@ void CaptureOverlay::buildToolbar() {
     m_recordCodec->setCurrentText(defaultRecordCodecForBackground(m_defaults, currentWindowBackground()));
     m_recordCodec->setOnChanged([this, onRecordOptionChanged] {
         m_recordCodecAuto = false;
-        m_recordAutoWarning.clear();
         onRecordOptionChanged();
     });
     recordLayout->addWidget(m_recordCodec);
@@ -1585,7 +1584,13 @@ void CaptureOverlay::buildToolbar() {
     m_recordFormat->setCurrentText(defaultRecordFormatForBackground(m_defaults, currentWindowBackground()));
     m_recordFormat->setOnChanged([this, onRecordOptionChanged] {
         m_recordFormatAuto = false;
-        m_recordAutoWarning.clear();
+        if (currentWindowBackground() == hyprcapture::WindowBackground::Transparent && m_recordCodec) {
+            const QString format = currentRecordFormat();
+            if (format == "webm" || format == "mkv") {
+                m_recordCodec->setCurrentText(transparentAutoChoiceForFormat(format).codec);
+                m_recordCodecAuto = true;
+            }
+        }
         onRecordOptionChanged();
     });
     recordLayout->addWidget(m_recordFormat);
@@ -1771,7 +1776,6 @@ hyprcapture::RecordWindowBackend CaptureOverlay::currentRecordBackend() const {
 
 void CaptureOverlay::applyRecordDefaultsForCurrentBackground() {
     const auto background = currentWindowBackground();
-    m_recordAutoWarning.clear();
 
     if (background != hyprcapture::WindowBackground::Transparent) {
         if (m_recordFormatAuto && m_recordFormat)
@@ -1783,13 +1787,13 @@ void CaptureOverlay::applyRecordDefaultsForCurrentBackground() {
 
     const QString configuredFormat = defaultRecordFormatForBackground(m_defaults, background);
     const QString configuredCodec = defaultRecordCodecForBackground(m_defaults, background);
+    const QString targetFormat = m_recordFormatAuto ? configuredFormat : currentRecordFormat();
     if (configuredCodec == "auto") {
-        const auto choice = transparentAutoChoiceForFormat(configuredFormat);
+        const auto choice = transparentAutoChoiceForFormat(targetFormat);
         if (m_recordFormatAuto && m_recordFormat)
             m_recordFormat->setCurrentText(choice.format);
         if (m_recordCodecAuto && m_recordCodec)
             m_recordCodec->setCurrentText(choice.codec);
-        m_recordAutoWarning = choice.warning;
         return;
     }
 
@@ -1827,12 +1831,27 @@ QString CaptureOverlay::recordOptionsConflict() const {
     return {};
 }
 
+QString CaptureOverlay::recordOptionsWarning() const {
+    if (!m_record || currentWindowBackground() != hyprcapture::WindowBackground::Transparent)
+        return {};
+
+    const QString format = currentRecordFormat();
+    const QString codec = currentRecordCodec();
+    if (format == "webm" && (codec == "auto" || codec == "vp9")) {
+        if (!alphaProbeSucceeded(format, QStringLiteral("vp9-vaapi")))
+            return QStringLiteral("no hardware alpha encoder detected; using CPU vp9");
+    }
+    if (format == "mkv" && (codec == "auto" || codec == "ffv1"))
+        return QStringLiteral("no hardware alpha encoder detected; using CPU ffv1");
+    return {};
+}
+
 void CaptureOverlay::updateRecordWarning() {
     if (!m_recordWarning)
         return;
 
     const QString conflict = recordOptionsConflict();
-    const QString warning = conflict.isEmpty() ? m_recordAutoWarning : QString{};
+    const QString warning = conflict.isEmpty() ? recordOptionsWarning() : QString{};
     if (conflict.isEmpty() && warning.isEmpty()) {
         m_recordWarning->clear();
         m_recordWarning->hide();
