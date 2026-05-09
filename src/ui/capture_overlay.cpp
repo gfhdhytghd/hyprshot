@@ -391,9 +391,8 @@ bool alphaProbeSucceeded(const QString& format, const QString& codecChoice) {
              << QStringLiteral("vp9_vaapi") << QStringLiteral("-qp") << QStringLiteral("23") << QStringLiteral("-quality") << QStringLiteral("7");
     } else if (normalizedCodec == "vp9") {
         args << QStringLiteral("-c:v") << QStringLiteral("libvpx-vp9") << QStringLiteral("-pix_fmt") << QStringLiteral("yuva420p")
-             << QStringLiteral("-deadline") << QStringLiteral("realtime") << QStringLiteral("-cpu-used") << QStringLiteral("4") << QStringLiteral("-row-mt")
-             << QStringLiteral("1") << QStringLiteral("-auto-alt-ref") << QStringLiteral("0") << QStringLiteral("-tune-content") << QStringLiteral("screen")
-             << QStringLiteral("-b:v") << QStringLiteral("0") << QStringLiteral("-crf") << QStringLiteral("20");
+             << QStringLiteral("-deadline") << QStringLiteral("realtime") << QStringLiteral("-cpu-used") << QStringLiteral("8") << QStringLiteral("-b:v")
+             << QStringLiteral("0") << QStringLiteral("-crf") << QStringLiteral("32");
     } else if (normalizedCodec == "ffv1") {
         args << QStringLiteral("-c:v") << QStringLiteral("ffv1") << QStringLiteral("-level") << QStringLiteral("3") << QStringLiteral("-pix_fmt")
              << QStringLiteral("rgba");

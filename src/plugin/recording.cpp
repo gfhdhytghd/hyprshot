@@ -676,17 +676,11 @@ class RawVideoEncoder {
             args.push_back("-deadline");
             args.push_back("realtime");
             args.push_back("-cpu-used");
-            args.push_back("4");
-            args.push_back("-row-mt");
-            args.push_back("1");
-            args.push_back("-auto-alt-ref");
-            args.push_back("0");
-            args.push_back("-tune-content");
-            args.push_back("screen");
+            args.push_back("6");
             args.push_back("-b:v");
             args.push_back("0");
             args.push_back("-crf");
-            args.push_back("20");
+            args.push_back("32");
         } else if (m_codec == "ffv1") {
             args.push_back("-c:v");
             args.push_back(m_codec);
