@@ -7,6 +7,7 @@
 #define private public
 #define protected public
 #include <hyprland/src/Compositor.hpp>
+#include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
@@ -138,6 +139,16 @@ struct WindowRenderOptions {
     bool       clipBackgroundToWindow = false;
     bool       postprocessAlpha = true;
 };
+
+struct ShadowColorBytes {
+    int r = 0;
+    int g = 0;
+    int b = 0;
+    int a = 0;
+};
+
+ShadowColorBytes shadowColorBytes(const PHLWINDOW& window);
+void             repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window);
 
 struct ArtifactBudget {
     std::size_t remaining = MAX_SESSION_ARTIFACT_BYTES;
@@ -1284,6 +1295,8 @@ bool renderWindowArtifact(const PHLWINDOW& window,
                           CBox& artifactBox,
                           ArtifactBudget& budget) {
     auto readback = renderWindowArtifactReadback(window, monitor, frozenTime, decorate, width, height, artifactBox, &budget);
+    if (decorate && !readback.pixels.empty())
+        repairTransparentShadow(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window);
     return !readback.pixels.empty() && writeRgbaFile(path, readback.pixels);
 }
 
@@ -1685,9 +1698,109 @@ bool isRecordingShadowPixel(const unsigned char* px) {
     return maxRgb <= RECORDING_SHADOW_MAX_RGB;
 }
 
-void repairTransparentRecordingShadow(RgbaReadback& readback, const CBox& artifactBox, const CBox& visibleBox) {
+int colorByte(float value) {
+    return std::clamp(static_cast<int>(std::lround(value * 255.0F)), 0, 255);
+}
+
+ShadowColorBytes shadowColorBytes(const PHLWINDOW& window) {
+    const CHyprColor color = window && window->m_realShadowColor ? window->m_realShadowColor->value() : CHyprColor(0xee1a1a1a);
+    return {
+        .r = colorByte(color.r),
+        .g = colorByte(color.g),
+        .b = colorByte(color.b),
+        .a = colorByte(color.a),
+    };
+}
+
+int reconstructedShadowAlpha(const unsigned char* px, const ShadowColorBytes& color) {
+    int alpha = 0;
+    const auto channelAlpha = [&](int pixelChannel, int colorChannel) {
+        if (colorChannel <= 0)
+            return 0;
+        return static_cast<int>(std::lround(static_cast<double>(pixelChannel) * px[3] / colorChannel));
+    };
+
+    alpha = std::max(alpha, channelAlpha(px[0], color.r));
+    alpha = std::max(alpha, channelAlpha(px[1], color.g));
+    alpha = std::max(alpha, channelAlpha(px[2], color.b));
+    return std::clamp(alpha, 0, color.a);
+}
+
+double modifiedShadowLength(double x, double y, double roundingPower) {
+    roundingPower = std::clamp(roundingPower, 1.0, 10.0);
+    return std::pow(std::pow(std::abs(x), roundingPower) + std::pow(std::abs(y), roundingPower), 1.0 / roundingPower);
+}
+
+double hyprlandRoundedShadowMultiplier(double x,
+                                       double y,
+                                       double fullWidth,
+                                       double fullHeight,
+                                       double range,
+                                       double rounding,
+                                       double roundingPower,
+                                       int    shadowPower) {
+    if (range <= 0.0 || fullWidth <= 0.0 || fullHeight <= 0.0)
+        return 0.0;
+
+    const double radius = range + std::max(0.0, rounding);
+    const double left = range + std::max(0.0, rounding);
+    const double top = range + std::max(0.0, rounding);
+    const double right = fullWidth - left;
+    const double bottom = fullHeight - top;
+
+    const auto roundedDistanceMultiplier = [&](double distanceToCorner) {
+        if (distanceToCorner > radius)
+            return 0.0;
+        if (distanceToCorner > radius - range)
+            return std::pow((radius - distanceToCorner) / range, shadowPower);
+        return 1.0;
+    };
+
+    bool   corner = false;
+    double multiplier = 1.0;
+    if (x < left) {
+        if (y < top) {
+            multiplier = roundedDistanceMultiplier(modifiedShadowLength(x - left, y - top, roundingPower));
+            corner = true;
+        } else if (y > bottom) {
+            multiplier = roundedDistanceMultiplier(modifiedShadowLength(x - left, y - bottom, roundingPower));
+            corner = true;
+        }
+    } else if (x > right) {
+        if (y < top) {
+            multiplier = roundedDistanceMultiplier(modifiedShadowLength(x - right, y - top, roundingPower));
+            corner = true;
+        } else if (y > bottom) {
+            multiplier = roundedDistanceMultiplier(modifiedShadowLength(x - right, y - bottom, roundingPower));
+            corner = true;
+        }
+    }
+
+    if (!corner) {
+        const double smallest = std::min({y, fullHeight - y, x, fullWidth - x});
+        if (smallest < range)
+            multiplier = std::pow(std::clamp(smallest / range, 0.0, 1.0), shadowPower);
+    }
+
+    return std::clamp(multiplier, 0.0, 1.0);
+}
+
+double shadowRoundingPx(const PHLWINDOW& window, double scale) {
+    if (!window)
+        return 0.0;
+
+    const double borderSize = window->m_X11DoesntWantBorders ? 0.0 : std::max(0, window->getRealBorderSize());
+    const double roundingBase = std::max(0.0F, window->rounding());
+    const double roundingPower = std::clamp(static_cast<double>(window->roundingPower()), 1.0, 10.0);
+    const double correctionOffset = borderSize * (std::sqrt(2.0) - 1.0) * std::max(2.0 - roundingPower, 0.0);
+    const double rounding = roundingBase > 0.0 ? (roundingBase + borderSize) - correctionOffset : 0.0;
+    return std::max(0.0, rounding * scale);
+}
+
+void repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window) {
+    const auto color = shadowColorBytes(window);
     if (readback.width <= 0 || readback.height <= 0 || readback.pixels.empty() || artifactBox.w <= 0.0 || artifactBox.h <= 0.0 || visibleBox.w <= 0.0 ||
-        visibleBox.h <= 0.0)
+        visibleBox.h <= 0.0 || color.a <= 0)
         return;
 
     const double scaleX = static_cast<double>(readback.width) / artifactBox.w;
@@ -1704,28 +1817,17 @@ void repairTransparentRecordingShadow(RgbaReadback& readback, const CBox& artifa
     if (visibleLeft <= 0 && visibleTop <= 0 && visibleRight >= readback.width && visibleBottom >= readback.height)
         return;
 
-    const int leftExtent = visibleLeft;
-    const int topExtent = visibleTop;
-    const int rightExtent = readback.width - visibleRight;
-    const int bottomExtent = readback.height - visibleBottom;
-    const int maxExtent = std::max({leftExtent, topExtent, rightExtent, bottomExtent});
-    if (maxExtent <= 1)
-        return;
-
-    int peakAlpha = 0;
-    for (int y = 0; y < readback.height; ++y) {
-        for (int x = 0; x < readback.width; ++x) {
-            if (x >= visibleLeft && x < visibleRight && y >= visibleTop && y < visibleBottom)
-                continue;
-
-            const auto i = (static_cast<std::size_t>(y) * readback.width + x) * RGBA_BYTES_PER_PIXEL;
-            if (isRecordingShadowPixel(readback.pixels.data() + i))
-                peakAlpha = std::max<int>(peakAlpha, readback.pixels[i + 3]);
-        }
-    }
-    if (peakAlpha <= 0)
-        return;
-    peakAlpha = std::min(peakAlpha, 96);
+    static auto PSHADOWRANGE = CConfigValue<Config::INTEGER>("decoration:shadow:range");
+    static auto PSHADOWPOWER = CConfigValue<Config::INTEGER>("decoration:shadow:render_power");
+    const double shadowScale = std::max(scaleX, scaleY);
+    const double shadowRange = std::max(1.0, static_cast<double>(std::max(0, sc<int>(*PSHADOWRANGE))) * shadowScale);
+    const double rounding = shadowRoundingPx(window, shadowScale);
+    const double roundingPower = window ? std::clamp(static_cast<double>(window->roundingPower()), 1.0, 10.0) : 2.0;
+    const int    shadowPower = std::clamp(sc<int>(*PSHADOWPOWER), 1, 4);
+    const double shadowLeft = visibleLeft - shadowRange;
+    const double shadowTop = visibleTop - shadowRange;
+    const double shadowWidth = std::max(1.0, (visibleRight - visibleLeft) + 2.0 * shadowRange);
+    const double shadowHeight = std::max(1.0, (visibleBottom - visibleTop) + 2.0 * shadowRange);
 
     for (int y = 0; y < readback.height; ++y) {
         for (int x = 0; x < readback.width; ++x) {
@@ -1737,11 +1839,15 @@ void repairTransparentRecordingShadow(RgbaReadback& readback, const CBox& artifa
             if (!isRecordingShadowPixel(px))
                 continue;
 
-            const double dx = x < visibleLeft ? (visibleLeft - x - 0.5) : (x >= visibleRight ? (x - visibleRight + 0.5) : 0.0);
-            const double dy = y < visibleTop ? (visibleTop - y - 0.5) : (y >= visibleBottom ? (y - visibleBottom + 0.5) : 0.0);
-            const double distanceFromWindow = std::hypot(dx, dy);
-            const double ratio = std::clamp((static_cast<double>(maxExtent) - distanceFromWindow + 0.5) / static_cast<double>(maxExtent), 0.0, 1.0);
-            const int    repairedAlpha = std::clamp(static_cast<int>(std::lround(peakAlpha * std::pow(ratio, 1.9))), 0, peakAlpha);
+            const double shadowX = x - shadowLeft + 0.5;
+            const double shadowY = y - shadowTop + 0.5;
+            int repairedAlpha = std::clamp(static_cast<int>(std::lround(color.a * hyprlandRoundedShadowMultiplier(shadowX, shadowY, shadowWidth, shadowHeight,
+                                                                                                                  shadowRange, rounding, roundingPower, shadowPower))),
+                                           0, color.a);
+            if (repairedAlpha <= 0) {
+                repairedAlpha = reconstructedShadowAlpha(px, color);
+            }
+
             px[3] = static_cast<unsigned char>(repairedAlpha);
             if (px[3] <= 2) {
                 px[0] = 0;
@@ -1750,9 +1856,9 @@ void repairTransparentRecordingShadow(RgbaReadback& readback, const CBox& artifa
                 px[3] = 0;
                 continue;
             }
-            px[0] = 0;
-            px[1] = 0;
-            px[2] = 0;
+            px[0] = static_cast<unsigned char>(color.r);
+            px[1] = static_cast<unsigned char>(color.g);
+            px[2] = static_cast<unsigned char>(color.b);
         }
     }
 }
@@ -1979,7 +2085,7 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
             readback = cropReadbackToBounds(readback, bounds);
         }
     } else if ((request.defaults.windowBackground == WindowBackground::Transparent || solidAlpha) && request.defaults.windowShadow == DecorationPolicy::Keep) {
-        repairTransparentRecordingShadow(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window));
+        repairTransparentShadow(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window);
     }
 
     if (readback.pixels.empty())
