@@ -14,6 +14,8 @@ extern HANDLE g_pluginHandle;
 
 namespace hyprcapture {
 
+struct LaunchResult;
+
 struct RecordingFrameRequest {
     CaptureDefaults defaults;
     CaptureMode     mode = CaptureMode::Region;
@@ -28,6 +30,7 @@ struct RecordingFrame {
 };
 
 CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool quick);
+LaunchResult captureWindowArtifactFromRequestFile(const std::string& path);
 std::optional<RecordingFrame> captureRecordingFrame(const RecordingFrameRequest& request);
 void resetRecordingCaptureState();
 std::string writeCompositorSessionJsonFile(const CaptureSession& session, std::string_view json);

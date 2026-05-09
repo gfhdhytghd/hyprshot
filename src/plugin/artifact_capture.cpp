@@ -1,5 +1,6 @@
 #include "plugin/artifact_capture.hpp"
 
+#include "plugin/session_launcher.hpp"
 #include "plugin/timing.hpp"
 
 #include <hyprland/src/plugins/PluginAPI.hpp>
@@ -37,6 +38,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fcntl.h>
+#include <fstream>
 #include <limits>
 #include <sstream>
 #include <system_error>
@@ -105,6 +107,7 @@ constexpr int WINDOW_ARTIFACT_CROP_PADDING = 128;
 constexpr std::size_t MAX_SESSION_MONITORS = 64;
 constexpr std::size_t MAX_SESSION_WINDOWS = 512;
 constexpr std::size_t MAX_WINDOW_METADATA_BYTES = 4096;
+constexpr std::size_t MAX_WINDOW_CAPTURE_REQUEST_BYTES = 64 * 1024;
 constexpr std::size_t MAX_SESSION_JSON_BYTES = 8 * 1024 * 1024;
 constexpr int         MAX_RGBA_READBACK_DIMENSION = 32768;
 constexpr std::size_t MAX_RGBA_READBACK_BYTES = 512ULL * 1024ULL * 1024ULL;
@@ -223,6 +226,103 @@ bool ensurePrivateDirectory(const std::filesystem::path& path) {
     if ((st.st_mode & 0777) != 0700 && chmod(native.c_str(), 0700) != 0)
         return false;
 
+    return true;
+}
+
+bool hasWritableGroupOrOther(mode_t mode) {
+    return (mode & 0022) != 0;
+}
+
+std::filesystem::path privateRuntimeRoot() {
+    const auto rootName = "hyprcapture-" + std::to_string(static_cast<unsigned long long>(geteuid()));
+    for (const auto& base : {std::filesystem::path{"/dev/shm"}, std::filesystem::path{"/tmp"}, std::filesystem::temp_directory_path()}) {
+        const auto root = base / rootName;
+        if (!ensurePrivateDirectory(root))
+            continue;
+
+        std::error_code ec;
+        const auto      canonical = std::filesystem::weakly_canonical(root, ec);
+        if (!ec)
+            return canonical;
+    }
+    return {};
+}
+
+bool pathIsInPrivateRuntimeRoot(const std::filesystem::path& path) {
+    std::error_code ec;
+    const auto      root = privateRuntimeRoot();
+    if (root.empty())
+        return false;
+
+    const auto canonical = std::filesystem::weakly_canonical(path, ec);
+    if (ec)
+        return false;
+
+    const auto rootNative = root.native();
+    const auto pathNative = canonical.native();
+    return pathNative == rootNative || pathNative.starts_with(rootNative + "/");
+}
+
+std::optional<std::string> readPrivateRequestFile(const std::string& rawPath) {
+    const std::filesystem::path path(rawPath);
+    if (rawPath.empty() || !path.is_absolute() || !pathIsInPrivateRuntimeRoot(path))
+        return std::nullopt;
+
+    const auto native = path.string();
+    struct stat st {};
+    if (stat(native.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != geteuid() || hasWritableGroupOrOther(st.st_mode) || st.st_size < 0 ||
+        static_cast<std::uintmax_t>(st.st_size) > MAX_WINDOW_CAPTURE_REQUEST_BYTES)
+        return std::nullopt;
+
+    std::ifstream file(path, std::ios::binary);
+    if (!file)
+        return std::nullopt;
+
+    std::ostringstream out;
+    out << file.rdbuf();
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    const auto value = out.str();
+    if (value.empty() || value.size() > MAX_WINDOW_CAPTURE_REQUEST_BYTES)
+        return std::nullopt;
+    return value;
+}
+
+bool writePrivateResponseFile(const std::string& rawPath, std::string_view bytes) {
+    const std::filesystem::path path(rawPath);
+    if (rawPath.empty() || bytes.empty() || bytes.size() > MAX_SESSION_JSON_BYTES || !path.is_absolute())
+        return false;
+    if (!pathIsInPrivateRuntimeRoot(path.parent_path()))
+        return false;
+
+    const auto native = path.string();
+    const int  fd = open(native.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd < 0)
+        return false;
+
+    const char* data = bytes.data();
+    std::size_t written = 0;
+    while (written < bytes.size()) {
+        const ssize_t chunk = write(fd, data + written, bytes.size() - written);
+        if (chunk < 0) {
+            if (errno == EINTR)
+                continue;
+            close(fd);
+            unlink(native.c_str());
+            return false;
+        }
+        if (chunk == 0) {
+            close(fd);
+            unlink(native.c_str());
+            return false;
+        }
+        written += static_cast<std::size_t>(chunk);
+    }
+
+    if (close(fd) != 0) {
+        unlink(native.c_str());
+        return false;
+    }
     return true;
 }
 
@@ -2360,6 +2460,66 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool 
     }
 
     return session;
+}
+
+LaunchResult captureWindowArtifactFromRequestFile(const std::string& path) {
+    const auto requestJson = readPrivateRequestFile(path);
+    if (!requestJson)
+        return {.success = false, .error = "invalid window capture request file"};
+
+    const auto request = decodeRecordingRequestJson(*requestJson);
+    if (!request || request->mode != CaptureMode::Window || request->windowAddress.empty())
+        return {.success = false, .error = "invalid window capture metadata"};
+
+    const auto window = findWindowByAddress(request->windowAddress);
+    if (!window || !shouldCaptureWindow(window))
+        return {.success = false, .error = "window capture target unavailable"};
+
+    const auto monitor = window->m_monitor.lock();
+    if (!monitor)
+        return {.success = false, .error = "window capture monitor unavailable"};
+
+    CaptureSession session;
+    session.id = makeSessionId();
+    session.defaults = request->defaults;
+    session.defaults.mode = CaptureMode::Window;
+
+    const auto root = artifactRoot(session.id);
+    if (root.empty())
+        return {.success = false, .error = "window capture runtime path failed"};
+
+    WindowInfo info;
+    info.address = "0x" + pointerId(window.get());
+    info.title = boundedString(window->m_title, MAX_WINDOW_METADATA_BYTES);
+    info.appClass = boundedString(window->m_class, MAX_WINDOW_METADATA_BYTES);
+    info.zIndex = 0;
+    const bool dontRound = window->isEffectiveInternalFSMode(FSMODE_FULLSCREEN);
+    info.rounding = dontRound ? 0.0 : std::max(0.0F, window->rounding());
+    info.roundingPower = dontRound ? 2.0 : std::clamp(static_cast<double>(window->roundingPower()), 1.0, 10.0);
+    info.borderSize = dontRound || window->m_X11DoesntWantBorders ? 0.0 : std::max(0, window->getRealBorderSize());
+    info.visibleGeometry = toRect(renderedWindowGoalMainSurfaceBox(window));
+
+    const bool renderDecorations = request->defaults.windowBorder == DecorationPolicy::Keep || request->defaults.windowShadow == DecorationPolicy::Keep;
+    const auto artifactPath = root / ("window-" + pointerId(window.get()) + ".rgba");
+    CBox       artifactBox;
+    ArtifactBudget artifactBudget;
+    if (!renderWindowArtifact(window, monitor, Time::steadyNow(), renderDecorations, artifactPath, info.artifactWidth, info.artifactHeight, artifactBox,
+                              artifactBudget)) {
+        cleanupCompositorArtifacts(session);
+        return {.success = false, .error = "window capture render failed"};
+    }
+
+    info.artifactPath = artifactPath.string();
+    info.fullGeometry = toRect(artifactBox);
+    session.windows.push_back(std::move(info));
+
+    const auto responseJson = encodeSessionJson(session);
+    if (!writePrivateResponseFile(path, responseJson)) {
+        cleanupCompositorArtifacts(session);
+        return {.success = false, .error = "window capture response write failed"};
+    }
+
+    return {.success = true};
 }
 
 std::optional<RecordingFrame> captureRecordingFrame(const RecordingFrameRequest& request) {

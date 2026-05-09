@@ -72,7 +72,7 @@ class CaptureOverlay final : public QMainWindow {
     bool startRecording(const QString& requestPath);
     bool stopRecording();
     void saveImage(const QImage& image, hyprcapture::ui::ClipboardSnapshotData clipboardSnapshot);
-    QImage renderResultImage() const;
+    QImage renderResultImage();
     QImage renderDesktopRectAtDisplayResolution(const QRect& globalRect) const;
     void paintDesktop(QPainter& painter, const QRect& target) const;
     QRect normalizedSelection() const;
@@ -108,6 +108,8 @@ class CaptureOverlay final : public QMainWindow {
     hyprcapture::DecorationPolicy currentWindowShadow() const;
     QRect windowFrameGeometry(const WindowArtifact& window) const;
     double windowFrameRadius(const WindowArtifact& window) const;
+    bool hydrateWindowArtifact(WindowArtifact& window);
+    WindowArtifact* hoveredWindow();
     const WindowArtifact* hoveredWindow() const;
     bool windowCaptureAvailable() const;
     void updateStatus();

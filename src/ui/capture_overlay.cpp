@@ -100,6 +100,7 @@ constexpr int kSelectArrowIconSize = 12;
 constexpr int kMaxArtifactDimension = 32768;
 constexpr qint64 kMaxArtifactBytes = 512LL * 1024LL * 1024LL;
 constexpr qint64 kMaxSessionArtifactBytes = 768LL * 1024LL * 1024LL;
+constexpr qint64 kMaxSessionJsonBytes = 8LL * 1024LL * 1024LL;
 constexpr int kMaxLogicalCoordinate = 1'000'000;
 constexpr int kMaxSessionMonitors = 64;
 constexpr int kMaxSessionWindows = 512;
@@ -579,6 +580,16 @@ DispatchCommandResult dispatchRecordingStart(const QString& requestPath) {
     if (legacyResult.success)
         return legacyResult;
     return dispatchHyprcaptureLuaDispatcherFactory(QStringLiteral("record_start_dispatcher"), requestPath);
+}
+
+DispatchCommandResult dispatchWindowCapture(const QString& requestPath) {
+    if (requestPath.isEmpty())
+        return {.success = false, .error = QStringLiteral("window capture request missing")};
+
+    const auto legacyResult = dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:window-capture"), requestPath);
+    if (legacyResult.success)
+        return legacyResult;
+    return dispatchHyprcaptureLuaDispatcherFactory(QStringLiteral("window_capture_dispatcher"), requestPath);
 }
 
 DispatchCommandResult dispatchRecordingStop() {
@@ -2298,6 +2309,96 @@ const CaptureOverlay::WindowArtifact* CaptureOverlay::hoveredWindow() const {
     return nullptr;
 }
 
+CaptureOverlay::WindowArtifact* CaptureOverlay::hoveredWindow() {
+    return const_cast<WindowArtifact*>(std::as_const(*this).hoveredWindow());
+}
+
+bool CaptureOverlay::hydrateWindowArtifact(WindowArtifact& window) {
+    if (!window.image.isNull())
+        return true;
+    if (window.address.isEmpty() || !window.visibleGeometry.isValid())
+        return false;
+
+    hyprcapture::RecordingRequest request;
+    request.id = hyprcapture::makeSessionId();
+    request.defaults = m_defaults;
+    request.defaults.mode = hyprcapture::CaptureMode::Window;
+    request.defaults.fullscreenScope = currentFullscreenScope();
+    request.defaults.windowBackground = currentWindowBackground();
+    request.defaults.windowBorder = currentWindowBorder();
+    request.defaults.windowShadow = currentWindowShadow();
+    request.mode = hyprcapture::CaptureMode::Window;
+    request.windowAddress = window.address.toStdString();
+
+    const QRect globalRect = windowFrameGeometry(window);
+    if (!globalRect.isValid())
+        return false;
+    request.targetGeometry = {.x = static_cast<double>(globalRect.x()),
+                              .y = static_cast<double>(globalRect.y()),
+                              .width = static_cast<double>(globalRect.width()),
+                              .height = static_cast<double>(globalRect.height())};
+
+    const QString requestPath = hyprcapture::ui::runtimeFile(QStringLiteral("window-capture-request"), QStringLiteral(".json"));
+    const std::string json = hyprcapture::encodeRecordingRequestJson(request);
+    if (!writePrivateTextFile(requestPath, QByteArray(json.data(), static_cast<qsizetype>(json.size()))))
+        return false;
+
+    const auto captured = dispatchWindowCapture(requestPath);
+    if (!captured.success) {
+        QFile::remove(requestPath);
+        return false;
+    }
+
+    QFile response(requestPath);
+    if (!hyprcapture::ui::isPrivateRuntimeFile(requestPath, kMaxSessionJsonBytes) || !response.open(QIODevice::ReadOnly)) {
+        QFile::remove(requestPath);
+        return false;
+    }
+    const QByteArray responseBytes = response.readAll();
+    response.close();
+    QFile::remove(requestPath);
+
+    const auto decoded =
+        hyprcapture::decodeSessionJson(std::string(responseBytes.constData(), static_cast<std::size_t>(responseBytes.size())));
+    if (!decoded)
+        return false;
+
+    QStringList artifactFiles;
+    qint64 remainingArtifactBytes = kMaxSessionArtifactBytes;
+    for (const auto& info : decoded->windows) {
+        if (qString(info.address) != window.address)
+            continue;
+
+        WindowArtifact capturedWindow;
+        capturedWindow.address = qString(info.address);
+        capturedWindow.title = qString(info.title);
+        capturedWindow.appClass = qString(info.appClass);
+        capturedWindow.visibleGeometry = protocolRect(info.visibleGeometry);
+        capturedWindow.fullGeometry = protocolRect(info.fullGeometry);
+        capturedWindow.rounding = info.rounding;
+        capturedWindow.roundingPower = info.roundingPower;
+        capturedWindow.borderSize = info.borderSize;
+
+        const QString artifactPath = qString(info.artifactPath);
+        const QString realBackgroundPath = qString(info.realBackgroundPath);
+        capturedWindow.image = loadRawRgba(artifactPath, info.artifactWidth, info.artifactHeight, info.artifactTopDown, remainingArtifactBytes);
+        capturedWindow.realBackground =
+            loadRawRgba(realBackgroundPath, info.realBackgroundWidth, info.realBackgroundHeight, info.realBackgroundTopDown, remainingArtifactBytes);
+        artifactFiles.push_back(artifactPath);
+        artifactFiles.push_back(realBackgroundPath);
+        cleanupArtifactFiles(artifactFiles);
+
+        if (capturedWindow.image.isNull() || !capturedWindow.fullGeometry.isValid())
+            return false;
+
+        window = std::move(capturedWindow);
+        return true;
+    }
+
+    cleanupArtifactFiles(artifactFiles);
+    return false;
+}
+
 bool CaptureOverlay::windowCaptureAvailable() const {
     return !m_windowArtifacts.empty();
 }
@@ -2416,13 +2517,13 @@ QImage CaptureOverlay::renderDesktopRectAtDisplayResolution(const QRect& globalR
     return image;
 }
 
-QImage CaptureOverlay::renderResultImage() const {
+QImage CaptureOverlay::renderResultImage() {
     const auto bg = currentWindowBackground();
     if (m_mode == hyprcapture::CaptureMode::Window) {
-        const auto* windowArtifact = hoveredWindow();
+        auto* windowArtifact = hoveredWindow();
         if (!windowArtifact)
             return {};
-        if (windowArtifact->image.isNull())
+        if (windowArtifact->image.isNull() && !hydrateWindowArtifact(*windowArtifact))
             return renderDesktopRectAtDisplayResolution(windowFrameGeometry(*windowArtifact));
 
         QRect artifactSource = windowArtifact->image.rect();

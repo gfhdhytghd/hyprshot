@@ -37,7 +37,9 @@ constexpr std::array  kLuaFunctionNames = {
     "record_toggle",
     "record_stop",
     "record_start",
+    "window_capture",
     "record_start_dispatcher",
+    "window_capture_dispatcher",
     "record_stop_dispatcher",
     "cancel",
     "dispatch",
@@ -281,6 +283,13 @@ SDispatchResult dispatchRecordStart(const std::string& args) {
     return dispatchResult(result);
 }
 
+SDispatchResult dispatchWindowCapture(const std::string& args) {
+    const auto result = hyprcapture::captureWindowArtifactFromRequestFile(args);
+    if (!result.success)
+        HyprlandAPI::addNotification(g_pluginHandle, "[hyprcapture] " + result.error, CHyprColor(1.0, 0.2, 0.2, 1.0), 5000);
+    return dispatchResult(result);
+}
+
 SDispatchResult dispatchCancel(const std::string&) {
     return {.success = true};
 }
@@ -316,6 +325,9 @@ std::string normalizeHyprcaptureDispatcher(std::string dispatcher) {
     if (dispatcher == "record_start" || dispatcher == "recordStart" || dispatcher == "hyprcapture.record_start" ||
         dispatcher == "hyprcapture.recordStart")
         return "hyprcapture:record-start";
+    if (dispatcher == "window_capture" || dispatcher == "windowCapture" || dispatcher == "hyprcapture.window_capture" ||
+        dispatcher == "hyprcapture.windowCapture")
+        return "hyprcapture:window-capture";
     if (dispatcher == "cancel" || dispatcher == "hyprcapture.cancel")
         return "hyprcapture:cancel";
     return dispatcher;
@@ -345,6 +357,10 @@ int luaRecordStart(lua_State* L) {
     return luaDispatchResult(L, dispatchRecordStart(luaOptionalString(L, 1)));
 }
 
+int luaWindowCapture(lua_State* L) {
+    return luaDispatchResult(L, dispatchWindowCapture(luaOptionalString(L, 1)));
+}
+
 int luaRecordStartDispatcherCallback(lua_State* L) {
     const char* path = lua_tostring(L, lua_upvalueindex(1));
     return luaDispatchResult(L, dispatchRecordStart(path ? path : ""));
@@ -354,6 +370,18 @@ int luaRecordStartDispatcher(lua_State* L) {
     const std::string path = luaOptionalString(L, 1);
     lua_pushstring(L, path.c_str());
     lua_pushcclosure(L, luaRecordStartDispatcherCallback, 1);
+    return 1;
+}
+
+int luaWindowCaptureDispatcherCallback(lua_State* L) {
+    const char* path = lua_tostring(L, lua_upvalueindex(1));
+    return luaDispatchResult(L, dispatchWindowCapture(path ? path : ""));
+}
+
+int luaWindowCaptureDispatcher(lua_State* L) {
+    const std::string path = luaOptionalString(L, 1);
+    lua_pushstring(L, path.c_str());
+    lua_pushcclosure(L, luaWindowCaptureDispatcherCallback, 1);
     return 1;
 }
 
@@ -386,6 +414,8 @@ int luaDispatch(lua_State* L) {
         return luaDispatchResult(L, dispatchRecordStop(args));
     if (dispatcher == "hyprcapture:record-start")
         return luaDispatchResult(L, dispatchRecordStart(args));
+    if (dispatcher == "hyprcapture:window-capture")
+        return luaDispatchResult(L, dispatchWindowCapture(args));
     if (dispatcher == "hyprcapture:cancel")
         return luaDispatchResult(L, dispatchCancel(args));
 
@@ -428,6 +458,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     registerDispatcher("hyprcapture:record-toggle", dispatchRecordToggle);
     registerDispatcher("hyprcapture:record-stop", dispatchRecordStop);
     registerDispatcher("hyprcapture:record-start", dispatchRecordStart);
+    registerDispatcher("hyprcapture:window-capture", dispatchWindowCapture);
     registerDispatcher("hyprcapture:cancel", dispatchCancel);
 
     if (Config::mgr() && Config::mgr()->type() == Config::CONFIG_LUA) {
@@ -441,7 +472,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         registerLuaFunction("record_toggle", luaRecordToggle);
         registerLuaFunction("record_stop", luaRecordStop);
         registerLuaFunction("record_start", luaRecordStart);
+        registerLuaFunction("window_capture", luaWindowCapture);
         registerLuaFunction("record_start_dispatcher", luaRecordStartDispatcher);
+        registerLuaFunction("window_capture_dispatcher", luaWindowCaptureDispatcher);
         registerLuaFunction("record_stop_dispatcher", luaRecordStopDispatcher);
         registerLuaFunction("cancel", luaCancel);
         registerLuaFunction("dispatch", luaDispatch);
