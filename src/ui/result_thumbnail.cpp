@@ -316,8 +316,8 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     });
     openWithLayout->addWidget(otherButton);
     m_openWithPanel->hide();
-    shellLayout->addWidget(m_openWithPanel);
-    shellLayout->addWidget(m_menuPanel);
+    shellLayout->addWidget(m_openWithPanel, 0, Qt::AlignBottom);
+    shellLayout->addWidget(m_menuPanel, 0, Qt::AlignBottom);
 
     m_menuShell->hide();
     layout->addWidget(m_menuShell, 0, Qt::AlignRight);
