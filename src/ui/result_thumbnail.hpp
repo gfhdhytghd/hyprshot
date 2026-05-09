@@ -30,6 +30,7 @@ class ResultThumbnail final : public QWidget {
     enum class SwipeAction { Close, Delete };
 
     bool openPath(const QString& path);
+    bool openWithPortal(const QString& path);
     void toggleMenu();
     void applyLayerSize();
     void startFileDrag();

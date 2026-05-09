@@ -24,7 +24,7 @@ add_compile_options(
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(HYPR_DEPS REQUIRED hyprland)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg DBus)
 find_package(LayerShellQt REQUIRED)
 find_package(nlohmann_json REQUIRED)
 
@@ -86,7 +86,7 @@ add_executable(hyprcapture-ui
 )
 
 target_include_directories(hyprcapture-ui PRIVATE src)
-target_link_libraries(hyprcapture-ui PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg LayerShellQt::Interface nlohmann_json::nlohmann_json)
+target_link_libraries(hyprcapture-ui PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Svg Qt6::DBus LayerShellQt::Interface nlohmann_json::nlohmann_json)
 target_link_options(hyprcapture-ui PRIVATE -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
 
 if(BUILD_TESTING)

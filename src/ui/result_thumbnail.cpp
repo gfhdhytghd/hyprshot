@@ -7,6 +7,9 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QContextMenuEvent>
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusUnixFileDescriptor>
 #include <QDrag>
 #include <QEasingCurve>
 #include <QFile>
@@ -174,6 +177,10 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
         if (!m_path.isEmpty() && openPath(m_path))
             close();
     });
+    addAction("Open with", [this] {
+        if (!m_path.isEmpty() && openWithPortal(m_path))
+            close();
+    });
     addAction(m_copyFile ? "Copy file" : "Copy image", [this] {
         const auto currentPixmap = m_imageLabel->pixmap();
         if (m_copyFile && !m_path.isEmpty())
@@ -315,6 +322,28 @@ bool ResultThumbnail::openPath(const QString& path) {
     process.setProgram(program);
     process.setArguments({path});
     return process.startDetached();
+}
+
+bool ResultThumbnail::openWithPortal(const QString& path) {
+    const QString canonical = QFileInfo(path).canonicalFilePath();
+    if (canonical.isEmpty())
+        return false;
+
+    QFile file(canonical);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+
+    QVariantMap options;
+    options.insert(QStringLiteral("ask"), true);
+
+    QDBusMessage message = QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.portal.Desktop"),
+                                                          QStringLiteral("/org/freedesktop/portal/desktop"),
+                                                          QStringLiteral("org.freedesktop.portal.OpenURI"),
+                                                          QStringLiteral("OpenFile"));
+    message << QString{} << QVariant::fromValue(QDBusUnixFileDescriptor(file.handle())) << options;
+
+    const QDBusMessage reply = QDBusConnection::sessionBus().call(message, QDBus::Block, 1000);
+    return reply.type() == QDBusMessage::ReplyMessage;
 }
 
 void ResultThumbnail::toggleMenu() {
