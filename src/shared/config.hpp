@@ -31,7 +31,9 @@ struct CaptureDefaults {
     std::string      helper;
     std::string      recordFilenameTemplate = "Recording-%Y-%m-%d-%H%M%S.mp4";
     std::string      recordFormat = "mp4";
+    std::string      recordTransparentFormat = "webm";
     std::string      recordCodec = "libx264";
+    std::string      recordTransparentCodec = "auto";
     std::string      recordPreset = "veryfast";
     std::string      recordGsrFlags;
     RecordWindowBackend recordWindowBackend = RecordWindowBackend::Compositor;

@@ -36,26 +36,17 @@ T configValue(const std::string& name, T fallback) {
     }
 }
 
-struct ConfigString {
-    std::string value;
-    bool        set = false;
-};
-
-ConfigString configStringValue(const std::string& suffix, const std::string& fallback) {
+std::string configString(const std::string& suffix, const std::string& fallback) {
     const auto value = HyprlandAPI::getConfigValue(g_pluginHandle, "plugin:hyprcapture:" + suffix);
     if (!value)
-        return {.value = fallback, .set = false};
+        return fallback;
 
     try {
         const auto raw = std::any_cast<Hyprlang::STRING>(value->getValue());
-        return {.value = raw ? std::string(raw) : fallback, .set = value->m_bSetByUser};
+        return raw ? std::string(raw) : fallback;
     } catch (const std::bad_any_cast&) {
-        return {.value = fallback, .set = value->m_bSetByUser};
+        return fallback;
     }
-}
-
-std::string configString(const std::string& suffix, const std::string& fallback) {
-    return configStringValue(suffix, fallback).value;
 }
 
 std::int64_t configInt(const std::string& suffix, std::int64_t fallback) {
@@ -68,14 +59,11 @@ SDispatchResult dispatchResult(const hyprcapture::LaunchResult& result) {
 
 hyprcapture::CaptureDefaults readDefaults() {
     hyprcapture::CaptureDefaults defaults;
-    const auto windowBackground = configStringValue("window_background", hyprcapture::toString(defaults.windowBackground));
-    const auto recordFormat = configStringValue("record_format", defaults.recordFormat);
-    const auto recordCodec = configStringValue("record_codec", defaults.recordCodec);
-
     defaults.mode = hyprcapture::parseCaptureMode(configString("default_mode", hyprcapture::toString(defaults.mode)), defaults.mode);
     defaults.fullscreenScope =
         hyprcapture::parseFullscreenScope(configString("fullscreen_scope", hyprcapture::toString(defaults.fullscreenScope)), defaults.fullscreenScope);
-    defaults.windowBackground = hyprcapture::parseWindowBackground(windowBackground.value, defaults.windowBackground);
+    defaults.windowBackground =
+        hyprcapture::parseWindowBackground(configString("window_background", hyprcapture::toString(defaults.windowBackground)), defaults.windowBackground);
     defaults.windowBorder = hyprcapture::parseDecorationPolicy(configString("window_border", hyprcapture::toString(defaults.windowBorder)), defaults.windowBorder);
     defaults.windowShadow = hyprcapture::parseDecorationPolicy(configString("window_shadow", hyprcapture::toString(defaults.windowShadow)), defaults.windowShadow);
     defaults.save = configInt("save", defaults.save ? 1 : 0) != 0;
@@ -88,14 +76,10 @@ hyprcapture::CaptureDefaults readDefaults() {
     defaults.filenameTemplate = configString("filename_template", defaults.filenameTemplate);
     defaults.helper = configString("helper", defaults.helper);
     defaults.recordFilenameTemplate = configString("record_filename_template", defaults.recordFilenameTemplate);
-    defaults.recordFormat = recordFormat.value;
-    defaults.recordCodec = recordCodec.value;
-    if (defaults.windowBackground == hyprcapture::WindowBackground::Transparent) {
-        if (!recordFormat.set)
-            defaults.recordFormat = "webm";
-        if (!recordCodec.set)
-            defaults.recordCodec = "auto";
-    }
+    defaults.recordFormat = configString("record_format", defaults.recordFormat);
+    defaults.recordTransparentFormat = configString("record_transparent_format", defaults.recordTransparentFormat);
+    defaults.recordCodec = configString("record_codec", defaults.recordCodec);
+    defaults.recordTransparentCodec = configString("record_transparent_codec", defaults.recordTransparentCodec);
     defaults.recordPreset = configString("record_preset", defaults.recordPreset);
     defaults.recordGsrFlags = configString("record_gsr_flags", defaults.recordGsrFlags);
     defaults.recordWindowBackend =
@@ -215,11 +199,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:filename_template", Hyprlang::STRING{"Screenshot-%Y-%m-%d-%H%M%S.png"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_filename_template", Hyprlang::STRING{"Recording-%Y-%m-%d-%H%M%S.mp4"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_format", Hyprlang::STRING{"mp4"});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_transparent_format", Hyprlang::STRING{"webm"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_fps", Hyprlang::INT{30});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_fps_options", Hyprlang::STRING{"15 24 30 60"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_window_fps_limit", Hyprlang::INT{12});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_window_real_bg_fps_limit", Hyprlang::INT{8});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_codec", Hyprlang::STRING{"libx264"});
+    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_transparent_codec", Hyprlang::STRING{"auto"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_preset", Hyprlang::STRING{"veryfast"});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_gsr_flags", Hyprlang::STRING{""});
     HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_window_backend", Hyprlang::STRING{"compositor"});

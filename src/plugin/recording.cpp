@@ -379,6 +379,8 @@ std::string sanitizedCodec(std::string codec) {
         return codec;
     if (normalized == "vp9" || normalized == "libvpx-vp9")
         return "libvpx-vp9";
+    if (normalized == "vp9-vaapi")
+        return "vp9_vaapi";
     if (normalized == "ffv1")
         return "ffv1";
     if (!safeCodecToken(codec))
@@ -409,7 +411,7 @@ std::string gsrCodec(std::string codec, std::string_view format) {
         return "hevc";
     if (codec == "av1_vaapi" || codec == "libsvtav1" || codec == "libaom-av1" || codec == "librav1e")
         return "av1";
-    if (codec == "libvpx-vp9")
+    if (codec == "libvpx-vp9" || codec == "vp9_vaapi")
         return "vp9";
     return codec;
 }

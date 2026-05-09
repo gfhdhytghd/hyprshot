@@ -57,6 +57,8 @@ int main() {
     session.defaults.allowQuick = true;
     session.defaults.fushionMode = true;
     session.defaults.windowBackground = WindowBackground::FollowSystem;
+    session.defaults.recordTransparentFormat = "webm";
+    session.defaults.recordTransparentCodec = "auto";
     session.defaults.watermark = "activate-linux";
     session.defaults.watermarkPosition = WatermarkPosition::RightMiddle;
     session.defaults.watermarkWidth = "18%";
@@ -87,6 +89,8 @@ int main() {
     require(json.find("\"fushionMode\":true") != std::string::npos, "fushion mode json");
     require(json.find("\"allowQuick\":true") != std::string::npos, "allow quick json");
     require(json.find("\"windowBackground\":\"follow-system\"") != std::string::npos, "window background json");
+    require(json.find("\"recordTransparentFormat\":\"webm\"") != std::string::npos, "transparent record format json");
+    require(json.find("\"recordTransparentCodec\":\"auto\"") != std::string::npos, "transparent record codec json");
     require(json.find("\"watermark\":\"activate-linux\"") != std::string::npos, "watermark json");
     require(json.find("\"watermarkPosition\":\"right-middle\"") != std::string::npos, "watermark position json");
     require(json.find("\"watermarkWidth\":\"18%\"") != std::string::npos, "watermark width json");
@@ -107,6 +111,8 @@ int main() {
     require(decoded->defaults.mode == CaptureMode::Window, "decoded mode");
     require(decoded->defaults.allowQuick, "decoded allow quick");
     require(decoded->defaults.fushionMode, "decoded fushion mode");
+    require(decoded->defaults.recordTransparentFormat == "webm", "decoded transparent record format");
+    require(decoded->defaults.recordTransparentCodec == "auto", "decoded transparent record codec");
     require(decoded->cursorPosition.has_value() && decoded->cursorPosition->x == 120 && decoded->cursorPosition->y == 240, "decoded cursor position");
     require(decoded->monitors.size() == 1 && decoded->windows.size() == 1, "decoded object counts");
     require(decoded->windows.front().artifactPath == "/tmp/window.rgba", "decoded artifact path");
@@ -120,6 +126,8 @@ int main() {
     recording.defaults.recordGsrFlags = "-k h264 -q very_high";
     recording.defaults.recordWindowBackend = RecordWindowBackend::GsrVisible;
     recording.defaults.recordFilenameTemplate = "Recording-%Y.mp4";
+    recording.defaults.recordTransparentFormat = "mkv";
+    recording.defaults.recordTransparentCodec = "ffv1";
     recording.mode = CaptureMode::Window;
     recording.targetGeometry = {.x = 10, .y = 20, .width = 640, .height = 480};
     recording.windowAddress = "0x1";
@@ -128,6 +136,8 @@ int main() {
     require(recordingJson.find("\"recordWindowFpsLimit\":12") != std::string::npos, "record window fps limit json");
     require(recordingJson.find("\"recordWindowRealBgFpsLimit\":8") != std::string::npos, "record window real bg fps limit json");
     require(recordingJson.find("\"recordGsrFlags\":\"-k h264 -q very_high\"") != std::string::npos, "record gsr flags json");
+    require(recordingJson.find("\"recordTransparentFormat\":\"mkv\"") != std::string::npos, "record transparent format json");
+    require(recordingJson.find("\"recordTransparentCodec\":\"ffv1\"") != std::string::npos, "record transparent codec json");
     require(recordingJson.find("\"recordWindowBackend\":\"gsr-visible\"") != std::string::npos, "record window backend json");
     require(recordingJson.find("\"recordFilenameTemplate\":\"Recording-%Y.mp4\"") != std::string::npos, "record filename json");
     const auto decodedRecording = decodeRecordingRequestJson(recordingJson);
@@ -138,6 +148,8 @@ int main() {
     require(decodedRecording->defaults.recordWindowFpsLimit == 12, "decoded recording window fps limit");
     require(decodedRecording->defaults.recordWindowRealBgFpsLimit == 8, "decoded recording window real bg fps limit");
     require(decodedRecording->defaults.recordGsrFlags == "-k h264 -q very_high", "decoded recording gsr flags");
+    require(decodedRecording->defaults.recordTransparentFormat == "mkv", "decoded recording transparent format");
+    require(decodedRecording->defaults.recordTransparentCodec == "ffv1", "decoded recording transparent codec");
     require(decodedRecording->defaults.recordWindowBackend == RecordWindowBackend::GsrVisible, "decoded recording window backend");
     require(!decodeRecordingRequestJson("{}").has_value(), "missing recording request fields rejected");
 

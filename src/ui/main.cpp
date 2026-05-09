@@ -93,7 +93,9 @@ int main(int argc, char** argv) {
         {"filename-template", "Filename strftime template.", "template", "Screenshot-%Y-%m-%d-%H%M%S.png"},
         {"record-filename-template", "Recording filename strftime template.", "template", "Recording-%Y-%m-%d-%H%M%S.mp4"},
         {"record-format", "Recording container format.", "format", "mp4"},
+        {"record-transparent-format", "Transparent window recording container format.", "format", "webm"},
         {"record-codec", "Recording codec.", "codec", "libx264"},
+        {"record-transparent-codec", "Transparent window recording codec.", "codec", "auto"},
         {"record-preset", "Recording preset.", "preset", "veryfast"},
         {"record-gsr-flags", "Extra gpu-screen-recorder flags.", "flags", ""},
         {"record-window-backend", "Window recording backend.", "backend", "compositor"},
@@ -147,7 +149,9 @@ int main(int argc, char** argv) {
     defaults.filenameTemplate = parser.value("filename-template").toStdString();
     defaults.recordFilenameTemplate = parser.value("record-filename-template").toStdString();
     defaults.recordFormat = parser.value("record-format").toStdString();
+    defaults.recordTransparentFormat = parser.value("record-transparent-format").toStdString();
     defaults.recordCodec = parser.value("record-codec").toStdString();
+    defaults.recordTransparentCodec = parser.value("record-transparent-codec").toStdString();
     defaults.recordPreset = parser.value("record-preset").toStdString();
     defaults.recordGsrFlags = parser.value("record-gsr-flags").toStdString();
     defaults.recordWindowBackend = hyprcapture::parseRecordWindowBackend(parser.value("record-window-backend").toStdString(), defaults.recordWindowBackend);

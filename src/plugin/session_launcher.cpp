@@ -330,8 +330,12 @@ LaunchResult launchHelper(const LaunchRequest& request) {
     args.push_back(request.defaults.recordFilenameTemplate);
     args.push_back("--record-format");
     args.push_back(request.defaults.recordFormat);
+    args.push_back("--record-transparent-format");
+    args.push_back(request.defaults.recordTransparentFormat);
     args.push_back("--record-codec");
     args.push_back(request.defaults.recordCodec);
+    args.push_back("--record-transparent-codec");
+    args.push_back(request.defaults.recordTransparentCodec);
     args.push_back("--record-preset");
     args.push_back(request.defaults.recordPreset);
     args.push_back("--record-gsr-flags");

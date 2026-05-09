@@ -42,6 +42,7 @@
 #include <QStyleHints>
 #include <QSvgRenderer>
 #include <QThread>
+#include <QTemporaryDir>
 #include <QVBoxLayout>
 #include <QTimer>
 
@@ -50,6 +51,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <map>
 #include <utility>
 
 class InlineSelect final : public QWidget {
@@ -114,6 +116,12 @@ struct DispatchCommandResult {
     QString error;
 };
 
+struct TransparentAutoChoice {
+    QString format;
+    QString codec;
+    QString warning;
+};
+
 const char* kFullscreenSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M128 266.666667v490.666666a53.393333 53.393333 0 0 0 53.333333 53.333334h661.333334a53.393333 53.393333 0 0 0 53.333333-53.333334V266.666667a53.393333 53.393333 0 0 0-53.333333-53.333334H181.333333a53.393333 53.393333 0 0 0-53.333333 53.333334z m725.333333 0v490.666666a10.666667 10.666667 0 0 1-10.666666 10.666667H181.333333a10.666667 10.666667 0 0 1-10.666666-10.666667V266.666667a10.666667 10.666667 0 0 1 10.666666-10.666667h661.333334a10.666667 10.666667 0 0 1 10.666666 10.666667z m-597.333333 608a21.333333 21.333333 0 0 1-21.333333 21.333333H96a53.393333 53.393333 0 0 1-53.333333-53.333333v-138.666667a21.333333 21.333333 0 0 1 42.666666 0v138.666667a10.666667 10.666667 0 0 0 10.666667 10.666666h138.666667a21.333333 21.333333 0 0 1 21.333333 21.333334zM42.666667 320V181.333333a53.393333 53.393333 0 0 1 53.333333-53.333333h138.666667a21.333333 21.333333 0 0 1 0 42.666667H96a10.666667 10.666667 0 0 0-10.666667 10.666666v138.666667a21.333333 21.333333 0 0 1-42.666666 0z m938.666666-138.666667v138.666667a21.333333 21.333333 0 0 1-42.666666 0V181.333333a10.666667 10.666667 0 0 0-10.666667-10.666666h-138.666667a21.333333 21.333333 0 0 1 0-42.666667h138.666667a53.393333 53.393333 0 0 1 53.333333 53.333333z m0 522.666667v138.666667a53.393333 53.393333 0 0 1-53.333333 53.333333h-138.666667a21.333333 21.333333 0 0 1 0-42.666667h138.666667a10.666667 10.666667 0 0 0 10.666667-10.666666v-138.666667a21.333333 21.333333 0 0 1 42.666666 0z" fill="#000000"/></svg>)";
 const char* kWindowSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M808.125883 243.195881 134.874315 243.195881c-30.608112 0-55.513338 24.905226-55.513338 55.520501l0 505.178641c0 30.615275 24.905226 55.520501 55.513338 55.520501L808.125883 859.415524c30.607088 0 55.512315-24.905226 55.512315-55.520501L863.638197 298.716382C863.638197 268.101107 838.733994 243.195881 808.125883 243.195881zM835.629283 803.895023c0 15.167444-12.338003 27.510564-27.503401 27.510564L134.874315 831.405587c-15.167444 0-27.504424-12.343119-27.504424-27.510564L107.369891 383.246591l728.259392 0L835.629283 803.895023zM835.629283 355.236654 107.370915 355.236654l0-56.519248c0-15.173584 12.33698-27.510564 27.504424-27.510564L808.125883 271.206842c15.165398 0 27.503401 12.33698 27.503401 27.510564L835.629283 355.236654zM920.166655 131.156132 274.924002 131.156132c-30.608112 0-55.513338 24.905226-55.513338 55.514361l0 28.515451c0 7.734148 6.263657 14.004969 14.005992 14.004969 7.740288 0 14.005992-6.27082 14.005992-14.004969l0-28.515451c0-15.167444 12.33698-27.504424 27.503401-27.504424L920.167678 159.166069c15.165398 0 27.503401 12.33698 27.503401 27.504424l0 519.188726c0 15.167444-12.338003 27.511587-27.503401 27.511587l-28.516474 0c-7.739265 0-14.004969 6.27082-14.004969 14.004969 0 7.736195 6.263657 14.007015 14.004969 14.007015l28.516474 0c30.607088 0 55.512315-24.905226 55.512315-55.521524L975.679993 186.670493C975.67897 156.061358 950.773743 131.156132 920.166655 131.156132zM219.410664 299.216779l-56.019875 0c-7.740288 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.263657 14.011108 14.005992 14.011108l56.019875 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C233.415632 305.487599 227.151975 299.216779 219.410664 299.216779zM331.450413 299.216779l-56.019875 0c-7.741311 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.262634 14.011108 14.005992 14.011108l56.019875 0c7.739265 0 14.004969-6.27082 14.004969-14.011108C345.455381 305.487599 339.191724 299.216779 331.450413 299.216779zM443.490162 299.216779l-56.018851 0c-7.741311 0-14.007015 6.27082-14.007015 13.998829 0 7.740288 6.263657 14.011108 14.007015 14.011108l56.018851 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C457.49513 305.487599 451.231473 299.216779 443.490162 299.216779z" fill="#000000"/></svg>)";
 const char* kRegionSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M960 256V64H768v64H256V64H64v192h64v512H64v192h192v-64h512v64h192V768h-64V256z m-128 512h-64v64H256v-64h-64V256h64v-64h512v64h64z" fill="#000000"/></svg>)";
@@ -157,6 +165,12 @@ QString defaultRecordFormat(const hyprcapture::CaptureDefaults& defaults) {
     return recordFormatFromTemplate(defaults.recordFilenameTemplate);
 }
 
+QString defaultRecordFormatForBackground(const hyprcapture::CaptureDefaults& defaults, hyprcapture::WindowBackground background) {
+    if (background == hyprcapture::WindowBackground::Transparent)
+        return normalizedRecordFormat(qString(defaults.recordTransparentFormat));
+    return defaultRecordFormat(defaults);
+}
+
 QStringList recordFpsChoices(const hyprcapture::CaptureDefaults& defaults) {
     QStringList choices;
     const QStringList tokens = qString(defaults.recordFpsOptions).split(QRegularExpression(QStringLiteral("[,;\\s]+")), Qt::SkipEmptyParts);
@@ -194,9 +208,17 @@ QString codecChoiceFromConfig(const std::string& codec) {
         return QStringLiteral("av1-vaapi");
     if (value == "libvpx-vp9" || value == "vp9")
         return QStringLiteral("vp9");
+    if (value == "vp9-vaapi")
+        return QStringLiteral("vp9-vaapi");
     if (value == "ffv1")
         return QStringLiteral("ffv1");
     return QStringLiteral("auto");
+}
+
+QString defaultRecordCodecForBackground(const hyprcapture::CaptureDefaults& defaults, hyprcapture::WindowBackground background) {
+    if (background == hyprcapture::WindowBackground::Transparent)
+        return codecChoiceFromConfig(defaults.recordTransparentCodec);
+    return codecChoiceFromConfig(defaults.recordCodec);
 }
 
 QString codecConfigFromChoice(const QString& choice) {
@@ -215,9 +237,184 @@ QString codecConfigFromChoice(const QString& choice) {
         return QStringLiteral("av1_vaapi");
     if (value == "vp9")
         return QStringLiteral("libvpx-vp9");
+    if (value == "vp9-vaapi")
+        return QStringLiteral("vp9_vaapi");
     if (value == "ffv1")
         return QStringLiteral("ffv1");
     return QStringLiteral("auto");
+}
+
+QString firstWritableRenderDevice() {
+    for (int minor = 128; minor <= 143; ++minor) {
+        const QString path = QStringLiteral("/dev/dri/renderD%1").arg(minor);
+        const QFileInfo info(path);
+        if (info.exists() && info.isReadable() && info.isWritable())
+            return path;
+    }
+    return {};
+}
+
+QByteArray alphaProbeFrame() {
+    QByteArray frame;
+    frame.resize(16 * 16 * 4);
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            const qsizetype i = static_cast<qsizetype>(y * 16 + x) * 4;
+            frame[i] = static_cast<char>(x < 8 ? 255 : 0);
+            frame[i + 1] = static_cast<char>(y < 8 ? 255 : 0);
+            frame[i + 2] = static_cast<char>(128);
+            frame[i + 3] = static_cast<char>((x + y) % 3 == 0 ? 0 : ((x + y) % 3 == 1 ? 128 : 255));
+        }
+    }
+    return frame;
+}
+
+bool runProbeProcess(const QString& program, const QStringList& args, QByteArray* stdoutData = nullptr) {
+    if (program.isEmpty())
+        return false;
+    QProcess process;
+    process.setProgram(program);
+    process.setArguments(args);
+    process.setProcessEnvironment(hyprcapture::ui::trustedProcessEnvironment());
+    process.start();
+    if (!process.waitForStarted(1000))
+        return false;
+    if (!process.waitForFinished(3000)) {
+        process.kill();
+        process.waitForFinished(500);
+        return false;
+    }
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
+        return false;
+    if (stdoutData)
+        *stdoutData = process.readAllStandardOutput();
+    return true;
+}
+
+bool decodedFrameHasAlpha(const QString& path) {
+    const QString ffmpeg = hyprcapture::ui::trustedSystemProgram(QStringLiteral("ffmpeg"));
+    QByteArray decoded;
+    if (!runProbeProcess(ffmpeg,
+                         QStringList{QStringLiteral("-hide_banner"),
+                                     QStringLiteral("-loglevel"),
+                                     QStringLiteral("error"),
+                                     QStringLiteral("-i"),
+                                     path,
+                                     QStringLiteral("-frames:v"),
+                                     QStringLiteral("1"),
+                                     QStringLiteral("-f"),
+                                     QStringLiteral("rawvideo"),
+                                     QStringLiteral("-pix_fmt"),
+                                     QStringLiteral("rgba"),
+                                     QStringLiteral("-")},
+                         &decoded))
+        return false;
+    if (decoded.size() < 16 * 16 * 4)
+        return false;
+    for (qsizetype i = 3; i < decoded.size(); i += 4) {
+        if (static_cast<unsigned char>(decoded[i]) < 250)
+            return true;
+    }
+    return false;
+}
+
+bool webmHasAlphaMode(const QString& path) {
+    const QString ffprobe = hyprcapture::ui::trustedSystemProgram(QStringLiteral("ffprobe"));
+    QByteArray output;
+    if (!runProbeProcess(ffprobe,
+                         QStringList{QStringLiteral("-hide_banner"),
+                                     QStringLiteral("-loglevel"),
+                                     QStringLiteral("error"),
+                                     QStringLiteral("-show_entries"),
+                                     QStringLiteral("stream_tags=alpha_mode"),
+                                     QStringLiteral("-of"),
+                                     QStringLiteral("default=nw=1:nk=1"),
+                                     path},
+                         &output))
+        return false;
+    return QString::fromUtf8(output).trimmed() == QStringLiteral("1");
+}
+
+bool alphaProbeSucceeded(const QString& format, const QString& codecChoice) {
+    const QString normalizedFormat = normalizedRecordFormat(format);
+    const QString normalizedCodec = normalizedChoice(codecChoice);
+    static std::map<QString, bool> cache;
+    const QString key = normalizedFormat + QLatin1Char('|') + normalizedCodec;
+    if (const auto it = cache.find(key); it != cache.end())
+        return it->second;
+
+    const QString ffmpeg = hyprcapture::ui::trustedSystemProgram(QStringLiteral("ffmpeg"));
+    QTemporaryDir dir;
+    if (ffmpeg.isEmpty() || !dir.isValid()) {
+        cache[key] = false;
+        return false;
+    }
+
+    const QString inputPath = dir.filePath(QStringLiteral("input.rgba"));
+    QFile input(inputPath);
+    if (!input.open(QIODevice::WriteOnly) || input.write(alphaProbeFrame()) != 16 * 16 * 4) {
+        cache[key] = false;
+        return false;
+    }
+    input.close();
+
+    const QString outputPath = dir.filePath(QStringLiteral("output.") + normalizedFormat);
+    QStringList args{QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"), QStringLiteral("error"), QStringLiteral("-y")};
+    if (normalizedCodec == "vp9-vaapi") {
+        const QString renderDevice = firstWritableRenderDevice();
+        if (renderDevice.isEmpty()) {
+            cache[key] = false;
+            return false;
+        }
+        args << QStringLiteral("-vaapi_device") << renderDevice;
+    }
+    args << QStringLiteral("-f") << QStringLiteral("rawvideo") << QStringLiteral("-pix_fmt") << QStringLiteral("rgba") << QStringLiteral("-video_size")
+         << QStringLiteral("16x16") << QStringLiteral("-framerate") << QStringLiteral("1") << QStringLiteral("-i") << inputPath << QStringLiteral("-frames:v")
+         << QStringLiteral("1") << QStringLiteral("-an");
+
+    if (normalizedCodec == "vp9-vaapi") {
+        args << QStringLiteral("-vf") << QStringLiteral("format=rgba,hwupload,scale_vaapi=format=nv12") << QStringLiteral("-c:v")
+             << QStringLiteral("vp9_vaapi") << QStringLiteral("-qp") << QStringLiteral("23") << QStringLiteral("-quality") << QStringLiteral("7");
+    } else if (normalizedCodec == "vp9") {
+        args << QStringLiteral("-c:v") << QStringLiteral("libvpx-vp9") << QStringLiteral("-pix_fmt") << QStringLiteral("yuva420p")
+             << QStringLiteral("-deadline") << QStringLiteral("realtime") << QStringLiteral("-cpu-used") << QStringLiteral("8") << QStringLiteral("-b:v")
+             << QStringLiteral("0") << QStringLiteral("-crf") << QStringLiteral("32");
+    } else if (normalizedCodec == "ffv1") {
+        args << QStringLiteral("-c:v") << QStringLiteral("ffv1") << QStringLiteral("-level") << QStringLiteral("3") << QStringLiteral("-pix_fmt")
+             << QStringLiteral("rgba");
+    } else {
+        cache[key] = false;
+        return false;
+    }
+    args << outputPath;
+
+    const bool encoded = runProbeProcess(ffmpeg, args);
+    const bool preservesAlpha = encoded && (normalizedFormat == "webm" ? webmHasAlphaMode(outputPath) : decodedFrameHasAlpha(outputPath));
+    cache[key] = preservesAlpha;
+    return preservesAlpha;
+}
+
+bool isHardwareAlphaCandidate(const QString& codecChoice) {
+    const QString codec = normalizedChoice(codecChoice);
+    return codec.endsWith(QStringLiteral("-vaapi")) || codec.endsWith(QStringLiteral("-qsv")) || codec.endsWith(QStringLiteral("-nvenc")) ||
+        codec.endsWith(QStringLiteral("-vulkan")) || codec.endsWith(QStringLiteral("-amf"));
+}
+
+TransparentAutoChoice transparentAutoChoiceForFormat(QString format) {
+    format = normalizedRecordFormat(format);
+    if (format == "webm") {
+        for (const QString& codec : QStringList{QStringLiteral("vp9-vaapi")}) {
+            if (alphaProbeSucceeded(format, codec))
+                return {.format = format, .codec = codec};
+        }
+        const QString fallback = alphaProbeSucceeded(format, QStringLiteral("vp9")) ? QStringLiteral("vp9") : QStringLiteral("auto");
+        return {.format = format, .codec = fallback, .warning = QStringLiteral("no hardware alpha encoder detected; using CPU vp9")};
+    }
+    if (format == "mkv") {
+        const QString fallback = alphaProbeSucceeded(format, QStringLiteral("ffv1")) ? QStringLiteral("ffv1") : QStringLiteral("auto");
+        return {.format = format, .codec = fallback, .warning = QStringLiteral("no hardware alpha encoder detected; using CPU ffv1")};
+    }
+    return {.format = format, .codec = QStringLiteral("auto")};
 }
 
 QString recordTemplateWithFormat(const std::string& filenameTemplate, const QString& format) {
@@ -1309,6 +1506,8 @@ void CaptureOverlay::buildToolbar() {
     m_windowBackground->addItems(QStringList{"follow-system", "white", "black", "real", "transparent"});
     m_windowBackground->setCurrentText(qString(hyprcapture::toString(m_defaults.windowBackground)));
     m_windowBackground->setOnChanged([this] {
+        if (m_record)
+            applyRecordDefaultsForCurrentBackground();
         updateRecordWarning();
         updateStatus();
     });
@@ -1336,6 +1535,8 @@ void CaptureOverlay::buildToolbar() {
 
         m_recordError.clear();
         m_record = m_recordToggle->isChecked();
+        if (m_record)
+            applyRecordDefaultsForCurrentBackground();
         updateRecordOptionsVisibility();
         updateStatus();
         update();
@@ -1369,16 +1570,24 @@ void CaptureOverlay::buildToolbar() {
 
     m_recordCodec = new InlineSelect(this, m_recordOptions);
     m_recordCodec->setPrefix("Codec");
-    m_recordCodec->addItems(QStringList{"auto", "h264", "h264-vaapi", "h265", "h265-vaapi", "av1", "av1-vaapi", "vp9", "ffv1"});
-    m_recordCodec->setCurrentText(codecChoiceFromConfig(m_defaults.recordCodec));
-    m_recordCodec->setOnChanged(onRecordOptionChanged);
+    m_recordCodec->addItems(QStringList{"auto", "h264", "h264-vaapi", "h265", "h265-vaapi", "av1", "av1-vaapi", "vp9", "vp9-vaapi", "ffv1"});
+    m_recordCodec->setCurrentText(defaultRecordCodecForBackground(m_defaults, currentWindowBackground()));
+    m_recordCodec->setOnChanged([this, onRecordOptionChanged] {
+        m_recordCodecAuto = false;
+        m_recordAutoWarning.clear();
+        onRecordOptionChanged();
+    });
     recordLayout->addWidget(m_recordCodec);
 
     m_recordFormat = new InlineSelect(this, m_recordOptions);
     m_recordFormat->setPrefix("Format");
     m_recordFormat->addItems(QStringList{"mp4", "mov", "webm", "mkv"});
-    m_recordFormat->setCurrentText(defaultRecordFormat(m_defaults));
-    m_recordFormat->setOnChanged(onRecordOptionChanged);
+    m_recordFormat->setCurrentText(defaultRecordFormatForBackground(m_defaults, currentWindowBackground()));
+    m_recordFormat->setOnChanged([this, onRecordOptionChanged] {
+        m_recordFormatAuto = false;
+        m_recordAutoWarning.clear();
+        onRecordOptionChanged();
+    });
     recordLayout->addWidget(m_recordFormat);
 
     m_recordFps = new InlineSelect(this, m_recordOptions);
@@ -1402,8 +1611,11 @@ void CaptureOverlay::buildToolbar() {
     m_recordWarning->setStyleSheet(QStringLiteral("color: rgba(242, 170, 55, 255); padding: 2px 4px;"));
     rootLayout->addWidget(m_recordWarning);
 
+    if (m_record && !m_recordActive)
+        applyRecordDefaultsForCurrentBackground();
     updateToolbarControlsForMode();
     updateRecordOptionsVisibility();
+    updateRecordWarning();
     updateStatus();
     relayoutToolbar();
 }
@@ -1533,13 +1745,13 @@ hyprcapture::WindowBackground CaptureOverlay::currentWindowBackground() const {
 
 QString CaptureOverlay::currentRecordFormat() const {
     if (!m_recordFormat)
-        return defaultRecordFormat(m_defaults);
+        return defaultRecordFormatForBackground(m_defaults, currentWindowBackground());
     return normalizedRecordFormat(m_recordFormat->currentText());
 }
 
 QString CaptureOverlay::currentRecordCodec() const {
     if (!m_recordCodec)
-        return codecChoiceFromConfig(m_defaults.recordCodec);
+        return defaultRecordCodecForBackground(m_defaults, currentWindowBackground());
     return normalizedChoice(m_recordCodec->currentText());
 }
 
@@ -1557,6 +1769,36 @@ hyprcapture::RecordWindowBackend CaptureOverlay::currentRecordBackend() const {
     return hyprcapture::parseRecordWindowBackend(m_recordBackend->currentText().toStdString(), m_defaults.recordWindowBackend);
 }
 
+void CaptureOverlay::applyRecordDefaultsForCurrentBackground() {
+    const auto background = currentWindowBackground();
+    m_recordAutoWarning.clear();
+
+    if (background != hyprcapture::WindowBackground::Transparent) {
+        if (m_recordFormatAuto && m_recordFormat)
+            m_recordFormat->setCurrentText(defaultRecordFormatForBackground(m_defaults, background));
+        if (m_recordCodecAuto && m_recordCodec)
+            m_recordCodec->setCurrentText(defaultRecordCodecForBackground(m_defaults, background));
+        return;
+    }
+
+    const QString configuredFormat = defaultRecordFormatForBackground(m_defaults, background);
+    const QString configuredCodec = defaultRecordCodecForBackground(m_defaults, background);
+    if (configuredCodec == "auto") {
+        const auto choice = transparentAutoChoiceForFormat(configuredFormat);
+        if (m_recordFormatAuto && m_recordFormat)
+            m_recordFormat->setCurrentText(choice.format);
+        if (m_recordCodecAuto && m_recordCodec)
+            m_recordCodec->setCurrentText(choice.codec);
+        m_recordAutoWarning = choice.warning;
+        return;
+    }
+
+    if (m_recordFormatAuto && m_recordFormat)
+        m_recordFormat->setCurrentText(configuredFormat);
+    if (m_recordCodecAuto && m_recordCodec)
+        m_recordCodec->setCurrentText(configuredCodec);
+}
+
 QString CaptureOverlay::recordOptionsConflict() const {
     if (!m_record)
         return {};
@@ -1571,14 +1813,16 @@ QString CaptureOverlay::recordOptionsConflict() const {
         return QStringLiteral("mp4 does not support transparency");
     if (alphaRequested && format == "mov")
         return QStringLiteral("mov alpha is not supported by this encoder");
-    if (format == "webm" && alphaRequested && codec != "auto" && codec != "vp9")
-        return alphaRequested ? QStringLiteral("webm transparency requires vp9") : QStringLiteral("webm requires vp9");
-    if (format == "webm" && codec != "auto" && codec != "vp9" && codec != "av1" && codec != "av1-vaapi")
+    if (format == "webm" && alphaRequested && codec != "auto" && codec != "vp9" && codec != "vp9-vaapi")
+        return QStringLiteral("webm transparency requires vp9");
+    if (format == "webm" && codec != "auto" && codec != "vp9" && codec != "vp9-vaapi" && codec != "av1" && codec != "av1-vaapi")
         return QStringLiteral("webm requires vp9 or av1");
     if (format == "mkv" && alphaRequested && codec != "auto" && codec != "ffv1")
         return QStringLiteral("mkv transparency requires ffv1");
-    if ((format == "mp4" || format == "mov") && (codec == "vp9" || codec == "ffv1"))
+    if ((format == "mp4" || format == "mov") && (codec == "vp9" || codec == "vp9-vaapi" || codec == "ffv1"))
         return format + QStringLiteral(" requires h264, h265, or av1");
+    if (alphaRequested && isHardwareAlphaCandidate(codec) && !alphaProbeSucceeded(format, codec))
+        return QStringLiteral("selected hardware encoder does not preserve transparency");
 
     return {};
 }
@@ -1588,7 +1832,8 @@ void CaptureOverlay::updateRecordWarning() {
         return;
 
     const QString conflict = recordOptionsConflict();
-    if (conflict.isEmpty()) {
+    const QString warning = conflict.isEmpty() ? m_recordAutoWarning : QString{};
+    if (conflict.isEmpty() && warning.isEmpty()) {
         m_recordWarning->clear();
         m_recordWarning->hide();
         m_recordWarning->setFixedSize(0, 0);
@@ -1597,7 +1842,7 @@ void CaptureOverlay::updateRecordWarning() {
         return;
     }
 
-    m_recordWarning->setText(QStringLiteral("⚠️: ") + conflict);
+    m_recordWarning->setText(QStringLiteral("⚠️: ") + (conflict.isEmpty() ? warning : conflict));
     m_recordWarning->setVisible(true);
     m_recordWarning->setMinimumSize(0, 0);
     m_recordWarning->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);

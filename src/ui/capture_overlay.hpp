@@ -99,6 +99,7 @@ class CaptureOverlay final : public QMainWindow {
     QString currentRecordCodec() const;
     int currentRecordFps() const;
     hyprcapture::RecordWindowBackend currentRecordBackend() const;
+    void applyRecordDefaultsForCurrentBackground();
     QString recordOptionsConflict() const;
     void updateRecordOptionsVisibility();
     void updateRecordWarning();
@@ -131,6 +132,9 @@ class CaptureOverlay final : public QMainWindow {
     QPoint                    m_dragEnd;
     QPoint                    m_cursorLogicalPosition;
     bool                      m_hasCursorLogicalPosition = false;
+    bool                      m_recordFormatAuto = true;
+    bool                      m_recordCodecAuto = true;
+    QString                   m_recordAutoWarning;
 
     QWidget*     m_toolbar = nullptr;
     QGraphicsOpacityEffect* m_toolbarOpacity = nullptr;
