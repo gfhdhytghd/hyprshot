@@ -179,8 +179,12 @@ bool alphaRecordingRequested(const hyprcapture::CaptureDefaults& defaults, hyprc
     return background == hyprcapture::WindowBackground::Transparent || solidAlphaRecordingRequested(defaults, background);
 }
 
+bool transparencyRequired(hyprcapture::WindowBackground background) {
+    return background == hyprcapture::WindowBackground::Transparent;
+}
+
 QString defaultRecordFormatForBackground(const hyprcapture::CaptureDefaults& defaults, hyprcapture::WindowBackground background) {
-    if (alphaRecordingRequested(defaults, background))
+    if (transparencyRequired(background))
         return normalizedRecordFormat(qString(defaults.recordTransparentFormat));
     return defaultRecordFormat(defaults);
 }
@@ -230,7 +234,7 @@ QString codecChoiceFromConfig(const std::string& codec) {
 }
 
 QString defaultRecordCodecForBackground(const hyprcapture::CaptureDefaults& defaults, hyprcapture::WindowBackground background) {
-    if (alphaRecordingRequested(defaults, background))
+    if (transparencyRequired(background))
         return codecChoiceFromConfig(defaults.recordTransparentCodec);
     return codecChoiceFromConfig(defaults.recordCodec);
 }
@@ -1420,7 +1424,7 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
             loadRawRgba(realBackgroundPath, info.realBackgroundWidth, info.realBackgroundHeight, info.realBackgroundTopDown, remainingArtifactBytes);
         artifactFiles.push_back(artifactPath);
         artifactFiles.push_back(realBackgroundPath);
-        if (artifact.fullGeometry.isValid() && !artifact.image.isNull())
+        if (artifact.fullGeometry.isValid())
             m_windowArtifacts.push_back(std::move(artifact));
     }
 
@@ -1858,7 +1862,7 @@ QString CaptureOverlay::recordOptionsConflict() const {
     if (!m_record)
         return {};
 
-    const bool alphaRequested = alphaRecordingRequested(m_defaults, currentWindowBackground());
+    const bool alphaRequested = transparencyRequired(currentWindowBackground());
     const QString format = currentRecordFormat();
     const QString codec = currentRecordCodec();
 
@@ -1883,7 +1887,7 @@ QString CaptureOverlay::recordOptionsConflict() const {
 }
 
 QString CaptureOverlay::recordOptionsWarning() const {
-    if (!m_record || !alphaRecordingRequested(m_defaults, currentWindowBackground()))
+    if (!m_record || !transparencyRequired(currentWindowBackground()))
         return {};
 
     const QString format = currentRecordFormat();
@@ -2416,8 +2420,10 @@ QImage CaptureOverlay::renderResultImage() const {
     const auto bg = currentWindowBackground();
     if (m_mode == hyprcapture::CaptureMode::Window) {
         const auto* windowArtifact = hoveredWindow();
-        if (!windowArtifact || windowArtifact->image.isNull())
+        if (!windowArtifact)
             return {};
+        if (windowArtifact->image.isNull())
+            return renderDesktopRectAtDisplayResolution(windowFrameGeometry(*windowArtifact));
 
         QRect artifactSource = windowArtifact->image.rect();
         const bool cropDecorations = currentWindowBorder() == hyprcapture::DecorationPolicy::Remove || currentWindowShadow() == hyprcapture::DecorationPolicy::Remove;

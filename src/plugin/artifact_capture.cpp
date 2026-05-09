@@ -1854,6 +1854,10 @@ double hyprlandRoundedShadowPixelMultiplier(int x,
     return std::clamp(total / static_cast<double>(SAMPLE_GRID * SAMPLE_GRID), 0.0, 1.0);
 }
 
+bool pixelTouchesShadowBounds(int x, int y, double shadowLeft, double shadowTop, double shadowWidth, double shadowHeight) {
+    return x + 1.0 > shadowLeft && x < shadowLeft + shadowWidth && y + 1.0 > shadowTop && y < shadowTop + shadowHeight;
+}
+
 double shadowRoundingPx(const PHLWINDOW& window, double scale) {
     if (!window)
         return 0.0;
@@ -1973,7 +1977,13 @@ void repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, co
     const double windowBottom = shadowHeight - shadowRange;
 
     for (int y = 0; y < readback.height; ++y) {
+        if (static_cast<double>(y + 1) <= shadowTop || static_cast<double>(y) >= shadowTop + shadowHeight)
+            continue;
+
         for (int x = 0; x < readback.width; ++x) {
+            if (!pixelTouchesShadowBounds(x, y, shadowLeft, shadowTop, shadowWidth, shadowHeight))
+                continue;
+
             const double centerX = x - shadowLeft + 0.5;
             const double centerY = y - shadowTop + 0.5;
             if (hyprlandPointInRoundedRect(centerX, centerY, windowLeft, windowTop, windowRight, windowBottom, rounding, roundingPower))
@@ -2264,7 +2274,8 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool 
     const auto frozenTime = Time::steadyNow();
     const bool renderDecorations = defaults.fushionMode || defaults.windowBorder == DecorationPolicy::Keep || defaults.windowShadow == DecorationPolicy::Keep;
     const bool captureMonitorArtifacts = true;
-    const bool captureWindowArtifacts = true;
+    const bool captureWindowArtifacts = defaults.fushionMode || defaults.mode == CaptureMode::Window;
+    const bool captureRealBackgroundArtifacts = captureWindowArtifacts && defaults.windowBackground == WindowBackground::Real;
     ArtifactBudget artifactBudget;
 
     int monitorIndex = 0;
@@ -2319,13 +2330,15 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool 
         if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, artifactBox, artifactBudget)) {
             info.artifactPath = path.string();
             info.fullGeometry = toRect(artifactBox);
-            pendingRealBackgrounds.push_back({
-                .window = window,
-                .monitor = monitor,
-                .artifactBox = artifactBox,
-                .path = root / ("window-real-" + pointerId(window.get()) + ".rgba"),
-                .windowIndex = windowIndex,
-            });
+            if (captureRealBackgroundArtifacts) {
+                pendingRealBackgrounds.push_back({
+                    .window = window,
+                    .monitor = monitor,
+                    .artifactBox = artifactBox,
+                    .path = root / ("window-real-" + pointerId(window.get()) + ".rgba"),
+                    .windowIndex = windowIndex,
+                });
+            }
         } else
             info.fullGeometry = full;
         info.visibleGeometry = toRect(renderedWindowGoalMainSurfaceBox(window));
