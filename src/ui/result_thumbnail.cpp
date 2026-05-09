@@ -230,7 +230,7 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     const QColor highlight = palette.color(QPalette::Highlight);
     setStyleSheet(QStringLiteral(
                       "#thumbnail { background: transparent; border: none; }"
-                      "#thumbnailImage { background: rgba(%1,%2,%3,220); border: 1px solid rgba(%4,%5,%6,95); border-radius: 8px; }"
+                      "#thumbnailImage { background: transparent; border: none; }"
                       "#thumbnailMenu { background: rgba(%1,%2,%3,242); border: 1px solid rgba(%4,%5,%6,90); border-radius: 7px; }"
                       "#thumbnailOpenWithMenu { background: rgba(%1,%2,%3,242); border: 1px solid rgba(%4,%5,%6,90); border-radius: 7px; }"
                       "#thumbnailMenu QPushButton { color: rgba(%4,%5,%6,255); background: transparent; padding: 7px 10px; border: none; border-radius: 5px; text-align: left; }"
