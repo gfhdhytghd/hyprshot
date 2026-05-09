@@ -24,6 +24,7 @@ add_compile_options(
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(HYPR_DEPS REQUIRED hyprland)
 pkg_check_modules(GIO REQUIRED gio-2.0 gio-unix-2.0)
+pkg_check_modules(LUA REQUIRED lua)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg DBus)
 find_package(LayerShellQt REQUIRED)
@@ -71,9 +72,9 @@ add_library(hyprcapture SHARED
   src/shared/protocol.cpp
 )
 
-target_include_directories(hyprcapture BEFORE PRIVATE src ${HYPRLAND_DERIVED_INCLUDE_DIRS})
-target_link_directories(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARY_DIRS})
-target_link_libraries(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARIES} nlohmann_json::nlohmann_json)
+target_include_directories(hyprcapture BEFORE PRIVATE src ${HYPRLAND_DERIVED_INCLUDE_DIRS} ${LUA_INCLUDE_DIRS})
+target_link_directories(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARY_DIRS} ${LUA_LIBRARY_DIRS})
+target_link_libraries(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARIES} ${LUA_LIBRARIES} nlohmann_json::nlohmann_json)
 target_link_options(hyprcapture PRIVATE -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
 
 add_executable(hyprcapture-ui

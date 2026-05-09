@@ -14,6 +14,11 @@
 #include <hyprland/src/desktop/rule/layerRule/LayerRuleEffectContainer.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 
+extern "C" {
+#include <lauxlib.h>
+#include <lua.h>
+}
+
 #include "plugin/artifact_capture.hpp"
 #include "plugin/recording.hpp"
 #include "plugin/session_launcher.hpp"
@@ -114,7 +119,8 @@ void registerConfigValues() {
     addBoolConfig("show_thumbnail", "Show a result thumbnail after capture", true);
     addBoolConfig("include_cursor", "Include the cursor in captures", false);
     addBoolConfig("allow_quick", "Enable no-confirmation quick capture dispatchers", false);
-    addBoolConfig("fushion_mode", "Fuse region and window interactions in one overlay", false);
+    addBoolConfig("fusion_mode", "Fuse region and window interactions in one overlay", false);
+    addBoolConfig("fushion_mode", "Legacy alias for fusion_mode", false);
     addStringConfig("save_dir", "Capture output directory", "~/Pictures/Screenshots");
     addStringConfig("filename_template", "Screenshot filename strftime template", "Screenshot-%Y-%m-%d-%H%M%S.png");
     addStringConfig("record_save_dir", "Recording output directory", "~/Video/Screenrecording");
@@ -159,7 +165,7 @@ hyprcapture::CaptureDefaults readDefaults() {
     defaults.showThumbnail = configBool("show_thumbnail", defaults.showThumbnail);
     defaults.includeCursor = configBool("include_cursor", defaults.includeCursor);
     defaults.allowQuick = configBool("allow_quick", defaults.allowQuick);
-    defaults.fushionMode = configBool("fushion_mode", defaults.fushionMode);
+    defaults.fushionMode = configBool("fusion_mode", defaults.fushionMode) || configBool("fushion_mode", defaults.fushionMode);
     defaults.saveDir = configString("save_dir", defaults.saveDir);
     defaults.filenameTemplate = configString("filename_template", defaults.filenameTemplate);
     defaults.helper = configString("helper", defaults.helper);
@@ -264,6 +270,93 @@ SDispatchResult dispatchCancel(const std::string&) {
     return {.success = true};
 }
 
+int luaDispatchResult(lua_State* L, const SDispatchResult& result) {
+    if (result.success)
+        return 0;
+
+    lua_pushstring(L, result.error.empty() ? "hyprcapture function failed" : result.error.c_str());
+    return lua_error(L);
+}
+
+std::string luaOptionalString(lua_State* L, int index) {
+    if (lua_gettop(L) < index || lua_isnil(L, index))
+        return {};
+
+    return luaL_checkstring(L, index);
+}
+
+std::string normalizeHyprcaptureDispatcher(std::string dispatcher) {
+    if (dispatcher == "open" || dispatcher == "hyprcapture.open")
+        return "hyprcapture:open";
+    if (dispatcher == "quick" || dispatcher == "hyprcapture.quick")
+        return "hyprcapture:quick";
+    if (dispatcher == "record" || dispatcher == "hyprcapture.record")
+        return "hyprcapture:record";
+    if (dispatcher == "record_toggle" || dispatcher == "recordToggle" || dispatcher == "hyprcapture.record_toggle" ||
+        dispatcher == "hyprcapture.recordToggle")
+        return "hyprcapture:record-toggle";
+    if (dispatcher == "record_stop" || dispatcher == "recordStop" || dispatcher == "hyprcapture.record_stop" ||
+        dispatcher == "hyprcapture.recordStop")
+        return "hyprcapture:record-stop";
+    if (dispatcher == "record_start" || dispatcher == "recordStart" || dispatcher == "hyprcapture.record_start" ||
+        dispatcher == "hyprcapture.recordStart")
+        return "hyprcapture:record-start";
+    if (dispatcher == "cancel" || dispatcher == "hyprcapture.cancel")
+        return "hyprcapture:cancel";
+    return dispatcher;
+}
+
+int luaOpen(lua_State* L) {
+    return luaDispatchResult(L, dispatchOpen(luaOptionalString(L, 1)));
+}
+
+int luaQuick(lua_State* L) {
+    return luaDispatchResult(L, dispatchQuick(luaOptionalString(L, 1)));
+}
+
+int luaRecord(lua_State* L) {
+    return luaDispatchResult(L, dispatchRecord(luaOptionalString(L, 1)));
+}
+
+int luaRecordToggle(lua_State* L) {
+    return luaDispatchResult(L, dispatchRecordToggle(luaOptionalString(L, 1)));
+}
+
+int luaRecordStop(lua_State* L) {
+    return luaDispatchResult(L, dispatchRecordStop(""));
+}
+
+int luaRecordStart(lua_State* L) {
+    return luaDispatchResult(L, dispatchRecordStart(luaOptionalString(L, 1)));
+}
+
+int luaCancel(lua_State* L) {
+    return luaDispatchResult(L, dispatchCancel(""));
+}
+
+int luaDispatch(lua_State* L) {
+    const std::string dispatcher = normalizeHyprcaptureDispatcher(luaL_checkstring(L, 1));
+    const std::string args       = luaOptionalString(L, 2);
+
+    if (dispatcher == "hyprcapture:open")
+        return luaDispatchResult(L, dispatchOpen(args));
+    if (dispatcher == "hyprcapture:quick")
+        return luaDispatchResult(L, dispatchQuick(args));
+    if (dispatcher == "hyprcapture:record")
+        return luaDispatchResult(L, dispatchRecord(args));
+    if (dispatcher == "hyprcapture:record-toggle")
+        return luaDispatchResult(L, dispatchRecordToggle(args));
+    if (dispatcher == "hyprcapture:record-stop")
+        return luaDispatchResult(L, dispatchRecordStop(args));
+    if (dispatcher == "hyprcapture:record-start")
+        return luaDispatchResult(L, dispatchRecordStart(args));
+    if (dispatcher == "hyprcapture:cancel")
+        return luaDispatchResult(L, dispatchCancel(args));
+
+    lua_pushstring(L, ("unknown hyprcapture dispatcher: " + dispatcher).c_str());
+    return lua_error(L);
+}
+
 } // namespace
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -275,14 +368,47 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     registerConfigValues();
 
-    HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:open", dispatchOpen);
-    HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:quick", dispatchQuick);
-    HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:record", dispatchRecord);
-    HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:record-toggle", dispatchRecordToggle);
-    HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:record-stop", dispatchRecordStop);
-    HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:record-start", dispatchRecordStart);
-    HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:cancel", dispatchCancel);
-    HyprlandAPI::reloadConfig();
+    const auto registerDispatcher = [&](const char* name, auto handler) {
+        if (!HyprlandAPI::addDispatcherV2(g_pluginHandle, name, handler)) {
+            HyprlandAPI::addNotification(
+                g_pluginHandle,
+                std::string("[hyprcapture] failed to register dispatcher ") + name,
+                CHyprColor(1.0, 0.2, 0.2, 1.0),
+                5000);
+        }
+    };
+
+    registerDispatcher("hyprcapture:open", dispatchOpen);
+    registerDispatcher("hyprcapture:quick", dispatchQuick);
+    registerDispatcher("hyprcapture:record", dispatchRecord);
+    registerDispatcher("hyprcapture:record-toggle", dispatchRecordToggle);
+    registerDispatcher("hyprcapture:record-stop", dispatchRecordStop);
+    registerDispatcher("hyprcapture:record-start", dispatchRecordStart);
+    registerDispatcher("hyprcapture:cancel", dispatchCancel);
+
+    if (Config::mgr() && Config::mgr()->type() == Config::CONFIG_LUA) {
+        const auto registerLuaFunction = [&](const char* name, PLUGIN_LUA_FN fn) {
+            if (!HyprlandAPI::addLuaFunction(g_pluginHandle, "hyprcapture", name, fn)) {
+                HyprlandAPI::addNotification(
+                    g_pluginHandle,
+                    std::string("[hyprcapture] failed to register lua function hl.plugin.hyprcapture.") + name,
+                    CHyprColor(1.0, 0.2, 0.2, 1.0),
+                    5000);
+            }
+        };
+
+        registerLuaFunction("open", luaOpen);
+        registerLuaFunction("quick", luaQuick);
+        registerLuaFunction("record", luaRecord);
+        registerLuaFunction("record_toggle", luaRecordToggle);
+        registerLuaFunction("record_stop", luaRecordStop);
+        registerLuaFunction("record_start", luaRecordStart);
+        registerLuaFunction("cancel", luaCancel);
+        registerLuaFunction("dispatch", luaDispatch);
+    }
+
+    if (!HyprlandAPI::reloadConfig())
+        HyprlandAPI::addNotification(g_pluginHandle, "[hyprcapture] reloadConfig failed", CHyprColor(1.0, 0.2, 0.2, 1.0), 5000);
     installOverlayLayerRule();
 
     return {
