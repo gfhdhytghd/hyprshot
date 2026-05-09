@@ -148,8 +148,8 @@ struct ShadowColorBytes {
 };
 
 ShadowColorBytes shadowColorBytes(const PHLWINDOW& window);
-void             repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window);
-void             expandReadbackToShadowBounds(RgbaReadback& readback, CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window);
+void             repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window, const PixelBounds& originalBounds);
+PixelBounds      expandReadbackToShadowBounds(RgbaReadback& readback, CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window);
 
 struct ArtifactBudget {
     std::size_t remaining = MAX_SESSION_ARTIFACT_BYTES;
@@ -1297,8 +1297,8 @@ bool renderWindowArtifact(const PHLWINDOW& window,
                           ArtifactBudget& budget) {
     auto readback = renderWindowArtifactReadback(window, monitor, frozenTime, decorate, width, height, artifactBox, &budget);
     if (decorate && !readback.pixels.empty()) {
-        expandReadbackToShadowBounds(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window);
-        repairTransparentShadow(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window);
+        const auto originalBounds = expandReadbackToShadowBounds(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window);
+        repairTransparentShadow(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window, originalBounds);
         width = readback.width;
         height = readback.height;
     }
@@ -1813,28 +1813,29 @@ int configuredShadowRangePx(double scale) {
     return std::max(0, static_cast<int>(std::ceil(static_cast<double>(std::max(0, sc<int>(*PSHADOWRANGE))) * scale)));
 }
 
-void expandReadbackToShadowBounds(RgbaReadback& readback, CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window) {
+PixelBounds expandReadbackToShadowBounds(RgbaReadback& readback, CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window) {
+    const PixelBounds originalBounds{.x = 0, .y = 0, .width = readback.width, .height = readback.height};
     const auto color = shadowColorBytes(window);
     if (readback.width <= 0 || readback.height <= 0 || readback.pixels.empty() || artifactBox.w <= 0.0 || artifactBox.h <= 0.0 || visibleBox.w <= 0.0 ||
         visibleBox.h <= 0.0 || color.a <= 0)
-        return;
+        return originalBounds;
 
     const double scaleX = static_cast<double>(readback.width) / artifactBox.w;
     const double scaleY = static_cast<double>(readback.height) / artifactBox.h;
     if (!std::isfinite(scaleX) || !std::isfinite(scaleY) || scaleX <= 0.0 || scaleY <= 0.0)
-        return;
+        return originalBounds;
 
     const double shadowScale = std::max(scaleX, scaleY);
     const double shadowPadding = configuredShadowRangePx(shadowScale) + shadowBorderPx(window, shadowScale) + 2.0;
     if (shadowPadding <= 0.0)
-        return;
+        return originalBounds;
 
     const double visibleLeft = (visibleBox.x - artifactBox.x) * scaleX;
     const double visibleTop = (visibleBox.y - artifactBox.y) * scaleY;
     const double visibleRight = (visibleBox.x + visibleBox.w - artifactBox.x) * scaleX;
     const double visibleBottom = (visibleBox.y + visibleBox.h - artifactBox.y) * scaleY;
     if (!std::isfinite(visibleLeft) || !std::isfinite(visibleTop) || !std::isfinite(visibleRight) || !std::isfinite(visibleBottom))
-        return;
+        return originalBounds;
 
     const int targetLeft = static_cast<int>(std::floor(visibleLeft - shadowPadding));
     const int targetTop = static_cast<int>(std::floor(visibleTop - shadowPadding));
@@ -1845,13 +1846,13 @@ void expandReadbackToShadowBounds(RgbaReadback& readback, CBox& artifactBox, con
     const int padRight = std::max(0, targetRight - readback.width);
     const int padBottom = std::max(0, targetBottom - readback.height);
     if (padLeft == 0 && padTop == 0 && padRight == 0 && padBottom == 0)
-        return;
+        return originalBounds;
 
     const int newWidth = readback.width + padLeft + padRight;
     const int newHeight = readback.height + padTop + padBottom;
     std::size_t bytes = 0;
     if (!checkedRgbaByteSize(newWidth, newHeight, bytes))
-        return;
+        return originalBounds;
 
     std::vector<unsigned char> expanded(bytes, 0);
     const std::size_t oldRowBytes = static_cast<std::size_t>(readback.width) * RGBA_BYTES_PER_PIXEL;
@@ -1871,9 +1872,10 @@ void expandReadbackToShadowBounds(RgbaReadback& readback, CBox& artifactBox, con
     artifactBox.y -= static_cast<double>(padTop) / scaleY;
     artifactBox.w = static_cast<double>(newWidth) / scaleX;
     artifactBox.h = static_cast<double>(newHeight) / scaleY;
+    return {.x = padLeft, .y = padTop, .width = originalBounds.width, .height = originalBounds.height};
 }
 
-void repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window) {
+void repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window, const PixelBounds& originalBounds) {
     const auto color = shadowColorBytes(window);
     if (readback.width <= 0 || readback.height <= 0 || readback.pixels.empty() || artifactBox.w <= 0.0 || artifactBox.h <= 0.0 || visibleBox.w <= 0.0 ||
         visibleBox.h <= 0.0 || color.a <= 0)
@@ -1912,7 +1914,9 @@ void repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, co
             const auto i = (static_cast<std::size_t>(y) * readback.width + x) * RGBA_BYTES_PER_PIXEL;
             auto*      px = readback.pixels.data() + i;
             const bool existingShadowPixel = isRecordingShadowPixel(px);
-            const bool transparentShadowPadding = px[3] == 0;
+            const bool insideOriginalBounds = x >= originalBounds.x && x < originalBounds.x + originalBounds.width && y >= originalBounds.y &&
+                y < originalBounds.y + originalBounds.height;
+            const bool transparentShadowPadding = px[3] == 0 && !insideOriginalBounds;
             if (!existingShadowPixel && !transparentShadowPadding)
                 continue;
 
@@ -2161,8 +2165,8 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
             readback = cropReadbackToBounds(readback, bounds);
         }
     } else if ((request.defaults.windowBackground == WindowBackground::Transparent || solidAlpha) && request.defaults.windowShadow == DecorationPolicy::Keep) {
-        expandReadbackToShadowBounds(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window);
-        repairTransparentShadow(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window);
+        const auto originalBounds = expandReadbackToShadowBounds(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window);
+        repairTransparentShadow(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window, originalBounds);
     }
 
     if (readback.pixels.empty())
