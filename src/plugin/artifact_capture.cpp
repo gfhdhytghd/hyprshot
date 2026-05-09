@@ -1714,6 +1714,12 @@ std::optional<CHyprColor> recordingSolidBackgroundColor(WindowBackground backgro
     return std::nullopt;
 }
 
+DecorationPolicy effectiveRecordingWindowShadowPolicy(const RecordingFrameRequest& request) {
+    if (request.mode == CaptureMode::Window && request.defaults.windowBackground == WindowBackground::Transparent)
+        return DecorationPolicy::Remove;
+    return request.defaults.windowShadow;
+}
+
 PHLWINDOW findWindowByAddress(const std::string& address) {
     if (address.empty() || !g_pCompositor)
         return {};
@@ -1834,8 +1840,9 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     if (!monitor)
         return std::nullopt;
 
+    const DecorationPolicy effectiveWindowShadow = effectiveRecordingWindowShadowPolicy(request);
     const bool renderDecorations =
-        request.defaults.fushionMode || request.defaults.windowBorder == DecorationPolicy::Keep || request.defaults.windowShadow == DecorationPolicy::Keep;
+        request.defaults.fushionMode || request.defaults.windowBorder == DecorationPolicy::Keep || effectiveWindowShadow == DecorationPolicy::Keep;
 
     int  width = 0;
     int  height = 0;
@@ -1867,7 +1874,7 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     if (readback.pixels.empty())
         return std::nullopt;
 
-    const bool cropDecorations = request.defaults.windowBorder == DecorationPolicy::Remove || request.defaults.windowShadow == DecorationPolicy::Remove;
+    const bool cropDecorations = request.defaults.windowBorder == DecorationPolicy::Remove || effectiveWindowShadow == DecorationPolicy::Remove;
     if (cropDecorations) {
         const CBox visibleBox = renderedWindowGoalMainSurfaceBox(window);
         if (visibleBox.w > 0.0 && visibleBox.h > 0.0 && artifactBox.w > 0.0 && artifactBox.h > 0.0) {

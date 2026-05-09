@@ -289,7 +289,7 @@ hl.config({
 | `fullscreen_scope` | string | `all` | Fullscreen capture scope. Supports `all`, `current`, and `per-monitor`. |
 | `window_background` | string | `follow-system` | Background behind transparent window pixels. Supports `follow-system`, `white`, `black`, `real`, and `transparent`. |
 | `window_border` | string | `keep` | Window border policy. Supports `keep` and `remove`. |
-| `window_shadow` | string | `keep` | Window shadow policy. Supports `keep` and `remove`. |
+| `window_shadow` | string | `keep` | Window shadow policy. Supports `keep` and `remove`. Transparent window recordings strip shadows so the alpha video does not encode the shadow as a hard border. |
 | `include_cursor` | bool | `0` | Parsed and forwarded by the plugin/helper; cursor compositing is not currently rendered into the output. |
 | `allow_quick` | bool | `0` | Enable no-confirmation `hyprcapture:quick` dispatchers. Leave disabled unless your Hyprland IPC policy already restricts untrusted same-user clients. |
 | `fushion_mode` | bool | `0` | Fuse region and window interactions in one overlay: drag to capture a region, or single-click a window to capture that window. The toolbar keeps the fullscreen action and configuration controls; fullscreen multi-monitor scope is shown only when multiple monitors are present. |
