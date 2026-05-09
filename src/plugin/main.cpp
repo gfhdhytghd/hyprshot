@@ -1,9 +1,14 @@
-#include <any>
 #include <chrono>
+#include <deque>
 #include <string>
+#include <typeindex>
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
+#include <hyprland/src/config/shared/Types.hpp>
+#include <hyprland/src/config/values/types/BoolValue.hpp>
+#include <hyprland/src/config/values/types/IntValue.hpp>
+#include <hyprland/src/config/values/types/StringValue.hpp>
 #include <hyprland/src/desktop/rule/Engine.hpp>
 #include <hyprland/src/desktop/rule/layerRule/LayerRule.hpp>
 #include <hyprland/src/desktop/rule/layerRule/LayerRuleEffectContainer.hpp>
@@ -22,35 +27,117 @@ constexpr auto        kMinDispatchInterval = std::chrono::milliseconds(750);
 
 std::chrono::steady_clock::time_point g_lastCaptureDispatch {};
 std::chrono::steady_clock::time_point g_lastQuickRejectNotification {};
+std::deque<std::string>               g_configValueNames;
 
-template <typename T>
-T configValue(const std::string& name, T fallback) {
-    const auto value = HyprlandAPI::getConfigValue(g_pluginHandle, name);
-    if (!value)
-        return fallback;
+std::string configName(const std::string& suffix) {
+    return "plugin:hyprcapture:" + suffix;
+}
 
-    try {
-        return std::any_cast<T>(value->getValue());
-    } catch (const std::bad_any_cast&) {
-        return fallback;
-    }
+const Config::SConfigOptionReply configOption(const std::string& name) {
+    if (!g_pluginHandle)
+        return {};
+    return Config::mgr()->getConfigValue(name);
 }
 
 std::string configString(const std::string& suffix, const std::string& fallback) {
-    const auto value = HyprlandAPI::getConfigValue(g_pluginHandle, "plugin:hyprcapture:" + suffix);
-    if (!value)
+    const auto value = configOption(configName(suffix));
+    if (!value.dataptr || !value.type)
         return fallback;
 
-    try {
-        const auto raw = std::any_cast<Hyprlang::STRING>(value->getValue());
+    const auto type = std::type_index(*value.type);
+    if (type == typeid(Config::STRING))
+        return **reinterpret_cast<Config::STRING* const*>(value.dataptr);
+
+    if (type == typeid(Hyprlang::STRING)) {
+        const auto raw = *reinterpret_cast<Hyprlang::STRING const*>(value.dataptr);
         return raw ? std::string(raw) : fallback;
-    } catch (const std::bad_any_cast&) {
-        return fallback;
     }
+
+    return fallback;
 }
 
 std::int64_t configInt(const std::string& suffix, std::int64_t fallback) {
-    return configValue<Hyprlang::INT>("plugin:hyprcapture:" + suffix, fallback);
+    const auto value = configOption(configName(suffix));
+    if (!value.dataptr || !value.type)
+        return fallback;
+
+    const auto type = std::type_index(*value.type);
+    if (type == typeid(Config::INTEGER))
+        return **reinterpret_cast<Config::INTEGER* const*>(value.dataptr);
+
+    if (type == typeid(Config::BOOL))
+        return **reinterpret_cast<Config::BOOL* const*>(value.dataptr) ? 1 : 0;
+
+    return fallback;
+}
+
+bool configBool(const std::string& suffix, bool fallback) {
+    const auto value = configOption(configName(suffix));
+    if (!value.dataptr || !value.type)
+        return fallback;
+
+    const auto type = std::type_index(*value.type);
+    if (type == typeid(Config::BOOL))
+        return **reinterpret_cast<Config::BOOL* const*>(value.dataptr);
+
+    if (type == typeid(Config::INTEGER))
+        return **reinterpret_cast<Config::INTEGER* const*>(value.dataptr) != 0;
+
+    return fallback;
+}
+
+void addStringConfig(const char* suffix, const char* description, const char* fallback) {
+    const auto& name = g_configValueNames.emplace_back(configName(suffix));
+    HyprlandAPI::addConfigValueV2(g_pluginHandle, makeShared<Config::Values::CStringValue>(name.c_str(), description, fallback));
+}
+
+void addIntConfig(const char* suffix, const char* description, std::int64_t fallback) {
+    const auto& name = g_configValueNames.emplace_back(configName(suffix));
+    HyprlandAPI::addConfigValueV2(g_pluginHandle, makeShared<Config::Values::CIntValue>(name.c_str(), description, fallback));
+}
+
+void addBoolConfig(const char* suffix, const char* description, bool fallback) {
+    const auto& name = g_configValueNames.emplace_back(configName(suffix));
+    HyprlandAPI::addConfigValueV2(g_pluginHandle, makeShared<Config::Values::CBoolValue>(name.c_str(), description, fallback));
+}
+
+void registerConfigValues() {
+    g_configValueNames.clear();
+
+    addStringConfig("default_mode", "Default HyprCapture mode", "region");
+    addStringConfig("fullscreen_scope", "Fullscreen capture scope", "all");
+    addStringConfig("window_background", "Window capture background mode", "follow-system");
+    addStringConfig("window_border", "Window capture border policy", "keep");
+    addStringConfig("window_shadow", "Window capture shadow policy", "keep");
+    addBoolConfig("save", "Save captures to disk", true);
+    addBoolConfig("clipboard", "Copy captures to the clipboard", true);
+    addBoolConfig("show_thumbnail", "Show a result thumbnail after capture", true);
+    addBoolConfig("include_cursor", "Include the cursor in captures", false);
+    addBoolConfig("allow_quick", "Enable no-confirmation quick capture dispatchers", false);
+    addBoolConfig("fushion_mode", "Fuse region and window interactions in one overlay", false);
+    addStringConfig("save_dir", "Capture output directory", "~/Pictures/Screenshots");
+    addStringConfig("filename_template", "Screenshot filename strftime template", "Screenshot-%Y-%m-%d-%H%M%S.png");
+    addStringConfig("record_filename_template", "Recording filename strftime template", "Recording-%Y-%m-%d-%H%M%S.mp4");
+    addStringConfig("record_format", "Default recording container", "mp4");
+    addStringConfig("record_transparent_format", "Default transparent recording container", "webm");
+    addIntConfig("record_fps", "Recording frame rate", 30);
+    addStringConfig("record_fps_options", "Recording frame rate choices", "15 24 30 60");
+    addIntConfig("record_window_fps_limit", "Compositor window recording FPS cap", 12);
+    addIntConfig("record_window_real_bg_fps_limit", "Real-background window recording FPS cap", 8);
+    addStringConfig("record_codec", "Default recording codec", "libx264");
+    addStringConfig("record_transparent_codec", "Default transparent recording codec", "auto");
+    addStringConfig("record_preset", "FFmpeg preset", "veryfast");
+    addStringConfig("record_gsr_flags", "Extra gpu-screen-recorder flags", "");
+    addStringConfig("record_window_backend", "Window recording backend", "compositor");
+    addIntConfig("record_max_seconds", "Optional automatic recording stop in seconds", 0);
+    addIntConfig("thumbnail_timeout_ms", "Thumbnail auto-close timeout in milliseconds", 5000);
+    addStringConfig("helper", "Optional helper executable override", "");
+    addStringConfig("watermark", "Watermark path or built-in name", "");
+    addStringConfig("watermark_position", "Watermark position", "central");
+    addStringConfig("watermark_width", "Watermark width", "20%");
+    addStringConfig("watermark_offset", "Watermark offset", "0 0");
+    addBoolConfig("timing", "Enable HyprCapture timing traces", false);
+    addStringConfig("timing_file", "Private timing trace output file", "");
 }
 
 SDispatchResult dispatchResult(const hyprcapture::LaunchResult& result) {
@@ -66,12 +153,12 @@ hyprcapture::CaptureDefaults readDefaults() {
         hyprcapture::parseWindowBackground(configString("window_background", hyprcapture::toString(defaults.windowBackground)), defaults.windowBackground);
     defaults.windowBorder = hyprcapture::parseDecorationPolicy(configString("window_border", hyprcapture::toString(defaults.windowBorder)), defaults.windowBorder);
     defaults.windowShadow = hyprcapture::parseDecorationPolicy(configString("window_shadow", hyprcapture::toString(defaults.windowShadow)), defaults.windowShadow);
-    defaults.save = configInt("save", defaults.save ? 1 : 0) != 0;
-    defaults.clipboard = configInt("clipboard", defaults.clipboard ? 1 : 0) != 0;
-    defaults.showThumbnail = configInt("show_thumbnail", defaults.showThumbnail ? 1 : 0) != 0;
-    defaults.includeCursor = configInt("include_cursor", defaults.includeCursor ? 1 : 0) != 0;
-    defaults.allowQuick = configInt("allow_quick", defaults.allowQuick ? 1 : 0) != 0;
-    defaults.fushionMode = configInt("fushion_mode", defaults.fushionMode ? 1 : 0) != 0;
+    defaults.save = configBool("save", defaults.save);
+    defaults.clipboard = configBool("clipboard", defaults.clipboard);
+    defaults.showThumbnail = configBool("show_thumbnail", defaults.showThumbnail);
+    defaults.includeCursor = configBool("include_cursor", defaults.includeCursor);
+    defaults.allowQuick = configBool("allow_quick", defaults.allowQuick);
+    defaults.fushionMode = configBool("fushion_mode", defaults.fushionMode);
     defaults.saveDir = configString("save_dir", defaults.saveDir);
     defaults.filenameTemplate = configString("filename_template", defaults.filenameTemplate);
     defaults.helper = configString("helper", defaults.helper);
@@ -184,40 +271,7 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_pluginHandle = handle;
 
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:default_mode", Hyprlang::STRING{"region"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:fullscreen_scope", Hyprlang::STRING{"all"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:window_background", Hyprlang::STRING{"follow-system"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:window_border", Hyprlang::STRING{"keep"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:window_shadow", Hyprlang::STRING{"keep"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:save", Hyprlang::INT{1});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:clipboard", Hyprlang::INT{1});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:show_thumbnail", Hyprlang::INT{1});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:include_cursor", Hyprlang::INT{0});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:allow_quick", Hyprlang::INT{0});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:fushion_mode", Hyprlang::INT{0});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:save_dir", Hyprlang::STRING{"~/Pictures/Screenshots"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:filename_template", Hyprlang::STRING{"Screenshot-%Y-%m-%d-%H%M%S.png"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_filename_template", Hyprlang::STRING{"Recording-%Y-%m-%d-%H%M%S.mp4"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_format", Hyprlang::STRING{"mp4"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_transparent_format", Hyprlang::STRING{"webm"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_fps", Hyprlang::INT{30});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_fps_options", Hyprlang::STRING{"15 24 30 60"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_window_fps_limit", Hyprlang::INT{12});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_window_real_bg_fps_limit", Hyprlang::INT{8});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_codec", Hyprlang::STRING{"libx264"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_transparent_codec", Hyprlang::STRING{"auto"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_preset", Hyprlang::STRING{"veryfast"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_gsr_flags", Hyprlang::STRING{""});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_window_backend", Hyprlang::STRING{"compositor"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:record_max_seconds", Hyprlang::INT{0});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:thumbnail_timeout_ms", Hyprlang::INT{5000});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:helper", Hyprlang::STRING{""});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:watermark", Hyprlang::STRING{""});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:watermark_position", Hyprlang::STRING{"central"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:watermark_width", Hyprlang::STRING{"20%"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:watermark_offset", Hyprlang::STRING{"0 0"});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:timing", Hyprlang::INT{0});
-    HyprlandAPI::addConfigValue(g_pluginHandle, "plugin:hyprcapture:timing_file", Hyprlang::STRING{""});
+    registerConfigValues();
 
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:open", dispatchOpen);
     HyprlandAPI::addDispatcherV2(g_pluginHandle, "hyprcapture:quick", dispatchQuick);

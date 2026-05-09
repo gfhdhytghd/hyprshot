@@ -107,6 +107,14 @@ ctest --test-dir build-release --output-on-failure
 install -Dm755 build-release/hyprcapture-ui "$HOME/.local/bin/hyprcapture-ui"
 ```
 
+For the Hyprland 0.55 preview checkout, point CMake at the matching source tree so the plugin is built against the new Lua-config-capable headers:
+
+```sh
+cmake -S . -B build-v055 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DHYPRLAND_SOURCE_DIR="$HOME/data/Hyprland"
+cmake --build build-v055
+ctest --test-dir build-v055 --output-on-failure
+```
+
 For development without installing, point `helper` at the build-tree executable or launch Hyprland with:
 
 ```sh
@@ -227,6 +235,48 @@ plugin {
         watermark_offset = 0 0
     }
 }
+```
+
+Lua config example:
+
+```lua
+hl.config({
+    plugin = {
+        hyprcapture = {
+            default_mode = "region",
+            fullscreen_scope = "all",
+            window_background = "follow-system",
+            window_border = "keep",
+            window_shadow = "keep",
+            save = true,
+            clipboard = true,
+            show_thumbnail = true,
+            allow_quick = false,
+            fushion_mode = false,
+            save_dir = "~/Pictures/Screenshots",
+            filename_template = "Screenshot-%Y-%m-%d-%H%M%S.png",
+            record_filename_template = "Recording-%Y-%m-%d-%H%M%S.mp4",
+            record_format = "mp4",
+            record_transparent_format = "webm",
+            record_fps = 30,
+            record_fps_options = "15 24 30 60",
+            record_window_fps_limit = 12,
+            record_window_real_bg_fps_limit = 8,
+            record_codec = "libx264",
+            record_transparent_codec = "auto",
+            record_preset = "veryfast",
+            record_gsr_flags = "",
+            record_window_backend = "compositor",
+            record_max_seconds = 0,
+            include_cursor = false,
+            thumbnail_timeout_ms = 5000,
+            watermark = "",
+            watermark_position = "central",
+            watermark_width = "20%",
+            watermark_offset = "0 0",
+        },
+    },
+})
 ```
 
 ### Capture options

@@ -1,8 +1,9 @@
 #include "plugin/timing.hpp"
 
+#include <hyprland/src/config/ConfigManager.hpp>
+#include <hyprland/src/config/shared/Types.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 
-#include <any>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -14,6 +15,7 @@
 #include <mutex>
 #include <string>
 #include <sys/stat.h>
+#include <typeindex>
 #include <unistd.h>
 
 extern HANDLE g_pluginHandle;
@@ -25,36 +27,46 @@ std::mutex g_timingMutex;
 std::atomic<bool> g_cachedTimingEnabled = false;
 std::atomic<long long> g_nextTimingRefreshNs = 0;
 
-template <typename T>
-T configValue(const std::string& name, T fallback) {
+std::string configName(const std::string& suffix) {
+    return "plugin:hyprcapture:" + suffix;
+}
+
+const Config::SConfigOptionReply configOption(const std::string& name) {
     if (!g_pluginHandle)
+        return {};
+    return Config::mgr()->getConfigValue(name);
+}
+
+bool configBool(const std::string& suffix, bool fallback) {
+    const auto value = configOption(configName(suffix));
+    if (!value.dataptr || !value.type)
         return fallback;
 
-    const auto value = HyprlandAPI::getConfigValue(g_pluginHandle, name);
-    if (!value)
-        return fallback;
+    const auto type = std::type_index(*value.type);
+    if (type == typeid(Config::BOOL))
+        return **reinterpret_cast<Config::BOOL* const*>(value.dataptr);
 
-    try {
-        return std::any_cast<T>(value->getValue());
-    } catch (const std::bad_any_cast&) {
-        return fallback;
-    }
+    if (type == typeid(Config::INTEGER))
+        return **reinterpret_cast<Config::INTEGER* const*>(value.dataptr) != 0;
+
+    return fallback;
 }
 
 std::string configString(const std::string& suffix) {
-    if (!g_pluginHandle)
+    const auto value = configOption(configName(suffix));
+    if (!value.dataptr || !value.type)
         return {};
 
-    const auto value = HyprlandAPI::getConfigValue(g_pluginHandle, "plugin:hyprcapture:" + suffix);
-    if (!value)
-        return {};
+    const auto type = std::type_index(*value.type);
+    if (type == typeid(Config::STRING))
+        return **reinterpret_cast<Config::STRING* const*>(value.dataptr);
 
-    try {
-        const auto raw = std::any_cast<Hyprlang::STRING>(value->getValue());
+    if (type == typeid(Hyprlang::STRING)) {
+        const auto raw = *reinterpret_cast<Hyprlang::STRING const*>(value.dataptr);
         return raw ? std::string(raw) : std::string{};
-    } catch (const std::bad_any_cast&) {
-        return {};
     }
+
+    return {};
 }
 
 bool runtimeRootMatches(const std::filesystem::path& root, const std::filesystem::path& path) {
@@ -104,8 +116,7 @@ bool timingEnabled() {
     if (now < g_nextTimingRefreshNs.load(std::memory_order_relaxed))
         return g_cachedTimingEnabled.load(std::memory_order_relaxed);
 
-    const bool enabled = configValue<Hyprlang::INT>("plugin:hyprcapture:timing", 0) != 0 || std::getenv("HYPRCAPTURE_TIMING") ||
-        std::getenv("HYPRCAPTURE_TIMING_FILE");
+    const bool enabled = configBool("timing", false) || std::getenv("HYPRCAPTURE_TIMING") || std::getenv("HYPRCAPTURE_TIMING_FILE");
     g_cachedTimingEnabled.store(enabled, std::memory_order_relaxed);
     g_nextTimingRefreshNs.store(now + std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::milliseconds(250)).count(), std::memory_order_relaxed);
     return enabled;

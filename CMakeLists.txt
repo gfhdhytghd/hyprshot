@@ -28,6 +28,38 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg)
 find_package(LayerShellQt REQUIRED)
 find_package(nlohmann_json REQUIRED)
 
+set(HYPRLAND_SOURCE_DIR "" CACHE PATH "Optional Hyprland source checkout to use for plugin headers")
+set(HYPRLAND_INCLUDE_DIRS ${HYPR_DEPS_INCLUDE_DIRS})
+
+if(HYPRLAND_SOURCE_DIR)
+  if(NOT EXISTS "${HYPRLAND_SOURCE_DIR}/src/plugins/PluginAPI.hpp")
+    message(FATAL_ERROR "HYPRLAND_SOURCE_DIR must point at a Hyprland checkout")
+  endif()
+
+  set(HYPRLAND_LOCAL_HEADER_ROOT "${CMAKE_CURRENT_BINARY_DIR}/hyprland-local-headers")
+  file(MAKE_DIRECTORY "${HYPRLAND_LOCAL_HEADER_ROOT}/hyprland")
+  file(REMOVE "${HYPRLAND_LOCAL_HEADER_ROOT}/hyprland/src")
+  file(REMOVE "${HYPRLAND_LOCAL_HEADER_ROOT}/hyprland/protocols")
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E create_symlink "${HYPRLAND_SOURCE_DIR}/src" "${HYPRLAND_LOCAL_HEADER_ROOT}/hyprland/src")
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E create_symlink "${HYPRLAND_SOURCE_DIR}/protocols" "${HYPRLAND_LOCAL_HEADER_ROOT}/hyprland/protocols")
+  list(PREPEND HYPRLAND_INCLUDE_DIRS "${HYPRLAND_LOCAL_HEADER_ROOT}")
+endif()
+
+set(HYPRLAND_DERIVED_INCLUDE_DIRS)
+foreach(HYPRLAND_INCLUDE_DIR IN LISTS HYPRLAND_INCLUDE_DIRS)
+  list(APPEND HYPRLAND_DERIVED_INCLUDE_DIRS "${HYPRLAND_INCLUDE_DIR}")
+  if(EXISTS "${HYPRLAND_INCLUDE_DIR}/hyprland")
+    list(APPEND HYPRLAND_DERIVED_INCLUDE_DIRS "${HYPRLAND_INCLUDE_DIR}/hyprland")
+  endif()
+  if(EXISTS "${HYPRLAND_INCLUDE_DIR}/hyprland/src")
+    list(APPEND HYPRLAND_DERIVED_INCLUDE_DIRS "${HYPRLAND_INCLUDE_DIR}/hyprland/src")
+  endif()
+  if(EXISTS "${HYPRLAND_INCLUDE_DIR}/hyprland/protocols")
+    list(APPEND HYPRLAND_DERIVED_INCLUDE_DIRS "${HYPRLAND_INCLUDE_DIR}/hyprland/protocols")
+  endif()
+endforeach()
+list(REMOVE_DUPLICATES HYPRLAND_DERIVED_INCLUDE_DIRS)
+
 add_library(hyprcapture SHARED
   src/plugin/main.cpp
   src/plugin/artifact_capture.cpp
@@ -38,7 +70,7 @@ add_library(hyprcapture SHARED
   src/shared/protocol.cpp
 )
 
-target_include_directories(hyprcapture PRIVATE src ${HYPR_DEPS_INCLUDE_DIRS})
+target_include_directories(hyprcapture BEFORE PRIVATE src ${HYPRLAND_DERIVED_INCLUDE_DIRS})
 target_link_directories(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARY_DIRS})
 target_link_libraries(hyprcapture PRIVATE ${HYPR_DEPS_LIBRARIES} nlohmann_json::nlohmann_json)
 target_link_options(hyprcapture PRIVATE -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack)
