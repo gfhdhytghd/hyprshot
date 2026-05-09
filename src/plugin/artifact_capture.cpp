@@ -8,7 +8,9 @@
 #define protected public
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
+#include <hyprland/src/errorOverlay/Overlay.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/gl/GLFramebuffer.hpp>
@@ -1096,6 +1098,8 @@ RgbaReadback renderMonitorReadback(const PHLMONITOR& monitor,
 
     g_pHyprRenderer->draw(CClearPassElement::SClearData{CHyprColor{0.0, 0.0, 0.0, 1.0}});
     g_pHyprRenderer->renderWorkspace(monitor, monitor->m_activeWorkspace, frozenTime, CBox{0, 0, static_cast<double>(width), static_cast<double>(height)});
+    if (monitor == Desktop::focusState()->monitor())
+        ErrorOverlay::overlay()->draw();
     g_pHyprRenderer->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
     g_pHyprRenderer->m_renderData.blockScreenShader = previousBlockShader;
