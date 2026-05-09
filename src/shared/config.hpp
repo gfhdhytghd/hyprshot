@@ -29,6 +29,7 @@ struct CaptureDefaults {
     std::string      saveDir = "~/Pictures/Screenshots";
     std::string      filenameTemplate = "Screenshot-%Y-%m-%d-%H%M%S.png";
     std::string      helper;
+    std::string      recordSaveDir = "~/Video/Screenrecording";
     std::string      recordFilenameTemplate = "Recording-%Y-%m-%d-%H%M%S.mp4";
     std::string      recordFormat = "mp4";
     std::string      recordTransparentFormat = "webm";

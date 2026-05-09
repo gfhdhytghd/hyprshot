@@ -10,9 +10,12 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
+#include <QPainter>
 #include <QPixmap>
 
 #include <algorithm>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
@@ -65,6 +68,89 @@ QPixmap loadThumbnailPixmap(const QString& path) {
     return QPixmap::fromImage(image);
 }
 
+bool pathIsUnderDirectory(const QString& path, const QString& root) {
+    const QString pathCanonical = QFileInfo(path).canonicalFilePath();
+    const QString rootCanonical = QFileInfo(root).canonicalFilePath();
+    return !pathCanonical.isEmpty() && !rootCanonical.isEmpty() && pathCanonical.startsWith(rootCanonical + QLatin1Char('/'));
+}
+
+bool trustedDirectory(const QString& path) {
+    const QByteArray native = QFile::encodeName(QFileInfo(path).canonicalFilePath());
+    struct stat      st {};
+    return !native.isEmpty() && stat(native.constData(), &st) == 0 && S_ISDIR(st.st_mode) && (st.st_uid == 0 || st.st_uid == geteuid()) &&
+        (st.st_mode & 0022) == 0;
+}
+
+bool isTrustedRecordingResultPath(const QString& path, const hyprcapture::CaptureDefaults& defaults) {
+    const QFileInfo info(path);
+    if (path.isEmpty() || !info.exists() || !info.isFile() || !info.isReadable() || info.ownerId() != geteuid())
+        return false;
+
+    const QByteArray native = QFile::encodeName(info.canonicalFilePath());
+    struct stat      st {};
+    if (native.isEmpty() || stat(native.constData(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != geteuid() || (st.st_mode & 0022) != 0)
+        return false;
+
+    const QString recordRoot = QString::fromStdString(hyprcapture::expandUserPath(defaults.recordSaveDir).string());
+    return trustedDirectory(recordRoot) && pathIsUnderDirectory(path, recordRoot);
+}
+
+QPixmap recordingThumbnailPixmap(const QString& path) {
+    QPixmap pixmap(180, 120);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const QRectF rect(0.5, 0.5, pixmap.width() - 1.0, pixmap.height() - 1.0);
+    painter.setPen(QPen(QColor(235, 238, 242, 95), 1.0));
+    painter.setBrush(QColor(28, 31, 36, 238));
+    painter.drawRoundedRect(rect, 8.0, 8.0);
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(235, 238, 242, 235));
+    const QPointF center(pixmap.width() / 2.0, 48.0);
+    QPolygonF play;
+    play << QPointF(center.x() - 13.0, center.y() - 18.0) << QPointF(center.x() - 13.0, center.y() + 18.0) << QPointF(center.x() + 20.0, center.y());
+    painter.drawPolygon(play);
+
+    QFont font = painter.font();
+    font.setPointSize(9);
+    painter.setFont(font);
+    painter.setPen(QColor(235, 238, 242, 230));
+    const QString name = painter.fontMetrics().elidedText(QFileInfo(path).fileName(), Qt::ElideMiddle, pixmap.width() - 24);
+    painter.drawText(QRect(12, 86, pixmap.width() - 24, 22), Qt::AlignCenter, name);
+    return pixmap;
+}
+
+int showRecordingResult(const hyprcapture::CaptureDefaults& defaults, const QString& path) {
+    if (!isTrustedRecordingResultPath(path, defaults))
+        return 1;
+
+    const QString canonicalPath = QFileInfo(path).canonicalFilePath();
+    QString       restoreClipboardPath;
+    if (defaults.clipboard && defaults.showThumbnail)
+        restoreClipboardPath = hyprcapture::ui::saveClipboardSnapshot();
+
+    if (defaults.clipboard)
+        hyprcapture::ui::copyFileUrlToClipboard(canonicalPath);
+
+    if (!defaults.showThumbnail) {
+        hyprcapture::ui::discardClipboardSnapshot(restoreClipboardPath);
+        return 0;
+    }
+
+    const QString deleteRoot = QString::fromStdString(hyprcapture::expandUserPath(defaults.recordSaveDir).string());
+    ResultThumbnail thumbnail(recordingThumbnailPixmap(canonicalPath),
+                              canonicalPath,
+                              restoreClipboardPath,
+                              deleteRoot,
+                              static_cast<int>(defaults.thumbnailTimeoutMs),
+                              true);
+    thumbnail.show();
+    return qApp->exec();
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -91,6 +177,7 @@ int main(int argc, char** argv) {
         {{"fushion-mode", "fusion-mode"}, "Enable fushion toolbar behavior.", "0|1", "0"},
         {"save-dir", "Save directory.", "path", "~/Pictures/Screenshots"},
         {"filename-template", "Filename strftime template.", "template", "Screenshot-%Y-%m-%d-%H%M%S.png"},
+        {"record-save-dir", "Recording save directory.", "path", "~/Video/Screenrecording"},
         {"record-filename-template", "Recording filename strftime template.", "template", "Recording-%Y-%m-%d-%H%M%S.mp4"},
         {"record-format", "Recording container format.", "format", "mp4"},
         {"record-transparent-format", "Transparent window recording container format.", "format", "webm"},
@@ -112,6 +199,7 @@ int main(int argc, char** argv) {
         {"session-json", "Compositor session metadata.", "json", "{}"},
         {"session-json-file", "Private compositor session metadata file.", "path"},
         {"thumbnail-window", "Show a normal thumbnail window for an image path.", "path"},
+        {"recording-result", "Handle a completed recording result.", "path"},
         {"thumbnail-delete-root", "Directory where thumbnail files may be deleted.", "path"},
         {"restore-clipboard", "Clipboard snapshot to restore when deleting the thumbnail image.", "path"},
         {"quick", "Capture immediately."},
@@ -147,6 +235,7 @@ int main(int argc, char** argv) {
     defaults.fushionMode = flagValue(parser, "fushion-mode", defaults.fushionMode);
     defaults.saveDir = parser.value("save-dir").toStdString();
     defaults.filenameTemplate = parser.value("filename-template").toStdString();
+    defaults.recordSaveDir = parser.value("record-save-dir").toStdString();
     defaults.recordFilenameTemplate = parser.value("record-filename-template").toStdString();
     defaults.recordFormat = parser.value("record-format").toStdString();
     defaults.recordTransparentFormat = parser.value("record-transparent-format").toStdString();
@@ -165,6 +254,9 @@ int main(int argc, char** argv) {
     defaults.watermarkPosition = hyprcapture::parseWatermarkPosition(parser.value("watermark-position").toStdString(), defaults.watermarkPosition);
     defaults.watermarkWidth = parser.value("watermark-width").toStdString();
     defaults.watermarkOffset = parser.value("watermark-offset").toStdString();
+
+    if (hasArgument(argc, argv, "--recording-result"))
+        return showRecordingResult(defaults, parser.value("recording-result"));
 
     QString sessionJson = parser.value("session-json");
     if (parser.isSet("session-json-file")) {

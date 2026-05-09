@@ -454,7 +454,7 @@ int effectiveRecordingFps(const RecordingFrameRequest& request, int requestedFps
 }
 
 std::filesystem::path uniqueOutputPath(const CaptureDefaults& defaults) {
-    auto dir = expandUserPath(defaults.saveDir);
+    auto dir = expandUserPath(defaults.recordSaveDir);
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
 
@@ -831,6 +831,7 @@ struct ActiveGsrRecording {
     pid_t                 pid = -1;
     SP<CEventLoopTimer>   timer;
     std::filesystem::path outputPath;
+    CaptureDefaults       defaults;
 };
 
 std::unique_ptr<ActiveGsrRecording> g_gsrRecording;
@@ -838,6 +839,18 @@ std::unique_ptr<ActiveGsrRecording> g_gsrRecording;
 void notifyRecording(const std::string& message, const CHyprColor& color = CHyprColor(0.2, 0.8, 0.3, 1.0), float timeoutMs = 3000) {
     if (g_pluginHandle)
         HyprlandAPI::addNotification(g_pluginHandle, "[hyprcapture] " + message, color, timeoutMs);
+}
+
+void finishRecordingOutput(const CaptureDefaults& defaults, const std::filesystem::path& outputPath, const std::string& message, bool launchResultHelper) {
+    setOwnerOnlyPermissions(outputPath);
+    notifyRecording(message + ": " + outputPath.string());
+
+    if (!launchResultHelper || (!defaults.clipboard && !defaults.showThumbnail))
+        return;
+
+    const auto result = launchRecordingResultHelper(defaults, outputPath.string());
+    if (!result.success)
+        notifyRecording("recording result helper failed: " + result.error, CHyprColor(1.0, 0.35, 0.25, 1.0), 5000);
 }
 
 bool reapGsrRecordingIfExited() {
@@ -852,8 +865,7 @@ bool reapGsrRecordingIfExited() {
         auto recording = std::move(g_gsrRecording);
         if (recording->timer && g_pEventLoopManager)
             g_pEventLoopManager->removeTimer(recording->timer);
-        setOwnerOnlyPermissions(recording->outputPath);
-        notifyRecording("recording finished: " + recording->outputPath.string());
+        finishRecordingOutput(recording->defaults, recording->outputPath, "recording finished", true);
         return false;
     }
 
@@ -872,8 +884,7 @@ LaunchResult stopRecordingInternal(const std::string& reason, bool drain) {
             while (waitpid(recording->pid, &status, 0) < 0 && errno == EINTR) {
             }
         }
-        setOwnerOnlyPermissions(recording->outputPath);
-        notifyRecording("recording " + reason + ": " + recording->outputPath.string());
+        finishRecordingOutput(recording->defaults, recording->outputPath, "recording " + reason, drain);
         return {.success = true};
     }
 
@@ -887,7 +898,7 @@ LaunchResult stopRecordingInternal(const std::string& reason, bool drain) {
     if (recording->encoder)
         recording->encoder->stopAndJoin(drain);
 
-    notifyRecording("recording " + reason + ": " + recording->outputPath.string());
+    finishRecordingOutput(recording->request.defaults, recording->outputPath, "recording " + reason, drain);
     return {.success = true};
 }
 
@@ -1064,6 +1075,7 @@ LaunchResult startGsrRecording(const RecordingRequest& request) {
     g_gsrRecording = std::make_unique<ActiveGsrRecording>();
     g_gsrRecording->pid = pid;
     g_gsrRecording->outputPath = outputPath;
+    g_gsrRecording->defaults = request.defaults;
     scheduleGsrStopTimer(std::clamp<int>(static_cast<int>(request.defaults.recordMaxSeconds), 0, 24 * 60 * 60));
 
     notifyRecording("recording started via gpu-screen-recorder: " + outputPath.string());

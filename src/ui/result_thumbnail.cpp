@@ -126,8 +126,8 @@ bool canDeleteThumbnailPath(const QString& path, const QString& deleteRoot) {
 
 } // namespace
 
-ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString restoreClipboardPath, QString deleteRoot, int timeoutMs, QWidget* parent)
-    : QWidget(parent), m_path(std::move(path)), m_restoreClipboardPath(std::move(restoreClipboardPath)), m_deleteRoot(std::move(deleteRoot)) {
+ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString restoreClipboardPath, QString deleteRoot, int timeoutMs, bool copyFile, QWidget* parent)
+    : QWidget(parent), m_path(std::move(path)), m_restoreClipboardPath(std::move(restoreClipboardPath)), m_deleteRoot(std::move(deleteRoot)), m_copyFile(copyFile) {
     setWindowFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus);
     setFocusPolicy(Qt::NoFocus);
     setObjectName("thumbnail");
@@ -174,9 +174,11 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
         if (!m_path.isEmpty() && openPath(m_path))
             close();
     });
-    addAction("Copy image", [this] {
+    addAction(m_copyFile ? "Copy file" : "Copy image", [this] {
         const auto currentPixmap = m_imageLabel->pixmap();
-        if (!currentPixmap.isNull())
+        if (m_copyFile && !m_path.isEmpty())
+            hyprcapture::ui::copyFileUrlToClipboard(m_path);
+        else if (!currentPixmap.isNull())
             hyprcapture::ui::copyPixmapToClipboard(currentPixmap);
     });
     addAction("Show in folder", [this] {

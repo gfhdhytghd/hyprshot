@@ -117,6 +117,7 @@ void registerConfigValues() {
     addBoolConfig("fushion_mode", "Fuse region and window interactions in one overlay", false);
     addStringConfig("save_dir", "Capture output directory", "~/Pictures/Screenshots");
     addStringConfig("filename_template", "Screenshot filename strftime template", "Screenshot-%Y-%m-%d-%H%M%S.png");
+    addStringConfig("record_save_dir", "Recording output directory", "~/Video/Screenrecording");
     addStringConfig("record_filename_template", "Recording filename strftime template", "Recording-%Y-%m-%d-%H%M%S.mp4");
     addStringConfig("record_format", "Default recording container", "mp4");
     addStringConfig("record_transparent_format", "Default transparent recording container", "webm");
@@ -162,6 +163,7 @@ hyprcapture::CaptureDefaults readDefaults() {
     defaults.saveDir = configString("save_dir", defaults.saveDir);
     defaults.filenameTemplate = configString("filename_template", defaults.filenameTemplate);
     defaults.helper = configString("helper", defaults.helper);
+    defaults.recordSaveDir = configString("record_save_dir", defaults.recordSaveDir);
     defaults.recordFilenameTemplate = configString("record_filename_template", defaults.recordFilenameTemplate);
     defaults.recordFormat = configString("record_format", defaults.recordFormat);
     defaults.recordTransparentFormat = configString("record_transparent_format", defaults.recordTransparentFormat);

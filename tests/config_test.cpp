@@ -59,6 +59,7 @@ int main() {
     session.defaults.windowBackground = WindowBackground::FollowSystem;
     session.defaults.recordTransparentFormat = "webm";
     session.defaults.recordTransparentCodec = "auto";
+    session.defaults.recordSaveDir = "~/Video/Screenrecording";
     session.defaults.watermark = "activate-linux";
     session.defaults.watermarkPosition = WatermarkPosition::RightMiddle;
     session.defaults.watermarkWidth = "18%";
@@ -91,6 +92,7 @@ int main() {
     require(json.find("\"windowBackground\":\"follow-system\"") != std::string::npos, "window background json");
     require(json.find("\"recordTransparentFormat\":\"webm\"") != std::string::npos, "transparent record format json");
     require(json.find("\"recordTransparentCodec\":\"auto\"") != std::string::npos, "transparent record codec json");
+    require(json.find("\"recordSaveDir\":\"~/Video/Screenrecording\"") != std::string::npos, "record save dir json");
     require(json.find("\"watermark\":\"activate-linux\"") != std::string::npos, "watermark json");
     require(json.find("\"watermarkPosition\":\"right-middle\"") != std::string::npos, "watermark position json");
     require(json.find("\"watermarkWidth\":\"18%\"") != std::string::npos, "watermark width json");
@@ -113,6 +115,7 @@ int main() {
     require(decoded->defaults.fushionMode, "decoded fushion mode");
     require(decoded->defaults.recordTransparentFormat == "webm", "decoded transparent record format");
     require(decoded->defaults.recordTransparentCodec == "auto", "decoded transparent record codec");
+    require(decoded->defaults.recordSaveDir == "~/Video/Screenrecording", "decoded record save dir");
     require(decoded->cursorPosition.has_value() && decoded->cursorPosition->x == 120 && decoded->cursorPosition->y == 240, "decoded cursor position");
     require(decoded->monitors.size() == 1 && decoded->windows.size() == 1, "decoded object counts");
     require(decoded->windows.front().artifactPath == "/tmp/window.rgba", "decoded artifact path");

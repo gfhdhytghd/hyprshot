@@ -181,7 +181,7 @@ Recording is toggled from the normal screenshot overlay toolbar. Click the recor
 
 To stop an active recording, open the same overlay and click the checked record icon.
 
-Current recording output is a single video file under `save_dir`. Fullscreen and region recordings require `gpu-screen-recorder` and avoid Hyprland's screencopy, portal, and screenshare session paths. The default window backend still uses FFmpeg rawvideo input and compositor RGBA readback for offscreen/occlusion-safe capture. `record_window_backend = gsr-visible` records the selected on-screen window rectangle through `gpu-screen-recorder` for lower overhead, without portal or managed screenshare sessions, but it captures what is visibly present in that screen region.
+Current recording output is a single video file under `record_save_dir`. Fullscreen and region recordings require `gpu-screen-recorder` and avoid Hyprland's screencopy, portal, and screenshare session paths. The default window backend still uses FFmpeg rawvideo input and compositor RGBA readback for offscreen/occlusion-safe capture. `record_window_backend = gsr-visible` records the selected on-screen window rectangle through `gpu-screen-recorder` for lower overhead, without portal or managed screenshare sessions, but it captures what is visibly present in that screen region. Finished recordings use the same `clipboard` and `show_thumbnail` settings as screenshots; clipboard output is a local file URI.
 
 ### Thumbnail
 
@@ -214,6 +214,7 @@ plugin {
         fushion_mode = 0
         save_dir = ~/Pictures/Screenshots
         filename_template = Screenshot-%Y-%m-%d-%H%M%S.png
+        record_save_dir = ~/Video/Screenrecording
         record_filename_template = Recording-%Y-%m-%d-%H%M%S.mp4
         record_format = mp4
         record_transparent_format = webm
@@ -255,6 +256,7 @@ hl.config({
             fushion_mode = false,
             save_dir = "~/Pictures/Screenshots",
             filename_template = "Screenshot-%Y-%m-%d-%H%M%S.png",
+            record_save_dir = "~/Video/Screenrecording",
             record_filename_template = "Recording-%Y-%m-%d-%H%M%S.mp4",
             record_format = "mp4",
             record_transparent_format = "webm",
@@ -301,6 +303,7 @@ hl.config({
 | `show_thumbnail` | bool | `1` | Show the result thumbnail after capture. |
 | `save_dir` | string | `~/Pictures/Screenshots` | Output directory. `~` is expanded against `HOME`. |
 | `filename_template` | string | `Screenshot-%Y-%m-%d-%H%M%S.png` | `strftime` template for saved screenshot filenames. |
+| `record_save_dir` | string | `~/Video/Screenrecording` | Output directory for recordings. Finished recordings can be copied to the clipboard as local file URIs and shown in the thumbnail when those global output settings are enabled. |
 | `record_filename_template` | string | `Recording-%Y-%m-%d-%H%M%S.mp4` | `strftime` template for saved recording filenames. |
 | `record_format` | string | `mp4` | Default recording container shown in the overlay for non-transparent window backgrounds, fullscreen recording, and region recording. Supports `mp4`, `mov`, `webm`, and `mkv`; the selected value replaces the filename extension. |
 | `record_transparent_format` | string | `webm` | Default recording container shown when `window_background = transparent`. |

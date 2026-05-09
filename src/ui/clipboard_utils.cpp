@@ -615,6 +615,27 @@ bool copyImageFileToClipboardDetached(const QString& path) {
     return copyFileWithWlCopyDetached(path, QStringLiteral("image/png"), false);
 }
 
+bool copyFileUrlToClipboard(const QString& path) {
+    const QFileInfo info(path);
+    const QString canonical = info.canonicalFilePath();
+    if (canonical.isEmpty() || !info.exists() || !info.isFile())
+        return false;
+
+    const QUrl url = QUrl::fromLocalFile(canonical);
+    const QByteArray uriList = (url.toString() + QStringLiteral("\r\n")).toUtf8();
+    if (!uriList.isEmpty() && uriList.size() <= kMaxClipboardUrlBytes && copyBytesWithWlCopy(uriList, QStringLiteral("text/uri-list")))
+        return true;
+
+    auto* clipboard = QGuiApplication::clipboard();
+    if (!clipboard)
+        return false;
+
+    auto* mime = new QMimeData;
+    mime->setUrls({url});
+    clipboard->setMimeData(mime);
+    return true;
+}
+
 bool copyPixmapToClipboard(const QPixmap& pixmap) {
     if (pixmap.isNull())
         return false;
