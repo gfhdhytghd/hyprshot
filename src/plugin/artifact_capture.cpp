@@ -1296,6 +1296,12 @@ bool renderWindowArtifact(const PHLWINDOW& window,
                           CBox& artifactBox,
                           ArtifactBudget& budget) {
     auto readback = renderWindowArtifactReadback(window, monitor, frozenTime, decorate, width, height, artifactBox, &budget);
+    if (decorate && !readback.pixels.empty()) {
+        expandReadbackToShadowBounds(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window);
+        repairTransparentShadow(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window);
+        width = readback.width;
+        height = readback.height;
+    }
     return !readback.pixels.empty() && writeRgbaFile(path, readback.pixels);
 }
 
