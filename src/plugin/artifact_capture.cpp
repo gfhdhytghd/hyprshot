@@ -1703,6 +1703,14 @@ bool isRecordingShadowPixel(const unsigned char* px) {
     return maxRgb <= RECORDING_SHADOW_MAX_RGB;
 }
 
+bool isShadowColoredPixel(const unsigned char* px) {
+    if (px[3] <= 0)
+        return false;
+
+    const int maxRgb = std::max({px[0], px[1], px[2]});
+    return maxRgb <= RECORDING_SHADOW_MAX_RGB;
+}
+
 int colorByte(float value) {
     return std::clamp(static_cast<int>(std::lround(value * 255.0F)), 0, 255);
 }
@@ -1788,6 +1796,62 @@ double hyprlandRoundedShadowMultiplier(double x,
     }
 
     return std::clamp(multiplier, 0.0, 1.0);
+}
+
+bool hyprlandPointInRoundedRect(double x, double y, double left, double top, double right, double bottom, double radius, double roundingPower) {
+    if (x < left || x > right || y < top || y > bottom)
+        return false;
+
+    if (radius <= 0.0)
+        return true;
+
+    radius = std::min(radius, std::min((right - left) * 0.5, (bottom - top) * 0.5));
+    const double innerLeft = left + radius;
+    const double innerTop = top + radius;
+    const double innerRight = right - radius;
+    const double innerBottom = bottom - radius;
+
+    if (x >= innerLeft && x <= innerRight)
+        return true;
+    if (y >= innerTop && y <= innerBottom)
+        return true;
+
+    const double dx = x < innerLeft ? innerLeft - x : x - innerRight;
+    const double dy = y < innerTop ? innerTop - y : y - innerBottom;
+    return modifiedShadowLength(dx, dy, roundingPower) <= radius;
+}
+
+double hyprlandRoundedShadowPixelMultiplier(int x,
+                                            int y,
+                                            double shadowLeft,
+                                            double shadowTop,
+                                            double fullWidth,
+                                            double fullHeight,
+                                            double range,
+                                            double rounding,
+                                            double roundingPower,
+                                            int    shadowPower) {
+    constexpr int SAMPLE_GRID = 4;
+
+    const double windowLeft = range;
+    const double windowTop = range;
+    const double windowRight = fullWidth - range;
+    const double windowBottom = fullHeight - range;
+
+    double total = 0.0;
+    for (int sy = 0; sy < SAMPLE_GRID; ++sy) {
+        for (int sx = 0; sx < SAMPLE_GRID; ++sx) {
+            const double sampleX = x - shadowLeft + (static_cast<double>(sx) + 0.5) / SAMPLE_GRID;
+            const double sampleY = y - shadowTop + (static_cast<double>(sy) + 0.5) / SAMPLE_GRID;
+
+            if (hyprlandPointInRoundedRect(sampleX, sampleY, windowLeft, windowTop, windowRight, windowBottom, rounding, roundingPower))
+                continue;
+
+            total += hyprlandRoundedShadowMultiplier(sampleX, sampleY, fullWidth, fullHeight, range, rounding, roundingPower, shadowPower);
+        }
+    }
+
+    return std::clamp(total / static_cast<double>(SAMPLE_GRID * SAMPLE_GRID), 0.0, 1.0);
 }
 
 double shadowRoundingPx(const PHLWINDOW& window, double scale) {
@@ -1903,23 +1967,29 @@ void repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, co
     const double shadowTop = visibleTop - shadowRange;
     const double shadowWidth = std::max(1.0, (visibleRight - visibleLeft) + 2.0 * shadowRange);
     const double shadowHeight = std::max(1.0, (visibleBottom - visibleTop) + 2.0 * shadowRange);
+    const double windowLeft = shadowRange;
+    const double windowTop = shadowRange;
+    const double windowRight = shadowWidth - shadowRange;
+    const double windowBottom = shadowHeight - shadowRange;
 
     for (int y = 0; y < readback.height; ++y) {
         for (int x = 0; x < readback.width; ++x) {
-            if (x >= visibleLeft && x < visibleRight && y >= visibleTop && y < visibleBottom)
+            const double centerX = x - shadowLeft + 0.5;
+            const double centerY = y - shadowTop + 0.5;
+            if (hyprlandPointInRoundedRect(centerX, centerY, windowLeft, windowTop, windowRight, windowBottom, rounding, roundingPower))
                 continue;
 
             const auto i = (static_cast<std::size_t>(y) * readback.width + x) * RGBA_BYTES_PER_PIXEL;
             auto*      px = readback.pixels.data() + i;
             const bool existingShadowPixel = isRecordingShadowPixel(px);
+            const bool shadowColoredPixel = isShadowColoredPixel(px);
             const bool transparentShadowPadding = px[3] == 0;
-            if (!existingShadowPixel && !transparentShadowPadding)
+            if (!shadowColoredPixel && !transparentShadowPadding)
                 continue;
 
-            const double shadowX = x - shadowLeft + 0.5;
-            const double shadowY = y - shadowTop + 0.5;
-            int repairedAlpha = std::clamp(static_cast<int>(std::lround(color.a * hyprlandRoundedShadowMultiplier(shadowX, shadowY, shadowWidth, shadowHeight,
-                                                                                                                  shadowRange, rounding, roundingPower, shadowPower))),
+            int repairedAlpha = std::clamp(static_cast<int>(std::lround(color.a * hyprlandRoundedShadowPixelMultiplier(x, y, shadowLeft, shadowTop, shadowWidth,
+                                                                                                                       shadowHeight, shadowRange, rounding, roundingPower,
+                                                                                                                       shadowPower))),
                                            0, color.a);
             if (repairedAlpha <= 0 && existingShadowPixel)
                 repairedAlpha = reconstructedShadowAlpha(px, color);
