@@ -322,13 +322,24 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     m_menuShell->hide();
     layout->addWidget(m_menuShell, 0, Qt::AlignRight);
 
-    const QPixmap scaledPixmap = pixmap.scaled(kThumbnailMaxWidth, kThumbnailMaxHeight, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    QPixmap scaledPixmap = pixmap;
+    const QSizeF logicalPixmapSize = scaledPixmap.deviceIndependentSize();
+    if (logicalPixmapSize.width() > kThumbnailMaxWidth || logicalPixmapSize.height() > kThumbnailMaxHeight) {
+        const QSize targetLogicalSize = logicalPixmapSize.toSize().scaled(kThumbnailMaxWidth, kThumbnailMaxHeight, Qt::KeepAspectRatio);
+        const qreal dpr = std::max<qreal>(1.0, scaledPixmap.devicePixelRatio());
+        scaledPixmap = scaledPixmap.scaled(QSize(static_cast<int>(std::ceil(targetLogicalSize.width() * dpr)),
+                                                static_cast<int>(std::ceil(targetLogicalSize.height() * dpr))),
+                                           Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation);
+        scaledPixmap.setDevicePixelRatio(dpr);
+    }
+    const QSize scaledLogicalSize = scaledPixmap.deviceIndependentSize().toSize();
     m_card = new QWidget(this);
     m_card->setObjectName("thumbnailImageCard");
-    m_card->setFixedSize((scaledPixmap.size() + QSize(kThumbnailScreenMargin, kThumbnailScreenMargin)).expandedTo(QSize(1, 1)));
+    m_card->setFixedSize((scaledLogicalSize + QSize(kThumbnailScreenMargin, kThumbnailScreenMargin)).expandedTo(QSize(1, 1)));
 
     m_swipeBackdrop = new SwipeBackdrop(m_card);
-    m_swipeBackdrop->setGeometry(QRect(QPoint(0, 0), scaledPixmap.size()));
+    m_swipeBackdrop->setGeometry(QRect(QPoint(0, 0), scaledLogicalSize));
     m_swipeBackdrop->lower();
 
     m_imageLabel = new QLabel(m_card);
@@ -336,7 +347,7 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     m_imageLabel->setAttribute(Qt::WA_StyledBackground);
     m_imageLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
     m_imageLabel->setPixmap(scaledPixmap);
-    m_imageLabel->setGeometry(QRect(QPoint(0, 0), scaledPixmap.size()));
+    m_imageLabel->setGeometry(QRect(QPoint(0, 0), scaledLogicalSize));
     m_imageOrigin = m_imageLabel->pos();
     m_imageLabel->raise();
     layout->addWidget(m_card, 0, Qt::AlignRight);

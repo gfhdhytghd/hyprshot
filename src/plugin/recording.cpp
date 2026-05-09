@@ -427,6 +427,44 @@ std::string sanitizedPreset(std::string preset) {
     return preset;
 }
 
+bool trustedRecordingDirectory(const std::filesystem::path& dir, std::string& error) {
+    if (dir.empty()) {
+        error = "recording output directory is empty";
+        return false;
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        error = "recording output directory create failed: " + ec.message();
+        return false;
+    }
+
+    struct stat st {};
+    const auto  native = dir.string();
+    if (stat(native.c_str(), &st) != 0) {
+        error = std::string("recording output directory stat failed: ") + std::strerror(errno);
+        return false;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        error = "recording output path is not a directory";
+        return false;
+    }
+    if (st.st_uid != geteuid()) {
+        error = "recording output directory is not owned by the current user";
+        return false;
+    }
+    if ((st.st_mode & 0022) != 0) {
+        std::filesystem::permissions(dir, std::filesystem::perms::group_write | std::filesystem::perms::others_write, std::filesystem::perm_options::remove, ec);
+        if (ec || stat(native.c_str(), &st) != 0 || (st.st_mode & 0022) != 0) {
+            error = ec ? "recording output directory permission fix failed: " + ec.message() : "recording output directory is group/other writable";
+            return false;
+        }
+    }
+
+    return true;
+}
+
 Time::steady_dur frameIntervalForFps(int fps) {
     const auto safeFps = std::max(1, fps);
     auto       interval = std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<double>(1.0 / safeFps));
@@ -453,10 +491,11 @@ int effectiveRecordingFps(const RecordingFrameRequest& request, int requestedFps
     return std::max(1, fps);
 }
 
-std::filesystem::path uniqueOutputPath(const CaptureDefaults& defaults) {
+std::optional<std::filesystem::path> uniqueOutputPath(const CaptureDefaults& defaults, std::string& error) {
     auto dir = expandUserPath(defaults.recordSaveDir);
     std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
+    if (!trustedRecordingDirectory(dir, error))
+        return std::nullopt;
 
     std::filesystem::path filename(makeTimestampedFilename(defaults.recordFilenameTemplate));
     if (filename.empty() || filename == "." || filename == "..")
@@ -468,8 +507,13 @@ std::filesystem::path uniqueOutputPath(const CaptureDefaults& defaults) {
     const auto ext = filename.extension().string().empty() ? std::string(".mp4") : filename.extension().string();
     for (int i = 0; i < 1000; ++i) {
         const auto candidate = dir / (i == 0 ? stem + ext : stem + "-" + std::to_string(i) + ext);
+        ec.clear();
         if (!std::filesystem::exists(candidate, ec))
             return candidate;
+        if (ec) {
+            error = "recording output path check failed: " + ec.message();
+            return std::nullopt;
+        }
     }
 
     return dir / (stem + "-" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ext);
@@ -1067,18 +1111,21 @@ LaunchResult startGsrRecording(const RecordingRequest& request) {
     if ((request.mode == CaptureMode::Region || request.mode == CaptureMode::Window) && (request.targetGeometry.width <= 0.0 || request.targetGeometry.height <= 0.0))
         return {.success = false, .error = "invalid recording geometry"};
 
-    const auto outputPath = uniqueOutputPath(request.defaults);
+    std::string outputPathError;
+    const auto  outputPath = uniqueOutputPath(request.defaults, outputPathError);
+    if (!outputPath)
+        return {.success = false, .error = outputPathError.empty() ? "recording output path failed" : outputPathError};
     pid_t      pid = -1;
-    if (const auto result = spawnGpuScreenRecorder(request, outputPath, pid); !result.success)
+    if (const auto result = spawnGpuScreenRecorder(request, *outputPath, pid); !result.success)
         return result;
 
     g_gsrRecording = std::make_unique<ActiveGsrRecording>();
     g_gsrRecording->pid = pid;
-    g_gsrRecording->outputPath = outputPath;
+    g_gsrRecording->outputPath = *outputPath;
     g_gsrRecording->defaults = request.defaults;
     scheduleGsrStopTimer(std::clamp<int>(static_cast<int>(request.defaults.recordMaxSeconds), 0, 24 * 60 * 60));
 
-    notifyRecording("recording started via gpu-screen-recorder: " + outputPath.string());
+    notifyRecording("recording started via gpu-screen-recorder: " + outputPath->string());
     return {.success = true};
 }
 
@@ -1114,8 +1161,11 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
 
     const int requestedFps = std::clamp<int>(static_cast<int>(request->defaults.recordFps), 1, 240);
     const int fps = effectiveRecordingFps(frameRequest, requestedFps);
-    const auto outputPath = uniqueOutputPath(request->defaults);
-    auto encoder = std::make_unique<RawVideoEncoder>(outputPath,
+    std::string outputPathError;
+    const auto  outputPath = uniqueOutputPath(request->defaults, outputPathError);
+    if (!outputPath)
+        return {.success = false, .error = outputPathError.empty() ? "recording output path failed" : outputPathError};
+    auto encoder = std::make_unique<RawVideoEncoder>(*outputPath,
                                                      firstFrame->width,
                                                      firstFrame->height,
                                                      fps,
@@ -1134,14 +1184,14 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
     g_recording->interval = frameIntervalForFps(fps);
     g_recording->startedAt = Time::steadyNow();
     g_recording->nextFrameAt = g_recording->startedAt + g_recording->interval;
-    g_recording->outputPath = outputPath;
+    g_recording->outputPath = *outputPath;
     g_recording->width = width;
     g_recording->height = height;
     scheduleRecordingTimer();
 
     if (fps < requestedFps)
         notifyRecording("window recording limited to " + std::to_string(fps) + " fps to avoid compositor stalls", CHyprColor(1.0, 0.72, 0.2, 1.0), 5000);
-    notifyRecording("recording started: " + outputPath.string());
+    notifyRecording("recording started: " + outputPath->string());
     return {.success = true};
 }
 
