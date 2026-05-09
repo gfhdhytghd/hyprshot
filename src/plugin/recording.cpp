@@ -529,7 +529,7 @@ std::optional<RgbaColor> recordingCanvasFill(WindowBackground background) {
     switch (background) {
         case WindowBackground::White: return RgbaColor{255, 255, 255, 255};
         case WindowBackground::Black: return RgbaColor{0, 0, 0, 255};
-        case WindowBackground::FollowSystem: return RgbaColor{17, 19, 23, 255};
+        case WindowBackground::FollowSystem: return RgbaColor{245, 245, 245, 255};
         case WindowBackground::Real:
         case WindowBackground::Transparent: return std::nullopt;
     }

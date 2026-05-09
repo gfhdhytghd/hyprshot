@@ -1811,7 +1811,7 @@ std::optional<CHyprColor> recordingSolidBackgroundColor(WindowBackground backgro
     switch (background) {
         case WindowBackground::White: return CHyprColor{1.0, 1.0, 1.0, 1.0};
         case WindowBackground::Black: return CHyprColor{0.0, 0.0, 0.0, 1.0};
-        case WindowBackground::FollowSystem: return CHyprColor{17.0 / 255.0, 19.0 / 255.0, 23.0 / 255.0, 1.0};
+        case WindowBackground::FollowSystem: return CHyprColor{245.0 / 255.0, 245.0 / 255.0, 245.0 / 255.0, 1.0};
         case WindowBackground::Real:
         case WindowBackground::Transparent: return std::nullopt;
     }
