@@ -22,6 +22,7 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QImageWriter>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
@@ -491,15 +492,22 @@ bool writePrivateTextFile(const QString& path, const QByteArray& bytes) {
     return true;
 }
 
-QString compactProcessError(QProcess& process, const QString& fallback) {
-    QString error = QString::fromUtf8(process.readAllStandardError()).trimmed();
+QString compactProcessErrorText(const QByteArray& stderrData, const QByteArray& stdoutData, const QString& fallback) {
+    QString error = QString::fromUtf8(stderrData).trimmed();
     if (error.isEmpty())
-        error = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
+        error = QString::fromUtf8(stdoutData).trimmed();
     if (error.startsWith(QStringLiteral("[hyprcapture] ")))
         error = error.mid(QStringLiteral("[hyprcapture] ").size()).trimmed();
     if (error.isEmpty())
         error = fallback;
     return error.left(160);
+}
+
+bool hyprctlDispatchOutputHasError(const QByteArray& stderrData, const QByteArray& stdoutData) {
+    const QString stderrText = QString::fromUtf8(stderrData).trimmed();
+    const QString stdoutText = QString::fromUtf8(stdoutData).trimmed();
+    return stderrText.startsWith(QStringLiteral("error:"), Qt::CaseInsensitive) ||
+        stdoutText.startsWith(QStringLiteral("error:"), Qt::CaseInsensitive);
 }
 
 DispatchCommandResult dispatchHyprcaptureCommand(const QString& dispatcher, const QString& argument = {}) {
@@ -522,15 +530,45 @@ DispatchCommandResult dispatchHyprcaptureCommand(const QString& dispatcher, cons
         process.waitForFinished(500);
         return {.success = false, .error = QStringLiteral("hyprctl timeout")};
     }
-    if (process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0)
+    const QByteArray stderrData = process.readAllStandardError();
+    const QByteArray stdoutData = process.readAllStandardOutput();
+    if (process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0 && !hyprctlDispatchOutputHasError(stderrData, stdoutData))
         return {.success = true};
-    return {.success = false, .error = compactProcessError(process, QStringLiteral("dispatch failed"))};
+    return {.success = false, .error = compactProcessErrorText(stderrData, stdoutData, QStringLiteral("dispatch failed"))};
+}
+
+QString luaStringLiteral(const QString& value) {
+    const QJsonArray array{value};
+    const QString json = QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact));
+    return json.size() >= 2 ? json.mid(1, json.size() - 2) : QStringLiteral("\"\"");
+}
+
+DispatchCommandResult dispatchHyprcaptureLuaDispatcherFactory(const QString& factory, const QString& argument = {}) {
+    if (factory.isEmpty())
+        return {.success = false, .error = QStringLiteral("lua dispatcher missing")};
+
+    QString expression = QStringLiteral("hl.plugin.hyprcapture.%1(").arg(factory);
+    if (!argument.isEmpty())
+        expression += luaStringLiteral(argument);
+    expression += QStringLiteral(")");
+    return dispatchHyprcaptureCommand(expression);
 }
 
 DispatchCommandResult dispatchRecordingStart(const QString& requestPath) {
     if (requestPath.isEmpty())
         return {.success = false, .error = QStringLiteral("record request missing")};
-    return dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-start"), requestPath);
+
+    const auto legacyResult = dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-start"), requestPath);
+    if (legacyResult.success)
+        return legacyResult;
+    return dispatchHyprcaptureLuaDispatcherFactory(QStringLiteral("record_start_dispatcher"), requestPath);
+}
+
+DispatchCommandResult dispatchRecordingStop() {
+    const auto legacyResult = dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-stop"));
+    if (legacyResult.success)
+        return legacyResult;
+    return dispatchHyprcaptureLuaDispatcherFactory(QStringLiteral("record_stop_dispatcher"));
 }
 
 QString uniqueOutputPath(const QDir& dir, const QString& rawFilename) {
@@ -2532,7 +2570,7 @@ bool CaptureOverlay::startRecording(const QString& requestPath) {
 }
 
 bool CaptureOverlay::stopRecording() {
-    return dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-stop")).success;
+    return dispatchRecordingStop().success;
 }
 
 void CaptureOverlay::finishCapture() {

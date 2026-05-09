@@ -166,12 +166,30 @@ bind = SUPER SHIFT, F, hyprcapture:open,fullscreen
 | `hyprcapture:quick,<mode>` | Capture immediately in `region`, `fullscreen`, or `window` mode; disabled unless `allow_quick = 1`. |
 | `hyprcapture:cancel` | Reserved dispatcher; currently returns success without changing an active helper. |
 
+When Hyprland is running with Lua config, the plugin also exposes matching functions under `hl.plugin.hyprcapture`:
+
+```lua
+hl.bind("SUPER + s", function()
+    hl.plugin.hyprcapture.open()
+end)
+
+hl.bind("SUPER + SHIFT + S", function()
+    hl.plugin.hyprcapture.open("window")
+end)
+```
+
+Available Lua functions are `open`, `quick`, `record`, `record_toggle`, `record_stop`, `record_start`, `cancel`, and `dispatch`.
+`dispatch` accepts the dispatcher name plus an optional argument, for example `hl.plugin.hyprcapture.dispatch("open", "fullscreen")`.
+The internal helper uses `record_start_dispatcher` and `record_stop_dispatcher` so `hyprctl dispatch` can call back into the plugin under Lua config.
+
+Use lowercase `s` for `SUPER + s`. In Lua config key strings, uppercase `S` means Shift is part of the binding.
+
 ### Overlay
 
 - Region mode: drag a rectangle, then release or press Enter.
 - Fullscreen mode: captures according to `fullscreen_scope`.
 - Window mode: hover a window and press Enter or click it.
-- Fushion mode: the toolbar keeps the fullscreen action and configuration controls; drag anywhere to capture a region, or single-click a window to capture that window.
+- Fusion mode: the toolbar keeps the fullscreen action and configuration controls; drag anywhere to capture a region, or single-click a window to capture that window.
 - Esc cancels the helper.
 - The toolbar is anchored near the bottom of the screen and only shows controls relevant to the active mode.
 
@@ -211,7 +229,7 @@ plugin {
         clipboard = 1
         show_thumbnail = 1
         allow_quick = 0
-        fushion_mode = 0
+        fusion_mode = 0
         save_dir = ~/Pictures/Screenshots
         filename_template = Screenshot-%Y-%m-%d-%H%M%S.png
         record_save_dir = ~/Video/Screenrecording
@@ -253,7 +271,7 @@ hl.config({
             clipboard = true,
             show_thumbnail = true,
             allow_quick = false,
-            fushion_mode = false,
+            fusion_mode = false,
             save_dir = "~/Pictures/Screenshots",
             filename_template = "Screenshot-%Y-%m-%d-%H%M%S.png",
             record_save_dir = "~/Video/Screenrecording",
@@ -281,6 +299,39 @@ hl.config({
 })
 ```
 
+### Lua Config Guide
+
+Use `hl.config` for settings and `hl.plugin.hyprcapture` for actions:
+
+```lua
+hl.config({
+    plugin = {
+        hyprcapture = {
+            default_mode = "region",
+            fusion_mode = true,
+            fullscreen_scope = "all",
+            window_background = "follow-system",
+            save = true,
+            clipboard = true,
+            show_thumbnail = true,
+            helper = "/home/you/.local/bin/hyprcapture-ui",
+        },
+    },
+})
+
+hl.bind("SUPER + s", function()
+    hl.plugin.hyprcapture.open()
+end)
+
+hl.bind("SUPER + SHIFT + S", function()
+    hl.plugin.hyprcapture.open("window")
+end)
+```
+
+Do not use `hyprctl dispatch hyprcapture:open` as a Lua fallback. Hyprland's Lua config dispatcher parser treats `hyprcapture:open` as Lua syntax. Use `hl.plugin.hyprcapture.open()` once the plugin is loaded, or bind a direct helper command during development while testing an older loaded plugin.
+
+The old misspelled `fushion_mode` key is still accepted as a compatibility alias, but new configs should use `fusion_mode`.
+
 ### Capture options
 
 | Option | Type | Default | Description |
@@ -292,7 +343,8 @@ hl.config({
 | `window_shadow` | string | `keep` | Window shadow policy. Supports `keep` and `remove`. Transparent window recordings keep shadows and normalize the alpha falloff so the shadow fades out instead of encoding as a hard border. |
 | `include_cursor` | bool | `0` | Parsed and forwarded by the plugin/helper; cursor compositing is not currently rendered into the output. |
 | `allow_quick` | bool | `0` | Enable no-confirmation `hyprcapture:quick` dispatchers. Leave disabled unless your Hyprland IPC policy already restricts untrusted same-user clients. |
-| `fushion_mode` | bool | `0` | Fuse region and window interactions in one overlay: drag to capture a region, or single-click a window to capture that window. The toolbar keeps the fullscreen action and configuration controls; fullscreen multi-monitor scope is shown only when multiple monitors are present. |
+| `fusion_mode` | bool | `0` | Fuse region and window interactions in one overlay: drag to capture a region, or single-click a window to capture that window. The toolbar keeps the fullscreen action and configuration controls; fullscreen multi-monitor scope is shown only when multiple monitors are present. |
+| `fushion_mode` | bool | `0` | Legacy compatibility alias for `fusion_mode`. New configs should use `fusion_mode`. |
 
 ### Output options
 
