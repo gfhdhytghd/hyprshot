@@ -1725,13 +1725,7 @@ void repairTransparentRecordingShadow(RgbaReadback& readback, const CBox& artifa
     }
     if (peakAlpha <= 0)
         return;
-
-    const auto sideRatio = [](int pixel, int outerStart, int extent, bool fromStart) {
-        if (extent <= 0)
-            return 1.0;
-        const double distanceFromOuter = fromStart ? (pixel - outerStart + 0.5) : (outerStart - pixel - 0.5);
-        return std::clamp(distanceFromOuter / static_cast<double>(extent), 0.0, 1.0);
-    };
+    peakAlpha = std::min(peakAlpha, 96);
 
     for (int y = 0; y < readback.height; ++y) {
         for (int x = 0; x < readback.width; ++x) {
@@ -1743,27 +1737,12 @@ void repairTransparentRecordingShadow(RgbaReadback& readback, const CBox& artifa
             if (!isRecordingShadowPixel(px))
                 continue;
 
-            double ratio = 1.0;
-            bool   outside = false;
-            if (x < visibleLeft) {
-                ratio = std::min(ratio, sideRatio(x, 0, leftExtent, true));
-                outside = true;
-            } else if (x >= visibleRight) {
-                ratio = std::min(ratio, sideRatio(x, readback.width, rightExtent, false));
-                outside = true;
-            }
-            if (y < visibleTop) {
-                ratio = std::min(ratio, sideRatio(y, 0, topExtent, true));
-                outside = true;
-            } else if (y >= visibleBottom) {
-                ratio = std::min(ratio, sideRatio(y, readback.height, bottomExtent, false));
-                outside = true;
-            }
-            if (!outside)
-                continue;
-
-            const int repairedAlpha = std::clamp(static_cast<int>(std::lround(peakAlpha * std::pow(ratio, 1.8))), 0, peakAlpha);
-            px[3] = static_cast<unsigned char>(std::min<int>(px[3], repairedAlpha));
+            const double dx = x < visibleLeft ? (visibleLeft - x - 0.5) : (x >= visibleRight ? (x - visibleRight + 0.5) : 0.0);
+            const double dy = y < visibleTop ? (visibleTop - y - 0.5) : (y >= visibleBottom ? (y - visibleBottom + 0.5) : 0.0);
+            const double distanceFromWindow = std::hypot(dx, dy);
+            const double ratio = std::clamp((static_cast<double>(maxExtent) - distanceFromWindow + 0.5) / static_cast<double>(maxExtent), 0.0, 1.0);
+            const int    repairedAlpha = std::clamp(static_cast<int>(std::lround(peakAlpha * std::pow(ratio, 1.9))), 0, peakAlpha);
+            px[3] = static_cast<unsigned char>(repairedAlpha);
             if (px[3] <= 2) {
                 px[0] = 0;
                 px[1] = 0;
@@ -1771,9 +1750,9 @@ void repairTransparentRecordingShadow(RgbaReadback& readback, const CBox& artifa
                 px[3] = 0;
                 continue;
             }
-            px[0] = static_cast<unsigned char>(std::min<int>(px[0], RECORDING_SHADOW_MAX_RGB));
-            px[1] = static_cast<unsigned char>(std::min<int>(px[1], RECORDING_SHADOW_MAX_RGB));
-            px[2] = static_cast<unsigned char>(std::min<int>(px[2], RECORDING_SHADOW_MAX_RGB));
+            px[0] = 0;
+            px[1] = 0;
+            px[2] = 0;
         }
     }
 }
