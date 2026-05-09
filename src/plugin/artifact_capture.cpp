@@ -113,6 +113,8 @@ constexpr auto        STALE_ARTIFACT_MAX_AGE = std::chrono::minutes(10);
 constexpr int         WINDOW_BACKGROUND_MIN_ALPHA = 32;
 constexpr int         WINDOW_SHADOW_MAX_RGB = 32;
 constexpr int         WINDOW_SHADOW_MAX_ALPHA = 223;
+constexpr int         RECORDING_SHADOW_MAX_RGB = 64;
+constexpr int         RECORDING_SHADOW_MAX_ALPHA = 249;
 
 struct RgbaReadbackRegion {
     int         outputCropX = 0;
@@ -1674,6 +1676,108 @@ bool isWindowContentPixel(const unsigned char* px) {
     return maxRgb > WINDOW_SHADOW_MAX_RGB || alpha > WINDOW_SHADOW_MAX_ALPHA;
 }
 
+bool isRecordingShadowPixel(const unsigned char* px) {
+    const int alpha = px[3];
+    if (alpha <= 0 || alpha > RECORDING_SHADOW_MAX_ALPHA)
+        return false;
+
+    const int maxRgb = std::max({px[0], px[1], px[2]});
+    return maxRgb <= RECORDING_SHADOW_MAX_RGB;
+}
+
+void repairTransparentRecordingShadow(RgbaReadback& readback, const CBox& artifactBox, const CBox& visibleBox) {
+    if (readback.width <= 0 || readback.height <= 0 || readback.pixels.empty() || artifactBox.w <= 0.0 || artifactBox.h <= 0.0 || visibleBox.w <= 0.0 ||
+        visibleBox.h <= 0.0)
+        return;
+
+    const double scaleX = static_cast<double>(readback.width) / artifactBox.w;
+    const double scaleY = static_cast<double>(readback.height) / artifactBox.h;
+    if (!std::isfinite(scaleX) || !std::isfinite(scaleY) || scaleX <= 0.0 || scaleY <= 0.0)
+        return;
+
+    const int visibleLeft = std::clamp(static_cast<int>(std::floor((visibleBox.x - artifactBox.x) * scaleX)), 0, readback.width);
+    const int visibleTop = std::clamp(static_cast<int>(std::floor((visibleBox.y - artifactBox.y) * scaleY)), 0, readback.height);
+    const int visibleRight =
+        std::clamp(static_cast<int>(std::ceil((visibleBox.x + visibleBox.w - artifactBox.x) * scaleX)), visibleLeft, readback.width);
+    const int visibleBottom =
+        std::clamp(static_cast<int>(std::ceil((visibleBox.y + visibleBox.h - artifactBox.y) * scaleY)), visibleTop, readback.height);
+    if (visibleLeft <= 0 && visibleTop <= 0 && visibleRight >= readback.width && visibleBottom >= readback.height)
+        return;
+
+    const int leftExtent = visibleLeft;
+    const int topExtent = visibleTop;
+    const int rightExtent = readback.width - visibleRight;
+    const int bottomExtent = readback.height - visibleBottom;
+    const int maxExtent = std::max({leftExtent, topExtent, rightExtent, bottomExtent});
+    if (maxExtent <= 1)
+        return;
+
+    int peakAlpha = 0;
+    for (int y = 0; y < readback.height; ++y) {
+        for (int x = 0; x < readback.width; ++x) {
+            if (x >= visibleLeft && x < visibleRight && y >= visibleTop && y < visibleBottom)
+                continue;
+
+            const auto i = (static_cast<std::size_t>(y) * readback.width + x) * RGBA_BYTES_PER_PIXEL;
+            if (isRecordingShadowPixel(readback.pixels.data() + i))
+                peakAlpha = std::max<int>(peakAlpha, readback.pixels[i + 3]);
+        }
+    }
+    if (peakAlpha <= 0)
+        return;
+
+    const auto sideRatio = [](int pixel, int outerStart, int extent, bool fromStart) {
+        if (extent <= 0)
+            return 1.0;
+        const double distanceFromOuter = fromStart ? (pixel - outerStart + 0.5) : (outerStart - pixel - 0.5);
+        return std::clamp(distanceFromOuter / static_cast<double>(extent), 0.0, 1.0);
+    };
+
+    for (int y = 0; y < readback.height; ++y) {
+        for (int x = 0; x < readback.width; ++x) {
+            if (x >= visibleLeft && x < visibleRight && y >= visibleTop && y < visibleBottom)
+                continue;
+
+            const auto i = (static_cast<std::size_t>(y) * readback.width + x) * RGBA_BYTES_PER_PIXEL;
+            auto*      px = readback.pixels.data() + i;
+            if (!isRecordingShadowPixel(px))
+                continue;
+
+            double ratio = 1.0;
+            bool   outside = false;
+            if (x < visibleLeft) {
+                ratio = std::min(ratio, sideRatio(x, 0, leftExtent, true));
+                outside = true;
+            } else if (x >= visibleRight) {
+                ratio = std::min(ratio, sideRatio(x, readback.width, rightExtent, false));
+                outside = true;
+            }
+            if (y < visibleTop) {
+                ratio = std::min(ratio, sideRatio(y, 0, topExtent, true));
+                outside = true;
+            } else if (y >= visibleBottom) {
+                ratio = std::min(ratio, sideRatio(y, readback.height, bottomExtent, false));
+                outside = true;
+            }
+            if (!outside)
+                continue;
+
+            const int repairedAlpha = std::clamp(static_cast<int>(std::lround(peakAlpha * std::pow(ratio, 1.8))), 0, peakAlpha);
+            px[3] = static_cast<unsigned char>(std::min<int>(px[3], repairedAlpha));
+            if (px[3] <= 2) {
+                px[0] = 0;
+                px[1] = 0;
+                px[2] = 0;
+                px[3] = 0;
+                continue;
+            }
+            px[0] = static_cast<unsigned char>(std::min<int>(px[0], RECORDING_SHADOW_MAX_RGB));
+            px[1] = static_cast<unsigned char>(std::min<int>(px[1], RECORDING_SHADOW_MAX_RGB));
+            px[2] = static_cast<unsigned char>(std::min<int>(px[2], RECORDING_SHADOW_MAX_RGB));
+        }
+    }
+}
+
 void compositeWindowOverBackground(RgbaReadback& frame, const RgbaReadback& background) {
     if (!readbackHasSize(frame, background.width, background.height))
         return;
@@ -1712,12 +1816,6 @@ std::optional<CHyprColor> recordingSolidBackgroundColor(WindowBackground backgro
         case WindowBackground::Transparent: return std::nullopt;
     }
     return std::nullopt;
-}
-
-DecorationPolicy effectiveRecordingWindowShadowPolicy(const RecordingFrameRequest& request) {
-    if (request.mode == CaptureMode::Window && request.defaults.windowBackground == WindowBackground::Transparent)
-        return DecorationPolicy::Remove;
-    return request.defaults.windowShadow;
 }
 
 PHLWINDOW findWindowByAddress(const std::string& address) {
@@ -1840,9 +1938,8 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     if (!monitor)
         return std::nullopt;
 
-    const DecorationPolicy effectiveWindowShadow = effectiveRecordingWindowShadowPolicy(request);
     const bool renderDecorations =
-        request.defaults.fushionMode || request.defaults.windowBorder == DecorationPolicy::Keep || effectiveWindowShadow == DecorationPolicy::Keep;
+        request.defaults.fushionMode || request.defaults.windowBorder == DecorationPolicy::Keep || request.defaults.windowShadow == DecorationPolicy::Keep;
 
     int  width = 0;
     int  height = 0;
@@ -1874,7 +1971,7 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     if (readback.pixels.empty())
         return std::nullopt;
 
-    const bool cropDecorations = request.defaults.windowBorder == DecorationPolicy::Remove || effectiveWindowShadow == DecorationPolicy::Remove;
+    const bool cropDecorations = request.defaults.windowBorder == DecorationPolicy::Remove || request.defaults.windowShadow == DecorationPolicy::Remove;
     if (cropDecorations) {
         const CBox visibleBox = renderedWindowGoalMainSurfaceBox(window);
         if (visibleBox.w > 0.0 && visibleBox.h > 0.0 && artifactBox.w > 0.0 && artifactBox.h > 0.0) {
@@ -1887,6 +1984,8 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
             bounds.height = std::max(1, static_cast<int>(std::ceil(visibleBox.h * scaleY)));
             readback = cropReadbackToBounds(readback, bounds);
         }
+    } else if (request.defaults.windowBackground == WindowBackground::Transparent && request.defaults.windowShadow == DecorationPolicy::Keep) {
+        repairTransparentRecordingShadow(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window));
     }
 
     if (readback.pixels.empty())
