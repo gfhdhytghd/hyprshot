@@ -71,6 +71,7 @@ class CaptureOverlay final : public QMainWindow {
     QString prepareRecordingRequest();
     bool startRecording(const QString& requestPath);
     bool stopRecording();
+    void renderAndSaveCapture();
     void saveImage(const QImage& image, hyprcapture::ui::ClipboardSnapshotData clipboardSnapshot);
     QImage renderResultImage();
     QImage renderDesktopRectAtDisplayResolution(const QRect& globalRect) const;

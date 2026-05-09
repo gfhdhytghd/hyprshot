@@ -150,6 +150,17 @@ struct ShadowColorBytes {
     int a = 0;
 };
 
+struct ShadowRenderGeometry {
+    CBox   shadowBox;
+    CBox   windowCutoutBox;
+    double range = 0.0;
+    double rounding = 0.0;
+    double windowRounding = 0.0;
+    double roundingPower = 2.0;
+    int    shadowPower = 3;
+    bool   sharp = false;
+};
+
 ShadowColorBytes shadowColorBytes(const PHLWINDOW& window);
 void             repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window);
 void             expandReadbackToShadowBounds(RgbaReadback& readback, CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window);
@@ -1921,43 +1932,6 @@ bool hyprlandPointInRoundedRect(double x, double y, double left, double top, dou
     return modifiedShadowLength(dx, dy, roundingPower) <= radius;
 }
 
-double hyprlandRoundedShadowPixelMultiplier(int x,
-                                            int y,
-                                            double shadowLeft,
-                                            double shadowTop,
-                                            double fullWidth,
-                                            double fullHeight,
-                                            double range,
-                                            double rounding,
-                                            double roundingPower,
-                                            int    shadowPower) {
-    constexpr int SAMPLE_GRID = 8;
-
-    const double windowLeft = range;
-    const double windowTop = range;
-    const double windowRight = fullWidth - range;
-    const double windowBottom = fullHeight - range;
-
-    double total = 0.0;
-    for (int sy = 0; sy < SAMPLE_GRID; ++sy) {
-        for (int sx = 0; sx < SAMPLE_GRID; ++sx) {
-            const double sampleX = x - shadowLeft + (static_cast<double>(sx) + 0.5) / SAMPLE_GRID;
-            const double sampleY = y - shadowTop + (static_cast<double>(sy) + 0.5) / SAMPLE_GRID;
-
-            if (hyprlandPointInRoundedRect(sampleX, sampleY, windowLeft, windowTop, windowRight, windowBottom, rounding, roundingPower))
-                continue;
-
-            total += hyprlandRoundedShadowMultiplier(sampleX, sampleY, fullWidth, fullHeight, range, rounding, roundingPower, shadowPower);
-        }
-    }
-
-    return std::clamp(total / static_cast<double>(SAMPLE_GRID * SAMPLE_GRID), 0.0, 1.0);
-}
-
-bool pixelTouchesShadowBounds(int x, int y, double shadowLeft, double shadowTop, double shadowWidth, double shadowHeight) {
-    return x + 1.0 > shadowLeft && x < shadowLeft + shadowWidth && y + 1.0 > shadowTop && y < shadowTop + shadowHeight;
-}
-
 double shadowRoundingPx(const PHLWINDOW& window, double scale) {
     if (!window)
         return 0.0;
@@ -1976,12 +1950,99 @@ double shadowBorderPx(const PHLWINDOW& window, double scale) {
     return std::max(0.0, static_cast<double>(std::max(0, window->getRealBorderSize())) * scale);
 }
 
+double windowRoundingPx(const PHLWINDOW& window, double scale) {
+    if (!window)
+        return 0.0;
+    return std::max(0.0, static_cast<double>(window->rounding()) * scale);
+}
+
 int configuredShadowRangePx(double scale) {
     static auto PSHADOWRANGE = CConfigValue<Config::INTEGER>("decoration:shadow:range");
     return std::max(0, static_cast<int>(std::ceil(static_cast<double>(std::max(0, sc<int>(*PSHADOWRANGE))) * scale)));
 }
 
+bool configuredShadowEnabled() {
+    static auto PSHADOWS = CConfigValue<Config::INTEGER>("decoration:shadow:enabled");
+    return *PSHADOWS == 1;
+}
+
+double configuredShadowScale() {
+    static auto PSHADOWSCALE = CConfigValue<Config::FLOAT>("decoration:shadow:scale");
+    return std::clamp(static_cast<double>(*PSHADOWSCALE), 0.0, 1.0);
+}
+
+Vector2D configuredShadowOffsetPx(double scale) {
+    static auto PSHADOWOFFSET = CConfigValue<Config::VEC2>("decoration:shadow:offset");
+    return {(*PSHADOWOFFSET).x * scale, (*PSHADOWOFFSET).y * scale};
+}
+
+bool configuredShadowSharp() {
+    static auto PSHADOWSHARP = CConfigValue<Config::INTEGER>("decoration:shadow:sharp");
+    return *PSHADOWSHARP == 1;
+}
+
+void scaleBoxFromCenter(CBox& box, double scale) {
+    const double centerX = box.x + box.w * 0.5;
+    const double centerY = box.y + box.h * 0.5;
+    box.w *= scale;
+    box.h *= scale;
+    box.x = centerX - box.w * 0.5;
+    box.y = centerY - box.h * 0.5;
+}
+
+std::optional<ShadowRenderGeometry> shadowRenderGeometry(const RgbaReadback& readback, const CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window) {
+    if (!configuredShadowEnabled() || readback.width <= 0 || readback.height <= 0 || readback.pixels.empty() || artifactBox.w <= 0.0 || artifactBox.h <= 0.0 ||
+        visibleBox.w <= 0.0 || visibleBox.h <= 0.0)
+        return std::nullopt;
+
+    const double scaleX = static_cast<double>(readback.width) / artifactBox.w;
+    const double scaleY = static_cast<double>(readback.height) / artifactBox.h;
+    if (!std::isfinite(scaleX) || !std::isfinite(scaleY) || scaleX <= 0.0 || scaleY <= 0.0)
+        return std::nullopt;
+
+    const double shadowScale = std::max(scaleX, scaleY);
+    const double range = static_cast<double>(configuredShadowRangePx(shadowScale));
+    if (range <= 0.0)
+        return std::nullopt;
+
+    const double visibleLeft = (visibleBox.x - artifactBox.x) * scaleX;
+    const double visibleTop = (visibleBox.y - artifactBox.y) * scaleY;
+    const double visibleRight = (visibleBox.x + visibleBox.w - artifactBox.x) * scaleX;
+    const double visibleBottom = (visibleBox.y + visibleBox.h - artifactBox.y) * scaleY;
+    if (!std::isfinite(visibleLeft) || !std::isfinite(visibleTop) || !std::isfinite(visibleRight) || !std::isfinite(visibleBottom))
+        return std::nullopt;
+
+    const double border = shadowBorderPx(window, shadowScale);
+    CBox baseBox{visibleLeft - border, visibleTop - border, std::max(1.0, visibleRight - visibleLeft + 2.0 * border),
+                 std::max(1.0, visibleBottom - visibleTop + 2.0 * border)};
+    CBox shadowBox = baseBox;
+    shadowBox.x -= range;
+    shadowBox.y -= range;
+    shadowBox.w += 2.0 * range;
+    shadowBox.h += 2.0 * range;
+    scaleBoxFromCenter(shadowBox, configuredShadowScale());
+    shadowBox.translate(configuredShadowOffsetPx(shadowScale));
+
+    if (shadowBox.w < 1.0 || shadowBox.h < 1.0)
+        return std::nullopt;
+
+    CBox windowCutoutBox{visibleLeft - shadowBox.x, visibleTop - shadowBox.y, std::max(1.0, visibleRight - visibleLeft), std::max(1.0, visibleBottom - visibleTop)};
+
+    static auto PSHADOWPOWER = CConfigValue<Config::INTEGER>("decoration:shadow:render_power");
+    return ShadowRenderGeometry{
+        .shadowBox = shadowBox,
+        .windowCutoutBox = windowCutoutBox,
+        .range = range,
+        .rounding = shadowRoundingPx(window, shadowScale),
+        .windowRounding = windowRoundingPx(window, shadowScale),
+        .roundingPower = window ? std::clamp(static_cast<double>(window->roundingPower()), 1.0, 10.0) : 2.0,
+        .shadowPower = std::clamp(sc<int>(*PSHADOWPOWER), 1, 4),
+        .sharp = configuredShadowSharp(),
+    };
+}
+
 void expandReadbackToShadowBounds(RgbaReadback& readback, CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window) {
+    ScopedTiming timing("window.shadow_expand");
     const auto color = shadowColorBytes(window);
     if (readback.width <= 0 || readback.height <= 0 || readback.pixels.empty() || artifactBox.w <= 0.0 || artifactBox.h <= 0.0 || visibleBox.w <= 0.0 ||
         visibleBox.h <= 0.0 || color.a <= 0)
@@ -1992,22 +2053,14 @@ void expandReadbackToShadowBounds(RgbaReadback& readback, CBox& artifactBox, con
     if (!std::isfinite(scaleX) || !std::isfinite(scaleY) || scaleX <= 0.0 || scaleY <= 0.0)
         return;
 
-    const double shadowScale = std::max(scaleX, scaleY);
-    const double shadowPadding = configuredShadowRangePx(shadowScale) + shadowBorderPx(window, shadowScale) + 2.0;
-    if (shadowPadding <= 0.0)
+    const auto geometry = shadowRenderGeometry(readback, artifactBox, visibleBox, window);
+    if (!geometry)
         return;
 
-    const double visibleLeft = (visibleBox.x - artifactBox.x) * scaleX;
-    const double visibleTop = (visibleBox.y - artifactBox.y) * scaleY;
-    const double visibleRight = (visibleBox.x + visibleBox.w - artifactBox.x) * scaleX;
-    const double visibleBottom = (visibleBox.y + visibleBox.h - artifactBox.y) * scaleY;
-    if (!std::isfinite(visibleLeft) || !std::isfinite(visibleTop) || !std::isfinite(visibleRight) || !std::isfinite(visibleBottom))
-        return;
-
-    const int targetLeft = static_cast<int>(std::floor(visibleLeft - shadowPadding));
-    const int targetTop = static_cast<int>(std::floor(visibleTop - shadowPadding));
-    const int targetRight = static_cast<int>(std::ceil(visibleRight + shadowPadding));
-    const int targetBottom = static_cast<int>(std::ceil(visibleBottom + shadowPadding));
+    const int targetLeft = static_cast<int>(std::floor(geometry->shadowBox.x));
+    const int targetTop = static_cast<int>(std::floor(geometry->shadowBox.y));
+    const int targetRight = static_cast<int>(std::ceil(geometry->shadowBox.x + geometry->shadowBox.w));
+    const int targetBottom = static_cast<int>(std::ceil(geometry->shadowBox.y + geometry->shadowBox.h));
     const int padLeft = std::max(0, -targetLeft);
     const int padTop = std::max(0, -targetTop);
     const int padRight = std::max(0, targetRight - readback.width);
@@ -2042,80 +2095,105 @@ void expandReadbackToShadowBounds(RgbaReadback& readback, CBox& artifactBox, con
 }
 
 void repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, const CBox& visibleBox, const PHLWINDOW& window) {
+    ScopedTiming timing("window.shadow_repair");
     const auto color = shadowColorBytes(window);
     if (readback.width <= 0 || readback.height <= 0 || readback.pixels.empty() || artifactBox.w <= 0.0 || artifactBox.h <= 0.0 || visibleBox.w <= 0.0 ||
         visibleBox.h <= 0.0 || color.a <= 0)
         return;
 
-    const double scaleX = static_cast<double>(readback.width) / artifactBox.w;
-    const double scaleY = static_cast<double>(readback.height) / artifactBox.h;
-    if (!std::isfinite(scaleX) || !std::isfinite(scaleY) || scaleX <= 0.0 || scaleY <= 0.0)
+    const auto geometry = shadowRenderGeometry(readback, artifactBox, visibleBox, window);
+    if (!geometry)
         return;
 
-    const int visibleLeft = std::clamp(static_cast<int>(std::floor((visibleBox.x - artifactBox.x) * scaleX)), 0, readback.width);
-    const int visibleTop = std::clamp(static_cast<int>(std::floor((visibleBox.y - artifactBox.y) * scaleY)), 0, readback.height);
-    const int visibleRight =
-        std::clamp(static_cast<int>(std::ceil((visibleBox.x + visibleBox.w - artifactBox.x) * scaleX)), visibleLeft, readback.width);
-    const int visibleBottom =
-        std::clamp(static_cast<int>(std::ceil((visibleBox.y + visibleBox.h - artifactBox.y) * scaleY)), visibleTop, readback.height);
-    if (visibleLeft <= 0 && visibleTop <= 0 && visibleRight >= readback.width && visibleBottom >= readback.height)
-        return;
+    const double shadowLeft = geometry->shadowBox.x;
+    const double shadowTop = geometry->shadowBox.y;
+    const double shadowWidth = geometry->shadowBox.w;
+    const double shadowHeight = geometry->shadowBox.h;
+    const double windowLeft = geometry->windowCutoutBox.x;
+    const double windowTop = geometry->windowCutoutBox.y;
+    const double windowRight = geometry->windowCutoutBox.x + geometry->windowCutoutBox.w;
+    const double windowBottom = geometry->windowCutoutBox.y + geometry->windowCutoutBox.h;
 
-    static auto PSHADOWPOWER = CConfigValue<Config::INTEGER>("decoration:shadow:render_power");
-    const double shadowScale = std::max(scaleX, scaleY);
-    const double shadowRange = std::max(1.0, static_cast<double>(configuredShadowRangePx(shadowScale)));
-    const double rounding = shadowRoundingPx(window, shadowScale);
-    const double roundingPower = window ? std::clamp(static_cast<double>(window->roundingPower()), 1.0, 10.0) : 2.0;
-    const int    shadowPower = std::clamp(sc<int>(*PSHADOWPOWER), 1, 4);
-    const double shadowLeft = visibleLeft - shadowRange;
-    const double shadowTop = visibleTop - shadowRange;
-    const double shadowWidth = std::max(1.0, (visibleRight - visibleLeft) + 2.0 * shadowRange);
-    const double shadowHeight = std::max(1.0, (visibleBottom - visibleTop) + 2.0 * shadowRange);
-    const double windowLeft = shadowRange;
-    const double windowTop = shadowRange;
-    const double windowRight = shadowWidth - shadowRange;
-    const double windowBottom = shadowHeight - shadowRange;
+    const int repairLeft = std::clamp(static_cast<int>(std::floor(shadowLeft)), 0, readback.width);
+    const int repairTop = std::clamp(static_cast<int>(std::floor(shadowTop)), 0, readback.height);
+    const int repairRight = std::clamp(static_cast<int>(std::ceil(shadowLeft + shadowWidth)), repairLeft, readback.width);
+    const int repairBottom = std::clamp(static_cast<int>(std::ceil(shadowTop + shadowHeight)), repairTop, readback.height);
 
-    for (int y = 0; y < readback.height; ++y) {
-        if (static_cast<double>(y + 1) <= shadowTop || static_cast<double>(y) >= shadowTop + shadowHeight)
-            continue;
+    const double cutoutAbsLeft = shadowLeft + windowLeft;
+    const double cutoutAbsTop = shadowTop + windowTop;
+    const double cutoutAbsRight = shadowLeft + windowRight;
+    const double cutoutAbsBottom = shadowTop + windowBottom;
+    const int    cutoutLeft = std::clamp(static_cast<int>(std::floor(cutoutAbsLeft)), repairLeft, repairRight);
+    const int    cutoutTop = std::clamp(static_cast<int>(std::floor(cutoutAbsTop)), repairTop, repairBottom);
+    const int    cutoutRight = std::clamp(static_cast<int>(std::ceil(cutoutAbsRight)), cutoutLeft, repairRight);
+    const int    cutoutBottom = std::clamp(static_cast<int>(std::ceil(cutoutAbsBottom)), cutoutTop, repairBottom);
 
-        for (int x = 0; x < readback.width; ++x) {
-            if (!pixelTouchesShadowBounds(x, y, shadowLeft, shadowTop, shadowWidth, shadowHeight))
-                continue;
+    const auto repairPixel = [&](int x, int y, bool testCutout) {
+        const double centerX = x - shadowLeft + 0.5;
+        const double centerY = y - shadowTop + 0.5;
+        if (testCutout &&
+            hyprlandPointInRoundedRect(centerX, centerY, windowLeft, windowTop, windowRight, windowBottom, geometry->windowRounding, geometry->roundingPower))
+            return;
 
-            const double centerX = x - shadowLeft + 0.5;
-            const double centerY = y - shadowTop + 0.5;
-            if (hyprlandPointInRoundedRect(centerX, centerY, windowLeft, windowTop, windowRight, windowBottom, rounding, roundingPower))
-                continue;
+        const auto i = (static_cast<std::size_t>(y) * readback.width + x) * RGBA_BYTES_PER_PIXEL;
+        auto*      px = readback.pixels.data() + i;
+        const bool existingShadowPixel = isRecordingShadowPixel(px);
+        const bool shadowColoredPixel = isShadowColoredPixel(px);
+        const bool transparentShadowPadding = px[3] == 0;
+        if (!shadowColoredPixel && !transparentShadowPadding)
+            return;
 
-            const auto i = (static_cast<std::size_t>(y) * readback.width + x) * RGBA_BYTES_PER_PIXEL;
-            auto*      px = readback.pixels.data() + i;
-            const bool existingShadowPixel = isRecordingShadowPixel(px);
-            const bool shadowColoredPixel = isShadowColoredPixel(px);
-            const bool transparentShadowPadding = px[3] == 0;
-            if (!shadowColoredPixel && !transparentShadowPadding)
-                continue;
+        const double multiplier = geometry->sharp ? 1.0 :
+                                                    hyprlandRoundedShadowMultiplier(centerX,
+                                                                                   centerY,
+                                                                                   shadowWidth,
+                                                                                   shadowHeight,
+                                                                                   geometry->range,
+                                                                                   geometry->rounding,
+                                                                                   geometry->roundingPower,
+                                                                                   geometry->shadowPower);
+        int          repairedAlpha = std::clamp(static_cast<int>(std::lround(color.a * multiplier)), 0, color.a);
+        if (repairedAlpha <= 0 && existingShadowPixel)
+            repairedAlpha = reconstructedShadowAlpha(px, color);
 
-            int repairedAlpha = std::clamp(static_cast<int>(std::lround(color.a * hyprlandRoundedShadowPixelMultiplier(x, y, shadowLeft, shadowTop, shadowWidth,
-                                                                                                                       shadowHeight, shadowRange, rounding, roundingPower,
-                                                                                                                       shadowPower))),
-                                           0, color.a);
-            if (repairedAlpha <= 0 && existingShadowPixel)
-                repairedAlpha = reconstructedShadowAlpha(px, color);
-
-            px[3] = static_cast<unsigned char>(repairedAlpha);
-            if (px[3] == 0) {
-                px[0] = 0;
-                px[1] = 0;
-                px[2] = 0;
-                continue;
-            }
-            px[0] = static_cast<unsigned char>(color.r);
-            px[1] = static_cast<unsigned char>(color.g);
-            px[2] = static_cast<unsigned char>(color.b);
+        px[3] = static_cast<unsigned char>(repairedAlpha);
+        if (px[3] == 0) {
+            px[0] = 0;
+            px[1] = 0;
+            px[2] = 0;
+            return;
         }
-    }
+        px[0] = static_cast<unsigned char>(color.r);
+        px[1] = static_cast<unsigned char>(color.g);
+        px[2] = static_cast<unsigned char>(color.b);
+    };
+
+    const auto repairRegion = [&](int left, int top, int right, int bottom, bool testCutout) {
+        if (left >= right || top >= bottom)
+            return;
+        for (int y = top; y < bottom; ++y) {
+            for (int x = left; x < right; ++x)
+                repairPixel(x, y, testCutout);
+        }
+    };
+
+    repairRegion(repairLeft, repairTop, repairRight, cutoutTop, false);
+    repairRegion(repairLeft, cutoutBottom, repairRight, repairBottom, false);
+    repairRegion(repairLeft, cutoutTop, cutoutLeft, cutoutBottom, false);
+    repairRegion(cutoutRight, cutoutTop, repairRight, cutoutBottom, false);
+
+    const int cornerRadius = std::clamp(static_cast<int>(std::ceil(geometry->windowRounding)), 0, std::max(cutoutRight - cutoutLeft, cutoutBottom - cutoutTop));
+    if (cornerRadius <= 0)
+        return;
+
+    repairRegion(cutoutLeft, cutoutTop, std::min(cutoutLeft + cornerRadius, cutoutRight), std::min(cutoutTop + cornerRadius, cutoutBottom), true);
+    repairRegion(std::max(cutoutRight - cornerRadius, cutoutLeft), cutoutTop, cutoutRight, std::min(cutoutTop + cornerRadius, cutoutBottom), true);
+    repairRegion(cutoutLeft, std::max(cutoutBottom - cornerRadius, cutoutTop), std::min(cutoutLeft + cornerRadius, cutoutRight), cutoutBottom, true);
+    repairRegion(std::max(cutoutRight - cornerRadius, cutoutLeft),
+                 std::max(cutoutBottom - cornerRadius, cutoutTop),
+                 cutoutRight,
+                 cutoutBottom,
+                 true);
 }
 
 void compositeWindowOverBackground(RgbaReadback& frame, const RgbaReadback& background) {
@@ -2143,8 +2221,64 @@ void compositeWindowOverBackground(RgbaReadback& frame, const RgbaReadback& back
     }
 }
 
-void compositeSolidBackground(RgbaReadback& frame, unsigned char r, unsigned char g, unsigned char b) {
+void compositePixelOverSolidBackground(unsigned char* px, unsigned char r, unsigned char g, unsigned char b) {
+    const int alpha = px[3];
+    if (alpha >= 255) {
+        px[3] = 255;
+        return;
+    }
+    if (alpha <= 0) {
+        px[0] = r;
+        px[1] = g;
+        px[2] = b;
+        px[3] = 255;
+        return;
+    }
+
+    const int inverseAlpha = 255 - alpha;
+    px[0] = static_cast<unsigned char>((px[0] * alpha + r * inverseAlpha + 127) / 255);
+    px[1] = static_cast<unsigned char>((px[1] * alpha + g * inverseAlpha + 127) / 255);
+    px[2] = static_cast<unsigned char>((px[2] * alpha + b * inverseAlpha + 127) / 255);
+    px[3] = 255;
+}
+
+void compositeContentOverSolidBackground(RgbaReadback& frame, unsigned char r, unsigned char g, unsigned char b) {
     compositeWindowOverBackground(frame, solidBackgroundReadback(frame.width, frame.height, r, g, b));
+}
+
+void compositeOutsideWindowOverSolidBackground(RgbaReadback& frame,
+                                               const CBox& artifactBox,
+                                               const CBox& visibleBox,
+                                               const PHLWINDOW& window,
+                                               unsigned char r,
+                                               unsigned char g,
+                                               unsigned char b) {
+    if (frame.width <= 0 || frame.height <= 0 || frame.pixels.empty() || artifactBox.w <= 0.0 || artifactBox.h <= 0.0 || visibleBox.w <= 0.0 || visibleBox.h <= 0.0)
+        return;
+
+    const double scaleX = static_cast<double>(frame.width) / artifactBox.w;
+    const double scaleY = static_cast<double>(frame.height) / artifactBox.h;
+    if (!std::isfinite(scaleX) || !std::isfinite(scaleY) || scaleX <= 0.0 || scaleY <= 0.0)
+        return;
+
+    const double visibleLeft = (visibleBox.x - artifactBox.x) * scaleX;
+    const double visibleTop = (visibleBox.y - artifactBox.y) * scaleY;
+    const double visibleRight = (visibleBox.x + visibleBox.w - artifactBox.x) * scaleX;
+    const double visibleBottom = (visibleBox.y + visibleBox.h - artifactBox.y) * scaleY;
+    if (!std::isfinite(visibleLeft) || !std::isfinite(visibleTop) || !std::isfinite(visibleRight) || !std::isfinite(visibleBottom))
+        return;
+
+    const double rounding = windowRoundingPx(window, std::max(scaleX, scaleY));
+    const double roundingPower = window ? std::clamp(static_cast<double>(window->roundingPower()), 1.0, 10.0) : 2.0;
+    for (int y = 0; y < frame.height; ++y) {
+        for (int x = 0; x < frame.width; ++x) {
+            if (hyprlandPointInRoundedRect(x + 0.5, y + 0.5, visibleLeft, visibleTop, visibleRight, visibleBottom, rounding, roundingPower))
+                continue;
+
+            auto* px = frame.pixels.data() + (static_cast<std::size_t>(y) * frame.width + x) * RGBA_BYTES_PER_PIXEL;
+            compositePixelOverSolidBackground(px, r, g, b);
+        }
+    }
 }
 
 std::optional<std::array<unsigned char, 3>> recordingSolidBackgroundRgb(WindowBackground background) {
@@ -2326,8 +2460,8 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
     if (readback.pixels.empty())
         return std::nullopt;
 
-    const bool cropDecorations = request.defaults.windowBorder == DecorationPolicy::Remove || request.defaults.windowShadow == DecorationPolicy::Remove;
-    if (cropDecorations) {
+    const bool cropShadow = request.defaults.windowShadow == DecorationPolicy::Remove;
+    if (cropShadow) {
         const CBox visibleBox = renderedWindowGoalMainSurfaceBox(window);
         if (visibleBox.w > 0.0 && visibleBox.h > 0.0 && artifactBox.w > 0.0 && artifactBox.h > 0.0) {
             const double scaleX = static_cast<double>(readback.width) / artifactBox.w;
@@ -2338,6 +2472,7 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
             bounds.width = std::max(1, static_cast<int>(std::ceil(visibleBox.w * scaleX)));
             bounds.height = std::max(1, static_cast<int>(std::ceil(visibleBox.h * scaleY)));
             readback = cropReadbackToBounds(readback, bounds);
+            artifactBox = visibleBox;
         }
     } else if ((request.defaults.windowBackground == WindowBackground::Transparent || solidAlpha) && request.defaults.windowShadow == DecorationPolicy::Keep) {
         expandReadbackToShadowBounds(readback, artifactBox, renderedWindowGoalMainSurfaceBox(window), window);
@@ -2349,9 +2484,17 @@ std::optional<RecordingFrame> captureWindowRecordingFrame(const RecordingFrameRe
 
     if (request.defaults.windowBackground == WindowBackground::Real) {
         if (!renderOptions.backgroundTexture)
-            compositeSolidBackground(readback, 30, 34, 38);
+            compositeContentOverSolidBackground(readback, 30, 34, 38);
+        if (const auto shadowBackground = recordingSolidBackgroundRgb(WindowBackground::FollowSystem))
+            compositeOutsideWindowOverSolidBackground(readback,
+                                                      artifactBox,
+                                                      renderedWindowGoalMainSurfaceBox(window),
+                                                      window,
+                                                      (*shadowBackground)[0],
+                                                      (*shadowBackground)[1],
+                                                      (*shadowBackground)[2]);
     } else if (solidAlpha && solidBackgroundRgb) {
-        compositeSolidBackground(readback, (*solidBackgroundRgb)[0], (*solidBackgroundRgb)[1], (*solidBackgroundRgb)[2]);
+        compositeContentOverSolidBackground(readback, (*solidBackgroundRgb)[0], (*solidBackgroundRgb)[1], (*solidBackgroundRgb)[2]);
     }
 
     return RecordingFrame{.rgba = std::move(readback.pixels), .width = readback.width, .height = readback.height};

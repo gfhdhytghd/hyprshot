@@ -411,13 +411,6 @@ bool recordingEncoderSupportsAlpha(std::string_view format, std::string_view cod
     return (normalizedFormat == "webm" && normalizedCodec == "libvpx-vp9") || (normalizedFormat == "mkv" && normalizedCodec == "ffv1");
 }
 
-bool canFallbackSolidAlphaWindowToVisibleGsr(const RecordingRequest& request, const RecordingFrameRequest& frameRequest, bool solidAlphaFallback) {
-    return solidAlphaFallback && request.mode == CaptureMode::Window && request.defaults.recordWindowBackend == RecordWindowBackend::Compositor &&
-        request.targetGeometry.width > 0.0 && request.targetGeometry.height > 0.0 && solidAlphaBackground(frameRequest.defaults.windowBackground) &&
-        frameRequest.defaults.windowBorder == DecorationPolicy::Keep && frameRequest.defaults.windowShadow == DecorationPolicy::Keep &&
-        !recordingNeedsAlpha(frameRequest);
-}
-
 std::string gsrCodec(std::string codec, std::string_view format) {
     const auto normalizedCodec = normalizedToken(codec);
     if (normalizedCodec.empty() || normalizedCodec == "auto")
@@ -1176,17 +1169,11 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
     const auto codec = effectiveRecordingCodec(frameRequest, request->defaults.recordCodec);
     const bool solidAlphaFallback =
         frameRequest.defaults.recordSolidAlpha && solidAlphaBackground(frameRequest.defaults.windowBackground) && !recordingEncoderSupportsAlpha(format, codec);
-    if (solidAlphaFallback)
+    if (solidAlphaFallback) {
         frameRequest.defaults.recordSolidAlpha = false;
-
-    if (canFallbackSolidAlphaWindowToVisibleGsr(*request, frameRequest, solidAlphaFallback)) {
-        RecordingRequest visibleRequest = *request;
-        visibleRequest.defaults.recordSolidAlpha = false;
-        visibleRequest.defaults.recordWindowBackend = RecordWindowBackend::GsrVisible;
-        if (auto result = startGsrRecording(visibleRequest); result.success)
-            return result;
-        else
-            notifyRecording("visible recording fallback failed, using compositor: " + result.error, CHyprColor(1.0, 0.75, 0.25, 1.0), 3500);
+        notifyRecording("selected " + format + "/" + codec + " does not preserve alpha; using compositor opaque fallback",
+                        CHyprColor(1.0, 0.75, 0.25, 1.0),
+                        5000);
     }
 
     resetRecordingCaptureState();

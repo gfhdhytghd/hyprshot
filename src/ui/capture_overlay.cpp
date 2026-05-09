@@ -555,21 +555,45 @@ DispatchCommandResult dispatchHyprcaptureCommand(const QString& dispatcher, cons
     return {.success = false, .error = compactProcessErrorText(stderrData, stdoutData, QStringLiteral("dispatch failed"))};
 }
 
+DispatchCommandResult evalHyprcaptureExpression(const QString& expression) {
+    const QString hyprctl = hyprcapture::ui::trustedSystemProgram(QStringLiteral("hyprctl"));
+    if (hyprctl.isEmpty() || expression.isEmpty())
+        return {.success = false, .error = QStringLiteral("hyprctl unavailable")};
+
+    QProcess process;
+    process.setProgram(hyprctl);
+    process.setArguments(QStringList{QStringLiteral("eval"), expression});
+    process.setProcessEnvironment(hyprcapture::ui::trustedProcessEnvironment());
+    process.start();
+    if (!process.waitForStarted(1000))
+        return {.success = false, .error = QStringLiteral("hyprctl start failed")};
+    if (!process.waitForFinished(5000)) {
+        process.kill();
+        process.waitForFinished(500);
+        return {.success = false, .error = QStringLiteral("hyprctl timeout")};
+    }
+    const QByteArray stderrData = process.readAllStandardError();
+    const QByteArray stdoutData = process.readAllStandardOutput();
+    if (process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0 && !hyprctlDispatchOutputHasError(stderrData, stdoutData))
+        return {.success = true};
+    return {.success = false, .error = compactProcessErrorText(stderrData, stdoutData, QStringLiteral("eval failed"))};
+}
+
 QString luaStringLiteral(const QString& value) {
     const QJsonArray array{value};
     const QString json = QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact));
     return json.size() >= 2 ? json.mid(1, json.size() - 2) : QStringLiteral("\"\"");
 }
 
-DispatchCommandResult dispatchHyprcaptureLuaDispatcherFactory(const QString& factory, const QString& argument = {}) {
-    if (factory.isEmpty())
-        return {.success = false, .error = QStringLiteral("lua dispatcher missing")};
+DispatchCommandResult evalHyprcaptureLuaFunction(const QString& function, const QString& argument = {}) {
+    if (function.isEmpty())
+        return {.success = false, .error = QStringLiteral("lua function missing")};
 
-    QString expression = QStringLiteral("hl.plugin.hyprcapture.%1(").arg(factory);
+    QString expression = QStringLiteral("hl.plugin.hyprcapture.%1(").arg(function);
     if (!argument.isEmpty())
         expression += luaStringLiteral(argument);
     expression += QStringLiteral(")");
-    return dispatchHyprcaptureCommand(expression);
+    return evalHyprcaptureExpression(expression);
 }
 
 DispatchCommandResult dispatchRecordingStart(const QString& requestPath) {
@@ -579,7 +603,7 @@ DispatchCommandResult dispatchRecordingStart(const QString& requestPath) {
     const auto legacyResult = dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-start"), requestPath);
     if (legacyResult.success)
         return legacyResult;
-    return dispatchHyprcaptureLuaDispatcherFactory(QStringLiteral("record_start_dispatcher"), requestPath);
+    return evalHyprcaptureLuaFunction(QStringLiteral("record_start"), requestPath);
 }
 
 DispatchCommandResult dispatchWindowCapture(const QString& requestPath) {
@@ -589,14 +613,14 @@ DispatchCommandResult dispatchWindowCapture(const QString& requestPath) {
     const auto legacyResult = dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:window-capture"), requestPath);
     if (legacyResult.success)
         return legacyResult;
-    return dispatchHyprcaptureLuaDispatcherFactory(QStringLiteral("window_capture_dispatcher"), requestPath);
+    return evalHyprcaptureLuaFunction(QStringLiteral("window_capture"), requestPath);
 }
 
 DispatchCommandResult dispatchRecordingStop() {
     const auto legacyResult = dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-stop"));
     if (legacyResult.success)
         return legacyResult;
-    return dispatchHyprcaptureLuaDispatcherFactory(QStringLiteral("record_stop_dispatcher"));
+    return evalHyprcaptureLuaFunction(QStringLiteral("record_stop"));
 }
 
 QString uniqueOutputPath(const QDir& dir, const QString& rawFilename) {
@@ -1898,7 +1922,7 @@ QString CaptureOverlay::recordOptionsConflict() const {
 }
 
 QString CaptureOverlay::recordOptionsWarning() const {
-    if (!m_record || !transparencyRequired(currentWindowBackground()))
+    if (!m_record || !alphaRecordingRequested(m_defaults, currentWindowBackground()))
         return {};
 
     const QString format = currentRecordFormat();
@@ -2720,13 +2744,26 @@ void CaptureOverlay::finishCapture() {
         return;
     }
 
+    if (m_mode == hyprcapture::CaptureMode::Window) {
+        traceTiming(QStringLiteral("fade_start"));
+        fadeOutThen([this] { renderAndSaveCapture(); });
+        return;
+    }
+
+    renderAndSaveCapture();
+}
+
+void CaptureOverlay::renderAndSaveCapture() {
     QElapsedTimer renderTimer;
     renderTimer.start();
     auto image = renderResultImage();
     traceTiming(QStringLiteral("render_result"), renderTimer.elapsed());
     if (image.isNull()) {
         m_finishing = false;
-        updateStatus();
+        if (isVisible())
+            updateStatus();
+        else
+            qApp->quit();
         return;
     }
 
@@ -2744,8 +2781,10 @@ void CaptureOverlay::finishCapture() {
     }
 
     saveImage(image, clipboardSnapshot);
-    traceTiming(QStringLiteral("fade_start"));
-    fadeOutThen({});
+    if (!m_fadeOutStarted) {
+        traceTiming(QStringLiteral("fade_start"));
+        fadeOutThen({});
+    }
 }
 
 void CaptureOverlay::saveImage(const QImage& image, hyprcapture::ui::ClipboardSnapshotData clipboardSnapshot) {
