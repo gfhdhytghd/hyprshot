@@ -12,7 +12,6 @@
 #include <vector>
 
 class QButtonGroup;
-class QGridLayout;
 class QGraphicsOpacityEffect;
 class QLabel;
 class QPainter;
@@ -105,7 +104,6 @@ class CaptureOverlay final : public QMainWindow {
     QString recordOptionsWarning() const;
     void updateRecordOptionsVisibility();
     void updateRecordWarning();
-    void updateToolbarResponsiveLayout();
     hyprcapture::DecorationPolicy currentWindowBorder() const;
     hyprcapture::DecorationPolicy currentWindowShadow() const;
     QRect windowFrameGeometry(const WindowArtifact& window) const;
@@ -139,11 +137,8 @@ class CaptureOverlay final : public QMainWindow {
     bool                      m_recordCodecAuto = true;
 
     QWidget*     m_toolbar = nullptr;
-    QGridLayout* m_toolbarLayout = nullptr;
     QGraphicsOpacityEffect* m_toolbarOpacity = nullptr;
     QPropertyAnimation* m_fadeAnimation = nullptr;
-    QWidget*      m_iconControls = nullptr;
-    QWidget*      m_optionControls = nullptr;
     InlineSelect* m_fullscreenScope = nullptr;
     InlineSelect* m_windowBackground = nullptr;
     QWidget*      m_recordOptions = nullptr;

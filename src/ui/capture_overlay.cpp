@@ -19,7 +19,6 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QGraphicsOpacityEffect>
-#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QImageWriter>
@@ -1455,21 +1454,15 @@ void CaptureOverlay::buildToolbar() {
     m_toolbarOpacity->setOpacity(m_overlayOpacity);
     m_toolbar->setGraphicsEffect(m_toolbarOpacity);
 
-    m_toolbarLayout = new QGridLayout(m_toolbar);
-    m_toolbarLayout->setContentsMargins(10, 7, 10, 7);
-    m_toolbarLayout->setHorizontalSpacing(5);
-    m_toolbarLayout->setVerticalSpacing(5);
-    m_toolbarLayout->setSizeConstraint(QLayout::SetFixedSize);
+    auto* rootLayout = new QVBoxLayout(m_toolbar);
+    rootLayout->setContentsMargins(10, 7, 10, 7);
+    rootLayout->setSpacing(5);
+    rootLayout->setSizeConstraint(QLayout::SetFixedSize);
 
-    m_iconControls = new QWidget(m_toolbar);
-    auto* iconLayout = new QHBoxLayout(m_iconControls);
-    iconLayout->setContentsMargins(0, 0, 0, 0);
-    iconLayout->setSpacing(4);
-
-    m_optionControls = new QWidget(m_toolbar);
-    auto* optionLayout = new QHBoxLayout(m_optionControls);
-    optionLayout->setContentsMargins(0, 0, 0, 0);
-    optionLayout->setSpacing(4);
+    auto* layout = new QHBoxLayout();
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+    rootLayout->addLayout(layout);
 
     auto* group = new QButtonGroup(this);
     const auto addMode = [&](const QString& tooltip, hyprcapture::CaptureMode mode, const QIcon& icon) {
@@ -1485,7 +1478,7 @@ void CaptureOverlay::buildToolbar() {
         button->setCheckable(true);
         button->setChecked(mode == m_mode);
         group->addButton(button);
-        iconLayout->addWidget(button);
+        layout->addWidget(button);
         if (m_defaults.fushionMode && mode != hyprcapture::CaptureMode::Fullscreen) {
             button->hide();
             button->setFixedSize(0, 0);
@@ -1506,7 +1499,7 @@ void CaptureOverlay::buildToolbar() {
     m_fullscreenScope->setPrefix("Full");
     m_fullscreenScope->addItems(QStringList{"all", "current", "per-monitor"});
     m_fullscreenScope->setCurrentText(qString(hyprcapture::toString(m_defaults.fullscreenScope)));
-    optionLayout->addWidget(m_fullscreenScope);
+    layout->addWidget(m_fullscreenScope);
 
     m_windowBackground = new InlineSelect(this, m_toolbar);
     m_windowBackground->setPrefix("Bg");
@@ -1518,7 +1511,7 @@ void CaptureOverlay::buildToolbar() {
         updateRecordWarning();
         updateStatus();
     });
-    optionLayout->addWidget(m_windowBackground);
+    layout->addWidget(m_windowBackground);
 
     m_recordToggle = new QPushButton(m_toolbar);
     m_recordToggle->setObjectName(m_recordActive ? "recordActiveButton" : "recordToggleButton");
@@ -1531,7 +1524,7 @@ void CaptureOverlay::buildToolbar() {
     m_recordToggle->setAccessibleName(m_recordActive ? "Stop recording" : "Record");
     m_recordToggle->setCheckable(true);
     m_recordToggle->setChecked(m_record || m_recordActive);
-    iconLayout->addWidget(m_recordToggle);
+    layout->addWidget(m_recordToggle);
     connect(m_recordToggle, &QPushButton::clicked, this, [this] {
         if (m_recordActive) {
             m_recordToggle->setChecked(true);
@@ -1557,11 +1550,12 @@ void CaptureOverlay::buildToolbar() {
     cancel->setFixedSize(36, 32);
     cancel->setToolTip("Cancel");
     cancel->setAccessibleName("Cancel");
-    iconLayout->addWidget(cancel);
+    layout->addWidget(cancel);
     connect(cancel, &QPushButton::clicked, this, &CaptureOverlay::cancelCapture);
 
     m_status = new QLabel(m_toolbar);
     m_status->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    layout->addWidget(m_status);
 
     m_recordOptions = new QWidget(m_toolbar);
     auto* recordLayout = new QHBoxLayout(m_recordOptions);
@@ -1615,11 +1609,13 @@ void CaptureOverlay::buildToolbar() {
     m_recordBackend->setOnChanged(onRecordOptionChanged);
     recordLayout->addWidget(m_recordBackend);
 
+    rootLayout->addWidget(m_recordOptions);
+
     m_recordWarning = new QLabel(m_toolbar);
     m_recordWarning->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     m_recordWarning->setStyleSheet(QStringLiteral("color: rgba(242, 170, 55, 255); padding: 2px 4px;"));
+    rootLayout->addWidget(m_recordWarning);
 
-    updateToolbarResponsiveLayout();
     if (m_record && !m_recordActive)
         applyRecordDefaultsForCurrentBackground();
     updateToolbarControlsForMode();
@@ -2308,38 +2304,10 @@ void CaptureOverlay::updateStatus() {
     relayoutToolbar();
 }
 
-void CaptureOverlay::updateToolbarResponsiveLayout() {
-    if (!m_toolbarLayout || !m_iconControls || !m_optionControls || !m_status || !m_recordOptions || !m_recordWarning)
-        return;
-
-    m_toolbarLayout->removeWidget(m_iconControls);
-    m_toolbarLayout->removeWidget(m_optionControls);
-    m_toolbarLayout->removeWidget(m_status);
-    m_toolbarLayout->removeWidget(m_recordOptions);
-    m_toolbarLayout->removeWidget(m_recordWarning);
-
-    const bool compact = width() > 0 && width() < 500;
-    if (compact) {
-        m_toolbarLayout->addWidget(m_iconControls, 0, 0, 1, 3, Qt::AlignHCenter);
-        m_toolbarLayout->addWidget(m_optionControls, 1, 0, 1, 3, Qt::AlignHCenter);
-        m_toolbarLayout->addWidget(m_status, 2, 0, 1, 3, Qt::AlignHCenter);
-        m_toolbarLayout->addWidget(m_recordOptions, 3, 0, 1, 3, Qt::AlignHCenter);
-        m_toolbarLayout->addWidget(m_recordWarning, 4, 0, 1, 3, Qt::AlignHCenter);
-        return;
-    }
-
-    m_toolbarLayout->addWidget(m_iconControls, 0, 0, Qt::AlignLeft | Qt::AlignVCenter);
-    m_toolbarLayout->addWidget(m_optionControls, 0, 1, Qt::AlignLeft | Qt::AlignVCenter);
-    m_toolbarLayout->addWidget(m_status, 0, 2, Qt::AlignLeft | Qt::AlignVCenter);
-    m_toolbarLayout->addWidget(m_recordOptions, 1, 0, 1, 3, Qt::AlignHCenter);
-    m_toolbarLayout->addWidget(m_recordWarning, 2, 0, 1, 3, Qt::AlignHCenter);
-}
-
 void CaptureOverlay::relayoutToolbar() {
     if (!m_toolbar)
         return;
 
-    updateToolbarResponsiveLayout();
     m_toolbar->setMinimumWidth(0);
     m_toolbar->setMaximumWidth(QWIDGETSIZE_MAX);
     m_toolbar->adjustSize();
