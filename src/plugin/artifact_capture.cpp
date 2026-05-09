@@ -1920,13 +1920,14 @@ void repairTransparentShadow(RgbaReadback& readback, const CBox& artifactBox, co
             if (!existingShadowPixel && !transparentShadowPadding)
                 continue;
 
-            const double shadowX = x - shadowLeft + 0.5;
-            const double shadowY = y - shadowTop + 0.5;
-            int repairedAlpha = std::clamp(static_cast<int>(std::lround(color.a * hyprlandRoundedShadowMultiplier(shadowX, shadowY, shadowWidth, shadowHeight,
-                                                                                                                  shadowRange, rounding, roundingPower, shadowPower))),
+            int repairedAlpha = existingShadowPixel ? reconstructedShadowAlpha(px, color) : 0;
+            if (transparentShadowPadding) {
+                const double shadowX = x - shadowLeft + 0.5;
+                const double shadowY = y - shadowTop + 0.5;
+                repairedAlpha = std::clamp(static_cast<int>(std::lround(color.a * hyprlandRoundedShadowMultiplier(shadowX, shadowY, shadowWidth, shadowHeight,
+                                                                                                                   shadowRange, rounding, roundingPower, shadowPower))),
                                            0, color.a);
-            if (repairedAlpha <= 0 && existingShadowPixel)
-                repairedAlpha = reconstructedShadowAlpha(px, color);
+            }
 
             px[3] = static_cast<unsigned char>(repairedAlpha);
             if (px[3] <= 2) {
