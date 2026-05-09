@@ -2272,10 +2272,11 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool 
     if (root.empty())
         return session;
     const auto frozenTime = Time::steadyNow();
-    const bool renderDecorations = defaults.fushionMode || defaults.windowBorder == DecorationPolicy::Keep || defaults.windowShadow == DecorationPolicy::Keep;
+    const bool renderWindowImages = defaults.mode == CaptureMode::Window;
+    const bool renderDecorations = renderWindowImages && (defaults.windowBorder == DecorationPolicy::Keep || defaults.windowShadow == DecorationPolicy::Keep);
     const bool captureMonitorArtifacts = true;
-    const bool captureWindowArtifacts = defaults.fushionMode || defaults.mode == CaptureMode::Window;
-    const bool captureRealBackgroundArtifacts = captureWindowArtifacts && defaults.windowBackground == WindowBackground::Real;
+    const bool captureWindowMetadata = defaults.fushionMode || defaults.mode == CaptureMode::Window;
+    const bool captureRealBackgroundArtifacts = renderWindowImages && defaults.windowBackground == WindowBackground::Real;
     ArtifactBudget artifactBudget;
 
     int monitorIndex = 0;
@@ -2295,7 +2296,7 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool 
         session.monitors.push_back(std::move(info));
     }
 
-    if (!captureWindowArtifacts)
+    if (!captureWindowMetadata)
         return session;
 
     int z = 0;
@@ -2327,7 +2328,8 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool 
         const auto path = root / ("window-" + pointerId(window.get()) + ".rgba");
         CBox artifactBox;
         const std::size_t windowIndex = session.windows.size();
-        if (renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, artifactBox, artifactBudget)) {
+        if (renderWindowImages && renderWindowArtifact(window, monitor, frozenTime, renderDecorations, path, info.artifactWidth, info.artifactHeight, artifactBox,
+                                                       artifactBudget)) {
             info.artifactPath = path.string();
             info.fullGeometry = toRect(artifactBox);
             if (captureRealBackgroundArtifacts) {
