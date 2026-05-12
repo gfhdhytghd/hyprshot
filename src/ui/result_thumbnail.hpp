@@ -16,6 +16,7 @@ class ResultThumbnail final : public QWidget {
 
   public:
     ResultThumbnail(const QPixmap& pixmap, QString path, QString restoreClipboardPath, QString deleteRoot, int timeoutMs, bool copyFile = false, QWidget* parent = nullptr);
+    void setImagePixmap(const QPixmap& pixmap);
     void setTranscodeProgress(double progress);
     void finishTranscodeProgress(bool success, int timeoutMs);
 

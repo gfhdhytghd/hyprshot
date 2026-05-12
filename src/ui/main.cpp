@@ -125,7 +125,7 @@ void setOwnerOnlyPermissions(const QString& path) {
         chmod(native.constData(), 0600);
 }
 
-QPixmap recordingThumbnailPixmap(const QString& path) {
+QPixmap recordingThumbnailPixmap(bool showPlayButton) {
     constexpr QSize logicalSize(180, 120);
     const qreal dpr = std::clamp(QGuiApplication::primaryScreen() ? QGuiApplication::primaryScreen()->devicePixelRatio() : qreal{1.0}, qreal{1.0}, qreal{4.0});
     QPixmap pixmap(QSize(static_cast<int>(std::ceil(logicalSize.width() * dpr)), static_cast<int>(std::ceil(logicalSize.height() * dpr))));
@@ -141,20 +141,14 @@ QPixmap recordingThumbnailPixmap(const QString& path) {
     painter.setBrush(QColor(28, 31, 36, 238));
     painter.drawRoundedRect(rect, 8.0, 8.0);
 
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(235, 238, 242, 235));
-    const QPointF center(logicalSize.width() / 2.0, 48.0);
-    QPolygonF play;
-    play << QPointF(center.x() - 13.0, center.y() - 18.0) << QPointF(center.x() - 13.0, center.y() + 18.0) << QPointF(center.x() + 20.0, center.y());
-    painter.drawPolygon(play);
-
-    QFont font = painter.font();
-    font.setPointSize(9);
-    font.setStyleStrategy(QFont::PreferAntialias);
-    painter.setFont(font);
-    painter.setPen(QColor(235, 238, 242, 230));
-    const QString name = painter.fontMetrics().elidedText(QFileInfo(path).fileName(), Qt::ElideMiddle, logicalSize.width() - 24);
-    painter.drawText(QRect(12, 86, logicalSize.width() - 24, 22), Qt::AlignCenter, name);
+    if (showPlayButton) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(235, 238, 242, 235));
+        const QPointF center(logicalSize.width() / 2.0, logicalSize.height() / 2.0);
+        QPolygonF play;
+        play << QPointF(center.x() - 13.0, center.y() - 18.0) << QPointF(center.x() - 13.0, center.y() + 18.0) << QPointF(center.x() + 20.0, center.y());
+        painter.drawPolygon(play);
+    }
     return pixmap;
 }
 
@@ -176,7 +170,7 @@ int showRecordingResult(const hyprcapture::CaptureDefaults& defaults, const QStr
     }
 
     const QString deleteRoot = QString::fromStdString(hyprcapture::expandUserPath(defaults.recordSaveDir).string());
-    ResultThumbnail thumbnail(recordingThumbnailPixmap(canonicalPath),
+    ResultThumbnail thumbnail(recordingThumbnailPixmap(true),
                               canonicalPath,
                               restoreClipboardPath,
                               deleteRoot,
@@ -253,7 +247,7 @@ int showRecordingTranscode(const hyprcapture::CaptureDefaults& defaults, const Q
         state->restoreClipboardPath = hyprcapture::ui::saveClipboardSnapshot();
 
     if (defaults.showThumbnail) {
-        state->thumbnail = new ResultThumbnail(recordingThumbnailPixmap(cleanOutput), cleanOutput, state->restoreClipboardPath, deleteRoot, 0, true);
+        state->thumbnail = new ResultThumbnail(recordingThumbnailPixmap(false), cleanOutput, state->restoreClipboardPath, deleteRoot, 0, true);
         state->thumbnail->setTranscodeProgress(0.0);
         state->thumbnail->show();
     }
@@ -304,6 +298,7 @@ int showRecordingTranscode(const hyprcapture::CaptureDefaults& defaults, const Q
                 hyprcapture::ui::copyFileUrlToClipboard(state->outputPath);
             if (state->thumbnail) {
                 state->thumbnail->setTranscodeProgress(1.0);
+                state->thumbnail->setImagePixmap(recordingThumbnailPixmap(true));
                 state->thumbnail->finishTranscodeProgress(true, static_cast<int>(state->defaults.thumbnailTimeoutMs));
             } else {
                 qApp->quit();

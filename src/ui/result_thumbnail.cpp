@@ -48,6 +48,7 @@ namespace {
 constexpr int kThumbnailMaxWidth = 180;
 constexpr int kThumbnailMaxHeight = 120;
 constexpr int kThumbnailScreenMargin = 24;
+constexpr int kTranscodeProgressRingSize = 64;
 constexpr double kSwipeCloseThreshold = 120.0;
 constexpr double kSwipeDeleteThreshold = 90.0;
 constexpr int kMaxOpenWithApps = 16;
@@ -149,7 +150,8 @@ class TranscodeProgressOverlay final : public QWidget {
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.fillRect(rect(), QColor(0, 0, 0, 105));
 
-        const int side = std::max(48, std::min(width(), height()) - 28);
+        const int available = std::max(32, std::min(width(), height()) - 20);
+        const int side = std::min(kTranscodeProgressRingSize, available);
         const QRectF ring((width() - side) / 2.0, (height() - side) / 2.0, side, side);
         const double penWidth = std::clamp(side / 13.0, 4.0, 9.0);
 
@@ -157,9 +159,9 @@ class TranscodeProgressOverlay final : public QWidget {
         painter.drawArc(ring, 0, 360 * 16);
 
         if (!m_failed) {
-            painter.setPen(QPen(QColor(74, 222, 128, 235), penWidth, Qt::SolidLine, Qt::RoundCap));
+            painter.setPen(QPen(QColor(59, 130, 246, 235), penWidth, Qt::SolidLine, Qt::RoundCap));
             painter.drawArc(ring, 90 * 16, static_cast<int>(-360 * 16 * m_progress));
-            painter.setPen(QPen(QColor(255, 255, 255, 235), penWidth, Qt::SolidLine, Qt::RoundCap));
+            painter.setPen(QPen(QColor(147, 197, 253, 245), penWidth, Qt::SolidLine, Qt::RoundCap));
             painter.drawArc(ring, static_cast<int>((90.0 - m_rotation) * 16.0), -62 * 16);
         } else {
             painter.setPen(QPen(QColor(248, 113, 113, 235), penWidth, Qt::SolidLine, Qt::RoundCap));
@@ -714,6 +716,12 @@ void ResultThumbnail::enterEvent(QEnterEvent*) {
 void ResultThumbnail::leaveEvent(QEvent*) {
     if (m_closeTimer.interval() > 0)
         m_closeTimer.start();
+}
+
+void ResultThumbnail::setImagePixmap(const QPixmap& pixmap) {
+    if (!m_imageLabel || pixmap.isNull())
+        return;
+    m_imageLabel->setPixmap(pixmap);
 }
 
 void ResultThumbnail::setTranscodeProgress(double progress) {
