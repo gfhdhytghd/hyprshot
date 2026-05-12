@@ -48,7 +48,7 @@ constexpr std::size_t MAX_RECORD_REQUEST_BYTES = 64 * 1024;
 constexpr int         MAX_FRAME_QUEUE = 2;
 constexpr int         MAX_CONSECUTIVE_FRAME_FAILURES = 30;
 constexpr int         MAX_ANIMATION_RECORDING_FPS = 20;
-constexpr int         MAX_APNG_RECORDING_FPS = 10;
+constexpr int         APNG_INTERMEDIATE_RECORDING_FPS = 60;
 constexpr int         MAX_PENDING_FRAME_REPEATS = 240 * 30;
 constexpr int         MAX_ANIMATION_FRAME_QUEUE = 12;
 constexpr std::size_t MAX_ANIMATION_FRAME_QUEUE_BYTES = 128 * 1024 * 1024;
@@ -509,7 +509,7 @@ int effectiveRecordingFps(const RecordingFrameRequest& request, int requestedFps
     int fps = std::clamp(requestedFps, 1, 240);
     const auto format = sanitizedRecordFormat(request.defaults.recordFormat);
     if (format == "apng")
-        fps = std::min(fps, MAX_APNG_RECORDING_FPS);
+        return APNG_INTERMEDIATE_RECORDING_FPS;
     else if (isImageAnimationRecordFormat(format))
         fps = std::min(fps, MAX_ANIMATION_RECORDING_FPS);
     if (request.mode != CaptureMode::Window)
@@ -566,6 +566,31 @@ std::optional<std::filesystem::path> uniqueOutputPath(const CaptureDefaults& def
     }
 
     return dir / (stem + "-" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ext);
+}
+
+std::optional<std::filesystem::path> uniqueIntermediateRecordingPath(const std::filesystem::path& outputPath, std::string_view extension, std::string& error) {
+    const auto dir = outputPath.parent_path();
+    if (dir.empty()) {
+        error = "recording intermediate directory is empty";
+        return std::nullopt;
+    }
+
+    const auto stem = outputPath.stem().string().empty() ? std::string("Recording") : outputPath.stem().string();
+    const auto ext = extension.empty() || extension.front() == '.' ? std::string(extension) : "." + std::string(extension);
+    const auto prefix = "." + stem + ".hyprcapture-" + std::to_string(static_cast<unsigned long long>(getpid()));
+    std::error_code ec;
+    for (int i = 0; i < 1000; ++i) {
+        const auto candidate = dir / (prefix + (i == 0 ? std::string{} : "-" + std::to_string(i)) + ext);
+        ec.clear();
+        if (!std::filesystem::exists(candidate, ec))
+            return candidate;
+        if (ec) {
+            error = "recording intermediate path check failed: " + ec.message();
+            return std::nullopt;
+        }
+    }
+
+    return dir / (prefix + "-" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ext);
 }
 
 void setOwnerOnlyPermissions(const std::filesystem::path& path) {
@@ -650,7 +675,15 @@ bool makeEvenFrame(RecordingFrame& frame) {
 
 class RawVideoEncoder {
   public:
-    RawVideoEncoder(std::filesystem::path outputPath, int width, int height, int fps, std::string format, std::string codec, std::string preset, bool preserveAlpha)
+    RawVideoEncoder(std::filesystem::path outputPath,
+                    int                   width,
+                    int                   height,
+                    int                   fps,
+                    std::string           format,
+                    std::string           codec,
+                    std::string           preset,
+                    bool                  preserveAlpha,
+                    std::size_t           maxQueuedFrames)
         : m_outputPath(std::move(outputPath)),
           m_width(width),
           m_height(height),
@@ -659,7 +692,7 @@ class RawVideoEncoder {
           m_codec(std::move(codec)),
           m_preset(std::move(preset)),
           m_preserveAlpha(preserveAlpha),
-          m_maxQueuedFrames(rawEncoderQueueLimit(m_width, m_height, m_format)) {}
+          m_maxQueuedFrames(std::max<std::size_t>(1, maxQueuedFrames)) {}
 
     ~RawVideoEncoder() {
         stopAndJoin(false);
@@ -757,7 +790,7 @@ class RawVideoEncoder {
             args.push_back("-level");
             args.push_back("3");
             args.push_back("-pix_fmt");
-            args.push_back("rgba");
+            args.push_back(m_preserveAlpha ? "rgba" : "rgb24");
         } else {
             args.push_back("-c:v");
             args.push_back(m_codec);
@@ -971,10 +1004,13 @@ struct ActiveRecording {
     Time::steady_tp                          startedAt;
     Time::steady_tp                          nextFrameAt;
     std::filesystem::path                    outputPath;
+    std::filesystem::path                    encoderOutputPath;
     int                                      width = 0;
     int                                      height = 0;
     int                                      consecutiveFrameFailures = 0;
     int                                      pendingFrameRepeats = 0;
+    bool                                     transcodeToApng = false;
+    bool                                     preserveAlpha = false;
 };
 
 std::unique_ptr<ActiveRecording> g_recording;
@@ -984,11 +1020,25 @@ struct FinishingRawRecording {
     SP<CEventLoopTimer>              timer;
     CaptureDefaults                  defaults;
     std::filesystem::path            outputPath;
+    std::filesystem::path            encoderOutputPath;
     std::string                      message;
     bool                             launchResultHelper = false;
+    bool                             transcodeToApng = false;
+    bool                             preserveAlpha = false;
 };
 
 std::unique_ptr<FinishingRawRecording> g_finishingRawRecording;
+
+struct ActiveTranscodeRecording {
+    pid_t                 pid = -1;
+    SP<CEventLoopTimer>   timer;
+    CaptureDefaults       defaults;
+    std::filesystem::path inputPath;
+    std::filesystem::path outputPath;
+    bool                  launchResultHelper = false;
+};
+
+std::unique_ptr<ActiveTranscodeRecording> g_transcodeRecording;
 
 struct ActiveGsrRecording {
     pid_t                 pid = -1;
@@ -1016,6 +1066,61 @@ void finishRecordingOutput(const CaptureDefaults& defaults, const std::filesyste
         notifyRecording("recording result helper failed: " + result.error, CHyprColor(1.0, 0.35, 0.25, 1.0), 5000);
 }
 
+LaunchResult spawnApngTranscode(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, bool preserveAlpha, pid_t& pid) {
+    const auto ffmpeg = trustedFfmpegPath();
+    if (!ffmpeg)
+        return {.success = false, .error = "no trusted ffmpeg executable found"};
+
+    std::vector<std::string> args{
+        *ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        inputPath.string(),
+        "-an",
+        "-c:v",
+        "apng",
+        "-pix_fmt",
+        preserveAlpha ? "rgba" : "rgb24",
+        "-pred",
+        "none",
+        "-plays",
+        "0",
+        "-r",
+        std::to_string(APNG_INTERMEDIATE_RECORDING_FPS),
+        outputPath.string(),
+    };
+
+    std::vector<char*> argv;
+    argv.reserve(args.size() + 1);
+    for (auto& arg : args)
+        argv.push_back(arg.data());
+    argv.push_back(nullptr);
+
+    auto childEnv = childEnvironment();
+    std::vector<char*> envp;
+    envp.reserve(childEnv.size() + 1);
+    for (auto& env : childEnv)
+        envp.push_back(env.data());
+    envp.push_back(nullptr);
+
+    posix_spawn_file_actions_t fileActions {};
+    if (const int error = posix_spawn_file_actions_init(&fileActions); error != 0)
+        return {.success = false, .error = std::string("spawn setup failed: ") + std::strerror(error)};
+#if defined(__GLIBC__) && defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 34)
+    posix_spawn_file_actions_addclosefrom_np(&fileActions, 3);
+#endif
+
+    const int spawnError = posix_spawn(&pid, argv[0], &fileActions, nullptr, argv.data(), envp.data());
+    posix_spawn_file_actions_destroy(&fileActions);
+    if (spawnError != 0)
+        return {.success = false, .error = std::string("ffmpeg apng transcode exec failed: ") + std::strerror(spawnError)};
+
+    return {.success = true};
+}
+
 bool reapGsrRecordingIfExited() {
     if (!g_gsrRecording)
         return false;
@@ -1035,6 +1140,28 @@ bool reapGsrRecordingIfExited() {
     return true;
 }
 
+void scheduleTranscodeRecordingPoll();
+
+void startApngTranscodeFromFinishedRecording(FinishingRawRecording& recording) {
+    pid_t pid = -1;
+    const auto result = spawnApngTranscode(recording.encoderOutputPath, recording.outputPath, recording.preserveAlpha, pid);
+    if (!result.success) {
+        std::error_code ec;
+        std::filesystem::remove(recording.encoderOutputPath, ec);
+        notifyRecording("apng transcode failed: " + result.error, CHyprColor(1.0, 0.35, 0.25, 1.0), 7000);
+        return;
+    }
+
+    g_transcodeRecording = std::make_unique<ActiveTranscodeRecording>();
+    g_transcodeRecording->pid = pid;
+    g_transcodeRecording->defaults = recording.defaults;
+    g_transcodeRecording->inputPath = recording.encoderOutputPath;
+    g_transcodeRecording->outputPath = recording.outputPath;
+    g_transcodeRecording->launchResultHelper = recording.launchResultHelper;
+    scheduleTranscodeRecordingPoll();
+    notifyRecording("apng transcode started: " + recording.outputPath.string(), CHyprColor(1.0, 0.72, 0.2, 1.0), 5000);
+}
+
 void completeFinishingRawRecording() {
     if (!g_finishingRawRecording)
         return;
@@ -1045,6 +1172,11 @@ void completeFinishingRawRecording() {
     recording->timer.reset();
     if (recording->encoder)
         recording->encoder->joinIfFinished();
+
+    if (recording->transcodeToApng) {
+        startApngTranscodeFromFinishedRecording(*recording);
+        return;
+    }
 
     finishRecordingOutput(recording->defaults, recording->outputPath, recording->message, recording->launchResultHelper);
 }
@@ -1073,6 +1205,51 @@ void scheduleFinishingRawRecordingPoll() {
         },
         nullptr);
     g_pEventLoopManager->addTimer(g_finishingRawRecording->timer);
+}
+
+bool reapTranscodeRecordingIfActive() {
+    if (!g_transcodeRecording)
+        return false;
+
+    int status = 0;
+    const pid_t result = waitpid(g_transcodeRecording->pid, &status, WNOHANG);
+    if (result == 0)
+        return true;
+    if (result == g_transcodeRecording->pid || (result < 0 && errno == ECHILD)) {
+        auto recording = std::move(g_transcodeRecording);
+        if (recording->timer && g_pEventLoopManager)
+            g_pEventLoopManager->removeTimer(recording->timer);
+        recording->timer.reset();
+
+        std::error_code ec;
+        std::filesystem::remove(recording->inputPath, ec);
+        const bool success = result == recording->pid ? (WIFEXITED(status) && WEXITSTATUS(status) == 0) : std::filesystem::exists(recording->outputPath);
+        if (success) {
+            finishRecordingOutput(recording->defaults, recording->outputPath, "recording finished", recording->launchResultHelper);
+        } else {
+            std::filesystem::remove(recording->outputPath, ec);
+            notifyRecording("apng transcode failed: " + recording->outputPath.string(), CHyprColor(1.0, 0.35, 0.25, 1.0), 7000);
+        }
+        return false;
+    }
+
+    return true;
+}
+
+void scheduleTranscodeRecordingPoll() {
+    if (!g_transcodeRecording || !g_pEventLoopManager)
+        return;
+
+    g_transcodeRecording->timer = makeShared<CEventLoopTimer>(
+        std::chrono::milliseconds(250),
+        [](SP<CEventLoopTimer> self, void*) {
+            if (!g_transcodeRecording || g_transcodeRecording->timer.get() != self.get())
+                return;
+            if (reapTranscodeRecordingIfActive())
+                self->updateTimeout(std::chrono::milliseconds(250));
+        },
+        nullptr);
+    g_pEventLoopManager->addTimer(g_transcodeRecording->timer);
 }
 
 LaunchResult stopRecordingInternal(const std::string& reason, bool drain) {
@@ -1105,15 +1282,27 @@ LaunchResult stopRecordingInternal(const std::string& reason, bool drain) {
         g_finishingRawRecording->encoder = std::move(recording->encoder);
         g_finishingRawRecording->defaults = recording->request.defaults;
         g_finishingRawRecording->outputPath = recording->outputPath;
+        g_finishingRawRecording->encoderOutputPath = recording->encoderOutputPath;
         g_finishingRawRecording->message = "recording " + reason;
         g_finishingRawRecording->launchResultHelper = true;
+        g_finishingRawRecording->transcodeToApng = recording->transcodeToApng;
+        g_finishingRawRecording->preserveAlpha = recording->preserveAlpha;
         scheduleFinishingRawRecordingPoll();
-        notifyRecording("recording finalizing: " + recording->outputPath.string(), CHyprColor(1.0, 0.72, 0.2, 1.0), 3000);
+        notifyRecording(recording->transcodeToApng ? "recording finalizing mkv intermediate: " + recording->outputPath.string() :
+                                                     "recording finalizing: " + recording->outputPath.string(),
+                        CHyprColor(1.0, 0.72, 0.2, 1.0),
+                        3000);
         return {.success = true};
     }
 
     if (recording->encoder)
         recording->encoder->stopAndJoin(drain);
+
+    if (!drain && recording->transcodeToApng) {
+        std::error_code ec;
+        std::filesystem::remove(recording->encoderOutputPath, ec);
+        return {.success = true};
+    }
 
     finishRecordingOutput(recording->request.defaults, recording->outputPath, "recording " + reason, drain);
     return {.success = true};
@@ -1315,7 +1504,7 @@ LaunchResult startGsrRecording(const RecordingRequest& request) {
 } // namespace
 
 LaunchResult startRecordingFromRequestFile(const std::string& path) {
-    if (g_recording || reapGsrRecordingIfExited() || reapFinishingRawRecordingIfActive())
+    if (g_recording || reapGsrRecordingIfExited() || reapFinishingRawRecordingIfActive() || reapTranscodeRecordingIfActive())
         return {.success = false, .error = "recording already active"};
     if (!g_pEventLoopManager)
         return {.success = false, .error = "Hyprland event loop unavailable"};
@@ -1346,6 +1535,8 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
     const auto format = sanitizedRecordFormat(frameRequest.defaults.recordFormat);
     frameRequest.defaults.recordFormat = format;
     const auto codec = effectiveRecordingCodec(frameRequest, request->defaults.recordCodec);
+    const bool transcodeToApng = format == "apng";
+    const bool preserveAlpha = recordingNeedsAlpha(frameRequest) && recordingEncoderSupportsAlpha(format, codec);
     const bool solidAlphaFallback =
         frameRequest.defaults.recordSolidAlpha && solidAlphaBackground(frameRequest.defaults.windowBackground) && !recordingEncoderSupportsAlpha(format, codec);
     if (solidAlphaFallback) {
@@ -1366,14 +1557,30 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
     const auto  outputPath = uniqueOutputPath(request->defaults, outputPathError);
     if (!outputPath)
         return {.success = false, .error = outputPathError.empty() ? "recording output path failed" : outputPathError};
-    auto encoder = std::make_unique<RawVideoEncoder>(*outputPath,
+
+    auto        encoderOutputPath = *outputPath;
+    std::string encoderFormat = format;
+    std::string encoderCodec = codec;
+    auto        encoderQueueLimit = rawEncoderQueueLimit(firstFrame->width, firstFrame->height, format);
+    if (transcodeToApng) {
+        const auto intermediatePath = uniqueIntermediateRecordingPath(*outputPath, "mkv", outputPathError);
+        if (!intermediatePath)
+            return {.success = false, .error = outputPathError.empty() ? "recording intermediate path failed" : outputPathError};
+        encoderOutputPath = *intermediatePath;
+        encoderFormat = "mkv";
+        encoderCodec = "ffv1";
+        encoderQueueLimit = rawEncoderQueueLimit(firstFrame->width, firstFrame->height, "apng");
+    }
+
+    auto encoder = std::make_unique<RawVideoEncoder>(encoderOutputPath,
                                                      firstFrame->width,
                                                      firstFrame->height,
                                                      fps,
-                                                     format,
-                                                     codec,
+                                                     encoderFormat,
+                                                     encoderCodec,
                                                      sanitizedPreset(request->defaults.recordPreset),
-                                                     recordingNeedsAlpha(frameRequest) && recordingEncoderSupportsAlpha(format, codec));
+                                                     preserveAlpha,
+                                                     encoderQueueLimit);
     if (const auto result = encoder->start(); !result.success)
         return result;
 
@@ -1388,8 +1595,11 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
     g_recording->startedAt = Time::steadyNow();
     g_recording->nextFrameAt = g_recording->startedAt + g_recording->interval;
     g_recording->outputPath = *outputPath;
+    g_recording->encoderOutputPath = encoderOutputPath;
     g_recording->width = width;
     g_recording->height = height;
+    g_recording->transcodeToApng = transcodeToApng;
+    g_recording->preserveAlpha = preserveAlpha;
     scheduleRecordingTimer();
 
     if (fps < requestedFps) {
@@ -1397,6 +1607,11 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
             notifyRecording(format + " recording limited to " + std::to_string(fps) + " fps for stable animation timing", CHyprColor(1.0, 0.72, 0.2, 1.0), 5000);
         else
             notifyRecording("window recording limited to " + std::to_string(fps) + " fps to avoid compositor stalls", CHyprColor(1.0, 0.72, 0.2, 1.0), 5000);
+    }
+    if (format == "apng") {
+        notifyRecording("apng recording uses a 60 fps mkv intermediate before transcoding", CHyprColor(1.0, 0.72, 0.2, 1.0), 5000);
+        if (request->defaults.recordMaxSeconds >= 10)
+            notifyRecording("apng recordings of 10s or longer can create very large files", CHyprColor(1.0, 0.72, 0.2, 1.0), 7000);
     }
     notifyRecording("recording started: " + outputPath->string());
     return {.success = true};
@@ -1407,7 +1622,7 @@ LaunchResult stopRecording(const std::string& reason) {
 }
 
 bool isRecordingActive() {
-    return static_cast<bool>(g_recording) || reapGsrRecordingIfExited() || reapFinishingRawRecordingIfActive();
+    return static_cast<bool>(g_recording) || reapGsrRecordingIfExited() || reapFinishingRawRecordingIfActive() || reapTranscodeRecordingIfActive();
 }
 
 void shutdownRecording() {
@@ -1420,6 +1635,25 @@ void shutdownRecording() {
         recording->timer.reset();
         if (recording->encoder)
             recording->encoder->stopAndJoin(false);
+        if (recording->transcodeToApng) {
+            std::error_code ec;
+            std::filesystem::remove(recording->encoderOutputPath, ec);
+        }
+    }
+    if (g_transcodeRecording) {
+        auto recording = std::move(g_transcodeRecording);
+        if (recording->timer && g_pEventLoopManager)
+            g_pEventLoopManager->removeTimer(recording->timer);
+        recording->timer.reset();
+        if (recording->pid > 0) {
+            kill(recording->pid, SIGINT);
+            int status = 0;
+            while (waitpid(recording->pid, &status, 0) < 0 && errno == EINTR) {
+            }
+        }
+        std::error_code ec;
+        std::filesystem::remove(recording->inputPath, ec);
+        std::filesystem::remove(recording->outputPath, ec);
     }
 }
 

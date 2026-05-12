@@ -2153,6 +2153,11 @@ QString CaptureOverlay::recordOptionsWarning() const {
     const QString format = currentRecordFormat();
     const QString codec = currentRecordCodec();
     if (isImageAnimationRecordFormat(format)) {
+        if (format == "apng") {
+            if (currentRecordMaxSeconds() >= 10)
+                return QStringLiteral("apng recordings of 10s or longer can create very large files");
+            return QStringLiteral("apng records a 60 fps mkv intermediate before transcoding");
+        }
         if (format == "gif" && alphaRecordingRequested(m_defaults, currentWindowBackground()))
             return QStringLiteral("gif has limited transparency; using compositor readback for a fixed-duration animation");
         return QStringLiteral("animation formats use compositor readback; keep area and fps modest");
