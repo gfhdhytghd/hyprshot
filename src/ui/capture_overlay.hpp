@@ -77,6 +77,8 @@ class CaptureOverlay final : public QMainWindow {
     void setSelectionRect(const QRect& rect);
     bool regionSelectionValid(const QRect& selection) const;
     ConfirmDragMode confirmRegionDragModeAt(const QPoint& point) const;
+    Qt::CursorShape cursorForConfirmDragMode(ConfirmDragMode mode) const;
+    void updateConfirmCursor(const QPoint& point);
     QRect regionSelectionForDrag(const QPoint& point) const;
     void finishCapture();
     void cancelCapture();

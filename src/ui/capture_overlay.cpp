@@ -1658,17 +1658,6 @@ void CaptureOverlay::buildToolbar() {
         update();
     });
 
-    m_confirmButton = new QPushButton(m_toolbar);
-    m_confirmButton->setFlat(true);
-    m_confirmButton->setFocusPolicy(Qt::NoFocus);
-    m_confirmButton->setIcon(iconFromSvg(kConfirmSvg, kConfirmIconSize));
-    m_confirmButton->setIconSize(QSize(kConfirmIconSize, kConfirmIconSize));
-    m_confirmButton->setFixedSize(36, 32);
-    m_confirmButton->setToolTip("Confirm");
-    m_confirmButton->setAccessibleName("Confirm");
-    layout->addWidget(m_confirmButton);
-    connect(m_confirmButton, &QPushButton::clicked, this, &CaptureOverlay::confirmPendingCapture);
-
     auto* cancel = new QPushButton(m_toolbar);
     cancel->setFlat(true);
     cancel->setFocusPolicy(Qt::NoFocus);
@@ -1679,6 +1668,17 @@ void CaptureOverlay::buildToolbar() {
     cancel->setAccessibleName("Cancel");
     layout->addWidget(cancel);
     connect(cancel, &QPushButton::clicked, this, &CaptureOverlay::cancelCapture);
+
+    m_confirmButton = new QPushButton(m_toolbar);
+    m_confirmButton->setFlat(true);
+    m_confirmButton->setFocusPolicy(Qt::NoFocus);
+    m_confirmButton->setIcon(iconFromSvg(kConfirmSvg, kConfirmIconSize));
+    m_confirmButton->setIconSize(QSize(kConfirmIconSize, kConfirmIconSize));
+    m_confirmButton->setFixedSize(36, 32);
+    m_confirmButton->setToolTip("Capture");
+    m_confirmButton->setAccessibleName("Capture");
+    layout->addWidget(m_confirmButton);
+    connect(m_confirmButton, &QPushButton::clicked, this, &CaptureOverlay::confirmPendingCapture);
 
     m_status = new QLabel(m_toolbar);
     m_status->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -1902,6 +1902,7 @@ void CaptureOverlay::clearPendingConfirm() {
     m_confirmDragMode = ConfirmDragMode::None;
     m_dragging = false;
     m_selectedWindowIndex = -1;
+    setCursor(Qt::CrossCursor);
     updateConfirmButtonVisibility();
 }
 
@@ -1950,6 +1951,33 @@ CaptureOverlay::ConfirmDragMode CaptureOverlay::confirmRegionDragModeAt(const QP
     if (selection.contains(point))
         return ConfirmDragMode::MoveSelection;
     return ConfirmDragMode::NewSelection;
+}
+
+Qt::CursorShape CaptureOverlay::cursorForConfirmDragMode(ConfirmDragMode mode) const {
+    switch (mode) {
+        case ConfirmDragMode::MoveSelection: return Qt::SizeAllCursor;
+        case ConfirmDragMode::ResizeLeft:
+        case ConfirmDragMode::ResizeRight: return Qt::SizeHorCursor;
+        case ConfirmDragMode::ResizeTop:
+        case ConfirmDragMode::ResizeBottom: return Qt::SizeVerCursor;
+        case ConfirmDragMode::ResizeTopLeft:
+        case ConfirmDragMode::ResizeBottomRight: return Qt::SizeFDiagCursor;
+        case ConfirmDragMode::ResizeTopRight:
+        case ConfirmDragMode::ResizeBottomLeft: return Qt::SizeBDiagCursor;
+        case ConfirmDragMode::NewSelection:
+        case ConfirmDragMode::None: return Qt::CrossCursor;
+    }
+    return Qt::CrossCursor;
+}
+
+void CaptureOverlay::updateConfirmCursor(const QPoint& point) {
+    if (!pendingConfirmActive() || m_mode != hyprcapture::CaptureMode::Region) {
+        setCursor(Qt::CrossCursor);
+        return;
+    }
+
+    const ConfirmDragMode mode = m_dragging ? m_confirmDragMode : confirmRegionDragModeAt(point);
+    setCursor(cursorForConfirmDragMode(mode));
 }
 
 QRect CaptureOverlay::regionSelectionForDrag(const QPoint& point) const {
@@ -2346,6 +2374,7 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
     if (pendingConfirmActive()) {
         if (m_mode == hyprcapture::CaptureMode::Region) {
             m_confirmDragMode = confirmRegionDragModeAt(event->pos());
+            setCursor(cursorForConfirmDragMode(m_confirmDragMode));
             m_confirmDragStart = clampedToRect(event->pos(), regionCaptureBounds());
             m_confirmDragStartSelection = normalizedSelection().intersected(regionCaptureBounds());
             m_dragging = true;
@@ -2359,12 +2388,15 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
         }
 
         if (m_mode == hyprcapture::CaptureMode::Window) {
-            const int index = hoveredWindowIndex();
-            if (index >= 0) {
-                m_selectedWindowIndex = index;
-                updateStatus();
-                update();
-            }
+            m_confirmDragMode = ConfirmDragMode::NewSelection;
+            m_confirmDragStart = clampedToRect(event->pos(), regionCaptureBounds());
+            m_confirmDragStartSelection = QRect{};
+            m_dragStart = m_confirmDragStart;
+            m_dragEnd = m_confirmDragStart;
+            m_dragging = true;
+            setCursor(Qt::CrossCursor);
+            updateStatus();
+            update();
             return;
         }
 
@@ -2405,13 +2437,24 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
 void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
     rememberCursorLocalPosition(event->position());
     if (pendingConfirmActive()) {
-        if (m_mode == hyprcapture::CaptureMode::Region && m_dragging) {
-            setSelectionRect(regionSelectionForDrag(event->pos()));
+        if (m_mode == hyprcapture::CaptureMode::Region) {
+            updateConfirmCursor(event->pos());
+            if (m_dragging)
+                setSelectionRect(regionSelectionForDrag(event->pos()));
             updateStatus();
             update();
             return;
         }
         if (m_mode == hyprcapture::CaptureMode::Window) {
+            if (m_dragging) {
+                m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
+                if (regionSelectionValid(normalizedSelection())) {
+                    m_mode = hyprcapture::CaptureMode::Region;
+                    m_selectedWindowIndex = -1;
+                    updateToolbarControlsForMode();
+                    updateConfirmCursor(event->pos());
+                }
+            }
             updateStatus();
             update();
             return;
@@ -2449,12 +2492,29 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event) {
             m_confirmDragMode = ConfirmDragMode::None;
             if (!regionSelectionValid(normalizedSelection()))
                 m_pendingConfirm = false;
+            updateConfirmCursor(event->pos());
             updateStatus();
             update();
             return;
         }
 
         if (m_mode == hyprcapture::CaptureMode::Window) {
+            if (m_dragging) {
+                m_dragging = false;
+                m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
+                if (regionSelectionValid(normalizedSelection())) {
+                    m_mode = hyprcapture::CaptureMode::Region;
+                    m_confirmDragMode = ConfirmDragMode::None;
+                    m_selectedWindowIndex = -1;
+                    updateToolbarControlsForMode();
+                    updateConfirmCursor(event->pos());
+                    updateStatus();
+                    update();
+                    return;
+                }
+                m_confirmDragMode = ConfirmDragMode::None;
+            }
+
             const int index = hoveredWindowIndex();
             if (index >= 0)
                 m_selectedWindowIndex = index;
@@ -2873,7 +2933,7 @@ void CaptureOverlay::updateStatus() {
         } else if (m_mode == hyprcapture::CaptureMode::Region && !regionSelectionValid(normalizedSelection())) {
             setStatusText("choose area");
         } else {
-            setStatusText("confirm");
+            setStatusText(QString{});
         }
         updateConfirmButtonVisibility();
         relayoutToolbar();
