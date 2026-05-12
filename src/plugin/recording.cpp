@@ -1025,20 +1025,10 @@ struct FinishingRawRecording {
     bool                             launchResultHelper = false;
     bool                             transcodeToApng = false;
     bool                             preserveAlpha = false;
+    int                              durationMs = 0;
 };
 
 std::unique_ptr<FinishingRawRecording> g_finishingRawRecording;
-
-struct ActiveTranscodeRecording {
-    pid_t                 pid = -1;
-    SP<CEventLoopTimer>   timer;
-    CaptureDefaults       defaults;
-    std::filesystem::path inputPath;
-    std::filesystem::path outputPath;
-    bool                  launchResultHelper = false;
-};
-
-std::unique_ptr<ActiveTranscodeRecording> g_transcodeRecording;
 
 struct ActiveGsrRecording {
     pid_t                 pid = -1;
@@ -1066,61 +1056,6 @@ void finishRecordingOutput(const CaptureDefaults& defaults, const std::filesyste
         notifyRecording("recording result helper failed: " + result.error, CHyprColor(1.0, 0.35, 0.25, 1.0), 5000);
 }
 
-LaunchResult spawnApngTranscode(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, bool preserveAlpha, pid_t& pid) {
-    const auto ffmpeg = trustedFfmpegPath();
-    if (!ffmpeg)
-        return {.success = false, .error = "no trusted ffmpeg executable found"};
-
-    std::vector<std::string> args{
-        *ffmpeg,
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        inputPath.string(),
-        "-an",
-        "-c:v",
-        "apng",
-        "-pix_fmt",
-        preserveAlpha ? "rgba" : "rgb24",
-        "-pred",
-        "none",
-        "-plays",
-        "0",
-        "-r",
-        std::to_string(APNG_INTERMEDIATE_RECORDING_FPS),
-        outputPath.string(),
-    };
-
-    std::vector<char*> argv;
-    argv.reserve(args.size() + 1);
-    for (auto& arg : args)
-        argv.push_back(arg.data());
-    argv.push_back(nullptr);
-
-    auto childEnv = childEnvironment();
-    std::vector<char*> envp;
-    envp.reserve(childEnv.size() + 1);
-    for (auto& env : childEnv)
-        envp.push_back(env.data());
-    envp.push_back(nullptr);
-
-    posix_spawn_file_actions_t fileActions {};
-    if (const int error = posix_spawn_file_actions_init(&fileActions); error != 0)
-        return {.success = false, .error = std::string("spawn setup failed: ") + std::strerror(error)};
-#if defined(__GLIBC__) && defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 34)
-    posix_spawn_file_actions_addclosefrom_np(&fileActions, 3);
-#endif
-
-    const int spawnError = posix_spawn(&pid, argv[0], &fileActions, nullptr, argv.data(), envp.data());
-    posix_spawn_file_actions_destroy(&fileActions);
-    if (spawnError != 0)
-        return {.success = false, .error = std::string("ffmpeg apng transcode exec failed: ") + std::strerror(spawnError)};
-
-    return {.success = true};
-}
-
 bool reapGsrRecordingIfExited() {
     if (!g_gsrRecording)
         return false;
@@ -1140,26 +1075,21 @@ bool reapGsrRecordingIfExited() {
     return true;
 }
 
-void scheduleTranscodeRecordingPoll();
-
 void startApngTranscodeFromFinishedRecording(FinishingRawRecording& recording) {
-    pid_t pid = -1;
-    const auto result = spawnApngTranscode(recording.encoderOutputPath, recording.outputPath, recording.preserveAlpha, pid);
+    const auto result = launchRecordingTranscodeHelper(recording.defaults,
+                                                       recording.encoderOutputPath.string(),
+                                                       recording.outputPath.string(),
+                                                       recording.preserveAlpha,
+                                                       recording.durationMs);
     if (!result.success) {
         std::error_code ec;
         std::filesystem::remove(recording.encoderOutputPath, ec);
-        notifyRecording("apng transcode failed: " + result.error, CHyprColor(1.0, 0.35, 0.25, 1.0), 7000);
+        std::filesystem::remove(recording.outputPath, ec);
+        notifyRecording("apng transcode helper failed: " + result.error, CHyprColor(1.0, 0.35, 0.25, 1.0), 7000);
         return;
     }
 
-    g_transcodeRecording = std::make_unique<ActiveTranscodeRecording>();
-    g_transcodeRecording->pid = pid;
-    g_transcodeRecording->defaults = recording.defaults;
-    g_transcodeRecording->inputPath = recording.encoderOutputPath;
-    g_transcodeRecording->outputPath = recording.outputPath;
-    g_transcodeRecording->launchResultHelper = recording.launchResultHelper;
-    scheduleTranscodeRecordingPoll();
-    notifyRecording("apng transcode started: " + recording.outputPath.string(), CHyprColor(1.0, 0.72, 0.2, 1.0), 5000);
+    notifyRecording("apng transcode opened in helper: " + recording.outputPath.string(), CHyprColor(1.0, 0.72, 0.2, 1.0), 5000);
 }
 
 void completeFinishingRawRecording() {
@@ -1207,51 +1137,6 @@ void scheduleFinishingRawRecordingPoll() {
     g_pEventLoopManager->addTimer(g_finishingRawRecording->timer);
 }
 
-bool reapTranscodeRecordingIfActive() {
-    if (!g_transcodeRecording)
-        return false;
-
-    int status = 0;
-    const pid_t result = waitpid(g_transcodeRecording->pid, &status, WNOHANG);
-    if (result == 0)
-        return true;
-    if (result == g_transcodeRecording->pid || (result < 0 && errno == ECHILD)) {
-        auto recording = std::move(g_transcodeRecording);
-        if (recording->timer && g_pEventLoopManager)
-            g_pEventLoopManager->removeTimer(recording->timer);
-        recording->timer.reset();
-
-        std::error_code ec;
-        std::filesystem::remove(recording->inputPath, ec);
-        const bool success = result == recording->pid ? (WIFEXITED(status) && WEXITSTATUS(status) == 0) : std::filesystem::exists(recording->outputPath);
-        if (success) {
-            finishRecordingOutput(recording->defaults, recording->outputPath, "recording finished", recording->launchResultHelper);
-        } else {
-            std::filesystem::remove(recording->outputPath, ec);
-            notifyRecording("apng transcode failed: " + recording->outputPath.string(), CHyprColor(1.0, 0.35, 0.25, 1.0), 7000);
-        }
-        return false;
-    }
-
-    return true;
-}
-
-void scheduleTranscodeRecordingPoll() {
-    if (!g_transcodeRecording || !g_pEventLoopManager)
-        return;
-
-    g_transcodeRecording->timer = makeShared<CEventLoopTimer>(
-        std::chrono::milliseconds(250),
-        [](SP<CEventLoopTimer> self, void*) {
-            if (!g_transcodeRecording || g_transcodeRecording->timer.get() != self.get())
-                return;
-            if (reapTranscodeRecordingIfActive())
-                self->updateTimeout(std::chrono::milliseconds(250));
-        },
-        nullptr);
-    g_pEventLoopManager->addTimer(g_transcodeRecording->timer);
-}
-
 LaunchResult stopRecordingInternal(const std::string& reason, bool drain) {
     if (g_gsrRecording) {
         auto recording = std::move(g_gsrRecording);
@@ -1287,6 +1172,7 @@ LaunchResult stopRecordingInternal(const std::string& reason, bool drain) {
         g_finishingRawRecording->launchResultHelper = true;
         g_finishingRawRecording->transcodeToApng = recording->transcodeToApng;
         g_finishingRawRecording->preserveAlpha = recording->preserveAlpha;
+        g_finishingRawRecording->durationMs = std::max(1, static_cast<int>(std::clamp<std::int64_t>(recording->request.defaults.recordMaxSeconds, 1, 24 * 60 * 60)) * 1000);
         scheduleFinishingRawRecordingPoll();
         notifyRecording(recording->transcodeToApng ? "recording finalizing mkv intermediate: " + recording->outputPath.string() :
                                                      "recording finalizing: " + recording->outputPath.string(),
@@ -1504,7 +1390,7 @@ LaunchResult startGsrRecording(const RecordingRequest& request) {
 } // namespace
 
 LaunchResult startRecordingFromRequestFile(const std::string& path) {
-    if (g_recording || reapGsrRecordingIfExited() || reapFinishingRawRecordingIfActive() || reapTranscodeRecordingIfActive())
+    if (g_recording || reapGsrRecordingIfExited() || reapFinishingRawRecordingIfActive())
         return {.success = false, .error = "recording already active"};
     if (!g_pEventLoopManager)
         return {.success = false, .error = "Hyprland event loop unavailable"};
@@ -1622,7 +1508,7 @@ LaunchResult stopRecording(const std::string& reason) {
 }
 
 bool isRecordingActive() {
-    return static_cast<bool>(g_recording) || reapGsrRecordingIfExited() || reapFinishingRawRecordingIfActive() || reapTranscodeRecordingIfActive();
+    return static_cast<bool>(g_recording) || reapGsrRecordingIfExited() || reapFinishingRawRecordingIfActive();
 }
 
 void shutdownRecording() {
@@ -1639,21 +1525,6 @@ void shutdownRecording() {
             std::error_code ec;
             std::filesystem::remove(recording->encoderOutputPath, ec);
         }
-    }
-    if (g_transcodeRecording) {
-        auto recording = std::move(g_transcodeRecording);
-        if (recording->timer && g_pEventLoopManager)
-            g_pEventLoopManager->removeTimer(recording->timer);
-        recording->timer.reset();
-        if (recording->pid > 0) {
-            kill(recording->pid, SIGINT);
-            int status = 0;
-            while (waitpid(recording->pid, &status, 0) < 0 && errno == EINTR) {
-            }
-        }
-        std::error_code ec;
-        std::filesystem::remove(recording->inputPath, ec);
-        std::filesystem::remove(recording->outputPath, ec);
     }
 }
 

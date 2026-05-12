@@ -519,4 +519,88 @@ LaunchResult launchRecordingResultHelper(const CaptureDefaults& defaults, const 
     return {.success = true};
 }
 
+LaunchResult launchRecordingTranscodeHelper(const CaptureDefaults& defaults,
+                                            const std::string&     inputPath,
+                                            const std::string&     outputPath,
+                                            bool                  preserveAlpha,
+                                            int                   durationMs) {
+    if (inputPath.empty() || outputPath.empty())
+        return {.success = false, .error = "recording transcode path missing"};
+
+    const auto helper = firstRunnableHelper(defaults.helper);
+    if (!helper)
+        return {.success = false, .error = "no trusted hyprcapture-ui helper found"};
+
+    std::vector<std::string> args;
+    args.push_back(*helper);
+    args.push_back("--recording-transcode-input");
+    args.push_back(inputPath);
+    args.push_back("--recording-transcode-output");
+    args.push_back(outputPath);
+    args.push_back("--recording-transcode-alpha");
+    args.push_back(boolArg(preserveAlpha));
+    args.push_back("--recording-transcode-duration-ms");
+    args.push_back(std::to_string(std::max(1, durationMs)));
+    args.push_back("--clipboard");
+    args.push_back(boolArg(defaults.clipboard));
+    args.push_back("--thumbnail");
+    args.push_back(boolArg(defaults.showThumbnail));
+    args.push_back("--record-save-dir");
+    args.push_back(defaults.recordSaveDir);
+    args.push_back("--thumbnail-timeout-ms");
+    args.push_back(std::to_string(defaults.thumbnailTimeoutMs));
+
+    std::vector<char*> argv;
+    argv.reserve(args.size() + 1);
+    for (auto& arg : args)
+        argv.push_back(arg.data());
+    argv.push_back(nullptr);
+
+    auto childEnv = childEnvironment();
+    std::vector<char*> envp;
+    envp.reserve(childEnv.size() + 1);
+    for (auto& env : childEnv)
+        envp.push_back(env.data());
+    envp.push_back(nullptr);
+
+    auto execErrorPipe = makeExecErrorPipe();
+    if (!execErrorPipe)
+        return {.success = false, .error = std::string("pipe failed: ") + std::strerror(errno)};
+
+    SpawnFileActions fileActions;
+    if (const auto error = initSpawnFileActions(fileActions)) {
+        closeFd(execErrorPipe->read);
+        closeFd(execErrorPipe->write);
+        return {.success = false, .error = std::string("spawn setup failed: ") + std::strerror(*error)};
+    }
+
+    SpawnAttributes attrs;
+    if (const auto error = initSpawnAttributes(attrs)) {
+        closeFd(execErrorPipe->read);
+        closeFd(execErrorPipe->write);
+        return {.success = false, .error = std::string("spawn setup failed: ") + std::strerror(*error)};
+    }
+
+    if (const auto error = configureSpawnFileDescriptorPolicy(fileActions, attrs)) {
+        closeFd(execErrorPipe->read);
+        closeFd(execErrorPipe->write);
+        return {.success = false, .error = std::string("spawn setup failed: ") + std::strerror(*error)};
+    }
+
+    pid_t     pid = -1;
+    const int spawnError = posix_spawn(&pid, argv[0], &fileActions.value, &attrs.value, argv.data(), envp.data());
+    closeFd(execErrorPipe->write);
+    if (spawnError != 0) {
+        closeFd(execErrorPipe->read);
+        return {.success = false, .error = std::string("exec failed: ") + std::strerror(spawnError)};
+    }
+
+    const auto execFailure = readExecFailure(execErrorPipe->read);
+    closeFd(execErrorPipe->read);
+    if (execFailure)
+        return {.success = false, .error = std::string("exec failed: ") + std::strerror(*execFailure)};
+
+    return {.success = true};
+}
+
 } // namespace hyprcapture

@@ -14,6 +14,7 @@
 #include <QEasingCurve>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -111,6 +112,76 @@ class SwipeBackdrop final : public QWidget {
     double m_deleteProgress = 0.0;
 };
 
+class TranscodeProgressOverlay final : public QWidget {
+  public:
+    explicit TranscodeProgressOverlay(QWidget* parent = nullptr) : QWidget(parent) {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        connect(&m_spinTimer, &QTimer::timeout, this, [this] {
+            m_rotation = std::fmod(m_rotation + 8.0, 360.0);
+            update();
+        });
+        m_spinTimer.setInterval(33);
+    }
+
+    void setProgress(double progress) {
+        m_failed = false;
+        m_progress = std::clamp(progress, 0.0, 1.0);
+        setVisible(true);
+        if (!m_spinTimer.isActive())
+            m_spinTimer.start();
+        update();
+    }
+
+    void finish(bool success) {
+        m_spinTimer.stop();
+        m_progress = success ? 1.0 : m_progress;
+        m_failed = !success;
+        setVisible(!success);
+        update();
+    }
+
+  protected:
+    void paintEvent(QPaintEvent*) override {
+        if (!isVisible())
+            return;
+
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.fillRect(rect(), QColor(0, 0, 0, 105));
+
+        const int side = std::max(48, std::min(width(), height()) - 28);
+        const QRectF ring((width() - side) / 2.0, (height() - side) / 2.0, side, side);
+        const double penWidth = std::clamp(side / 13.0, 4.0, 9.0);
+
+        painter.setPen(QPen(QColor(255, 255, 255, 72), penWidth, Qt::SolidLine, Qt::RoundCap));
+        painter.drawArc(ring, 0, 360 * 16);
+
+        if (!m_failed) {
+            painter.setPen(QPen(QColor(74, 222, 128, 235), penWidth, Qt::SolidLine, Qt::RoundCap));
+            painter.drawArc(ring, 90 * 16, static_cast<int>(-360 * 16 * m_progress));
+            painter.setPen(QPen(QColor(255, 255, 255, 235), penWidth, Qt::SolidLine, Qt::RoundCap));
+            painter.drawArc(ring, static_cast<int>((90.0 - m_rotation) * 16.0), -62 * 16);
+        } else {
+            painter.setPen(QPen(QColor(248, 113, 113, 235), penWidth, Qt::SolidLine, Qt::RoundCap));
+            painter.drawArc(ring, 0, 360 * 16);
+        }
+
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPointSize(std::clamp(side / 5, 12, 28));
+        painter.setFont(font);
+        painter.setPen(QColor(255, 255, 255, 245));
+        const QString text = m_failed ? QStringLiteral("Failed") : QStringLiteral("%1%").arg(static_cast<int>(std::round(m_progress * 100.0)));
+        painter.drawText(ring, Qt::AlignCenter, text);
+    }
+
+  private:
+    QTimer m_spinTimer;
+    double m_progress = 0.0;
+    double m_rotation = 0.0;
+    bool   m_failed = false;
+};
+
 namespace {
 
 QPointF wheelGestureDelta(QWheelEvent* event) {
@@ -127,20 +198,23 @@ bool pathIsUnderDirectory(const QString& path, const QString& root) {
         return false;
 
     const QString rootCanonical = QFileInfo(root).canonicalFilePath();
-    const QString pathCanonical = QFileInfo(path).canonicalFilePath();
+    const QFileInfo pathInfo(path);
+    const QString pathCanonical = pathInfo.exists() ? pathInfo.canonicalFilePath() : QFileInfo(pathInfo.absolutePath()).canonicalFilePath();
     if (rootCanonical.isEmpty() || pathCanonical.isEmpty())
         return false;
 
-    return pathCanonical.startsWith(rootCanonical + QLatin1Char('/'));
+    return pathCanonical == rootCanonical || pathCanonical.startsWith(rootCanonical + QLatin1Char('/'));
 }
 
 bool canDeleteThumbnailPath(const QString& path, const QString& deleteRoot) {
     const QFileInfo info(path);
-    if (path.isEmpty() || !info.exists() || !info.isFile())
+    if (path.isEmpty())
         return false;
     if (hyprcapture::ui::isPrivateRuntimePath(path))
         return true;
-    return pathIsUnderDirectory(path, deleteRoot);
+    if (!pathIsUnderDirectory(path, deleteRoot))
+        return false;
+    return !info.exists() || info.isFile();
 }
 
 QIcon iconFromGIcon(GIcon* icon) {
@@ -348,6 +422,9 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
     m_imageLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
     m_imageLabel->setPixmap(scaledPixmap);
     m_imageLabel->setGeometry(QRect(QPoint(0, 0), scaledLogicalSize));
+    m_transcodeOverlay = new TranscodeProgressOverlay(m_imageLabel);
+    m_transcodeOverlay->setGeometry(m_imageLabel->rect());
+    m_transcodeOverlay->hide();
     m_imageOrigin = m_imageLabel->pos();
     m_imageLabel->raise();
     layout->addWidget(m_card, 0, Qt::AlignRight);
@@ -365,11 +442,9 @@ ResultThumbnail::ResultThumbnail(const QPixmap& pixmap, QString path, QString re
         layerWindow->setDesiredSize(size());
     }
 
-    if (timeoutMs > 0) {
-        m_closeTimer.setSingleShot(true);
-        connect(&m_closeTimer, &QTimer::timeout, this, &QWidget::close);
-        m_closeTimer.start(timeoutMs);
-    }
+    m_closeTimer.setSingleShot(true);
+    connect(&m_closeTimer, &QTimer::timeout, this, &QWidget::close);
+    startCloseTimer(timeoutMs);
 
     m_swipeResetTimer.setSingleShot(true);
     connect(&m_swipeResetTimer, &QTimer::timeout, this, &ResultThumbnail::resetSwipe);
@@ -383,6 +458,8 @@ void ResultThumbnail::closeEvent(QCloseEvent* event) {
 }
 
 void ResultThumbnail::mousePressEvent(QMouseEvent* event) {
+    if (m_transcodeProgressActive)
+        return;
     if (event->button() != Qt::LeftButton)
         return;
 
@@ -392,6 +469,8 @@ void ResultThumbnail::mousePressEvent(QMouseEvent* event) {
 }
 
 void ResultThumbnail::mouseMoveEvent(QMouseEvent* event) {
+    if (m_transcodeProgressActive)
+        return;
     if (!(event->buttons() & Qt::LeftButton) || m_draggingFile)
         return;
 
@@ -405,16 +484,22 @@ void ResultThumbnail::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void ResultThumbnail::mouseReleaseEvent(QMouseEvent* event) {
+    if (m_transcodeProgressActive)
+        return;
     if (event->button() == Qt::LeftButton && !m_dragMoved && !m_path.isEmpty() && openPath(m_path))
         close();
 }
 
 void ResultThumbnail::contextMenuEvent(QContextMenuEvent* event) {
     event->accept();
+    if (m_transcodeProgressActive)
+        return;
     toggleMenu();
 }
 
 void ResultThumbnail::wheelEvent(QWheelEvent* event) {
+    if (m_transcodeProgressActive)
+        return;
     if (m_swipeCompleting)
         return;
 
@@ -596,6 +681,8 @@ void ResultThumbnail::restoreClipboard() const {
 }
 
 void ResultThumbnail::startFileDrag() {
+    if (m_transcodeProgressActive)
+        return;
     if (m_path.isEmpty())
         return;
 
@@ -627,4 +714,27 @@ void ResultThumbnail::enterEvent(QEnterEvent*) {
 void ResultThumbnail::leaveEvent(QEvent*) {
     if (m_closeTimer.interval() > 0)
         m_closeTimer.start();
+}
+
+void ResultThumbnail::setTranscodeProgress(double progress) {
+    m_transcodeProgressActive = true;
+    setMenuVisible(false);
+    m_closeTimer.stop();
+    if (m_transcodeOverlay)
+        m_transcodeOverlay->setProgress(progress);
+}
+
+void ResultThumbnail::finishTranscodeProgress(bool success, int timeoutMs) {
+    m_transcodeProgressActive = !success;
+    if (m_transcodeOverlay)
+        m_transcodeOverlay->finish(success);
+    startCloseTimer(timeoutMs);
+}
+
+void ResultThumbnail::startCloseTimer(int timeoutMs) {
+    m_closeTimer.stop();
+    if (timeoutMs > 0) {
+        m_closeTimer.setInterval(timeoutMs);
+        m_closeTimer.start();
+    }
 }

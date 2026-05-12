@@ -7,15 +7,18 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
 #include <QPainter>
 #include <QPixmap>
+#include <QProcess>
 #include <QScreen>
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -28,6 +31,7 @@ constexpr int    THUMBNAIL_DECODE_MAX_WIDTH = 360;
 constexpr int    THUMBNAIL_DECODE_MAX_HEIGHT = 240;
 constexpr int    MAX_THUMBNAIL_TIMEOUT_MS = 60 * 60 * 1000;
 constexpr int    MAX_RECORD_COUNTDOWN_SECONDS = 60;
+constexpr int    APNG_TRANSCODE_FPS = 60;
 
 bool flagValue(const QCommandLineParser& parser, const QString& name, bool fallback) {
     const auto value = parser.value(name);
@@ -98,6 +102,29 @@ bool isTrustedRecordingResultPath(const QString& path, const hyprcapture::Captur
     return trustedDirectory(recordRoot) && pathIsUnderDirectory(path, recordRoot);
 }
 
+bool isTrustedRecordingOutputPath(const QString& path, const hyprcapture::CaptureDefaults& defaults) {
+    const QFileInfo info(path);
+    if (path.isEmpty() || !info.isAbsolute() || info.fileName().isEmpty() || info.fileName() == QLatin1String(".") || info.fileName() == QLatin1String(".."))
+        return false;
+    if (info.exists())
+        return false;
+
+    const QString recordRoot = QString::fromStdString(hyprcapture::expandUserPath(defaults.recordSaveDir).string());
+    if (!trustedDirectory(recordRoot))
+        return false;
+
+    const QString rootCanonical = QFileInfo(recordRoot).canonicalFilePath();
+    const QString parentCanonical = QFileInfo(info.absolutePath()).canonicalFilePath();
+    return !rootCanonical.isEmpty() && !parentCanonical.isEmpty() &&
+        (parentCanonical == rootCanonical || parentCanonical.startsWith(rootCanonical + QLatin1Char('/')));
+}
+
+void setOwnerOnlyPermissions(const QString& path) {
+    const QByteArray native = QFile::encodeName(path);
+    if (!native.isEmpty())
+        chmod(native.constData(), 0600);
+}
+
 QPixmap recordingThumbnailPixmap(const QString& path) {
     constexpr QSize logicalSize(180, 120);
     const qreal dpr = std::clamp(QGuiApplication::primaryScreen() ? QGuiApplication::primaryScreen()->devicePixelRatio() : qreal{1.0}, qreal{1.0}, qreal{4.0});
@@ -159,6 +186,154 @@ int showRecordingResult(const hyprcapture::CaptureDefaults& defaults, const QStr
     return qApp->exec();
 }
 
+struct TranscodeState {
+    QProcess* process = nullptr;
+    ResultThumbnail* thumbnail = nullptr;
+    QByteArray stdoutBuffer;
+    QByteArray stderrBuffer;
+    QString inputPath;
+    QString outputPath;
+    QString restoreClipboardPath;
+    hyprcapture::CaptureDefaults defaults;
+    int durationMs = 1;
+};
+
+void updateTranscodeProgress(const std::shared_ptr<TranscodeState>& state) {
+    if (!state || !state->process)
+        return;
+
+    state->stdoutBuffer += state->process->readAllStandardOutput();
+    while (true) {
+        const int newline = state->stdoutBuffer.indexOf('\n');
+        if (newline < 0)
+            break;
+
+        const QByteArray line = state->stdoutBuffer.left(newline).trimmed();
+        state->stdoutBuffer.remove(0, newline + 1);
+        const int separator = line.indexOf('=');
+        if (separator <= 0)
+            continue;
+
+        const QByteArray key = line.left(separator);
+        const QByteArray value = line.mid(separator + 1);
+        double progress = -1.0;
+        if (key == "out_time_us" || key == "out_time_ms") {
+            bool ok = false;
+            const qlonglong micros = value.toLongLong(&ok);
+            if (ok && state->durationMs > 0)
+                progress = static_cast<double>(micros) / (static_cast<double>(state->durationMs) * 1000.0);
+        } else if (key == "progress" && value == "end") {
+            progress = 1.0;
+        }
+
+        if (progress >= 0.0 && state->thumbnail)
+            state->thumbnail->setTranscodeProgress(std::clamp(progress, 0.0, 1.0));
+    }
+}
+
+int showRecordingTranscode(const hyprcapture::CaptureDefaults& defaults, const QString& inputPath, const QString& outputPath, bool preserveAlpha, int durationMs) {
+    if (!isTrustedRecordingResultPath(inputPath, defaults) || !isTrustedRecordingOutputPath(outputPath, defaults))
+        return 1;
+
+    const QString ffmpeg = hyprcapture::ui::trustedSystemProgram(QStringLiteral("ffmpeg"));
+    if (ffmpeg.isEmpty())
+        return 1;
+
+    const QString canonicalInput = QFileInfo(inputPath).canonicalFilePath();
+    const QString cleanOutput = QDir::cleanPath(outputPath);
+    const QString deleteRoot = QString::fromStdString(hyprcapture::expandUserPath(defaults.recordSaveDir).string());
+
+    auto state = std::make_shared<TranscodeState>();
+    state->inputPath = canonicalInput;
+    state->outputPath = cleanOutput;
+    state->defaults = defaults;
+    state->durationMs = std::max(1, durationMs);
+
+    if (defaults.clipboard && defaults.showThumbnail)
+        state->restoreClipboardPath = hyprcapture::ui::saveClipboardSnapshot();
+
+    if (defaults.showThumbnail) {
+        state->thumbnail = new ResultThumbnail(recordingThumbnailPixmap(cleanOutput), cleanOutput, state->restoreClipboardPath, deleteRoot, 0, true);
+        state->thumbnail->setTranscodeProgress(0.0);
+        state->thumbnail->show();
+    }
+
+    state->process = new QProcess(qApp);
+    state->process->setProgram(ffmpeg);
+    state->process->setArguments({QStringLiteral("-hide_banner"),
+                                  QStringLiteral("-loglevel"),
+                                  QStringLiteral("error"),
+                                  QStringLiteral("-nostdin"),
+                                  QStringLiteral("-y"),
+                                  QStringLiteral("-progress"),
+                                  QStringLiteral("pipe:1"),
+                                  QStringLiteral("-i"),
+                                  canonicalInput,
+                                  QStringLiteral("-an"),
+                                  QStringLiteral("-c:v"),
+                                  QStringLiteral("apng"),
+                                  QStringLiteral("-pix_fmt"),
+                                  preserveAlpha ? QStringLiteral("rgba") : QStringLiteral("rgb24"),
+                                  QStringLiteral("-pred"),
+                                  QStringLiteral("none"),
+                                  QStringLiteral("-plays"),
+                                  QStringLiteral("0"),
+                                  QStringLiteral("-r"),
+                                  QString::number(APNG_TRANSCODE_FPS),
+                                  cleanOutput});
+    state->process->setProcessEnvironment(hyprcapture::ui::trustedProcessEnvironment());
+    state->process->setProcessChannelMode(QProcess::SeparateChannels);
+
+    QObject::connect(state->process, &QProcess::readyReadStandardOutput, qApp, [state] {
+        updateTranscodeProgress(state);
+    });
+    QObject::connect(state->process, &QProcess::readyReadStandardError, qApp, [state] {
+        state->stderrBuffer += state->process->readAllStandardError();
+        constexpr qsizetype maxErrorBytes = 16 * 1024;
+        if (state->stderrBuffer.size() > maxErrorBytes)
+            state->stderrBuffer = state->stderrBuffer.right(maxErrorBytes);
+    });
+    QObject::connect(state->process, &QProcess::finished, qApp, [state](int exitCode, QProcess::ExitStatus exitStatus) {
+        updateTranscodeProgress(state);
+        const bool success = exitStatus == QProcess::NormalExit && exitCode == 0 && QFileInfo(state->outputPath).exists();
+
+        QFile::remove(state->inputPath);
+        if (success) {
+            setOwnerOnlyPermissions(state->outputPath);
+            if (state->defaults.clipboard)
+                hyprcapture::ui::copyFileUrlToClipboard(state->outputPath);
+            if (state->thumbnail) {
+                state->thumbnail->setTranscodeProgress(1.0);
+                state->thumbnail->finishTranscodeProgress(true, static_cast<int>(state->defaults.thumbnailTimeoutMs));
+            } else {
+                qApp->quit();
+            }
+            return;
+        }
+
+        QFile::remove(state->outputPath);
+        if (state->thumbnail) {
+            state->thumbnail->finishTranscodeProgress(false, state->defaults.thumbnailTimeoutMs > 0 ? static_cast<int>(state->defaults.thumbnailTimeoutMs) : 5000);
+        } else {
+            hyprcapture::ui::discardClipboardSnapshot(state->restoreClipboardPath);
+            qApp->quit();
+        }
+    });
+
+    state->process->start();
+    if (!state->process->waitForStarted(1000)) {
+        QFile::remove(canonicalInput);
+        QFile::remove(cleanOutput);
+        hyprcapture::ui::discardClipboardSnapshot(state->restoreClipboardPath);
+        if (state->thumbnail)
+            state->thumbnail->finishTranscodeProgress(false, 5000);
+        else
+            return 1;
+    }
+
+    return qApp->exec();
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -211,6 +386,10 @@ int main(int argc, char** argv) {
         {"session-json-file", "Private compositor session metadata file.", "path"},
         {"thumbnail-window", "Show a normal thumbnail window for an image path.", "path"},
         {"recording-result", "Handle a completed recording result.", "path"},
+        {"recording-transcode-input", "Transcode an intermediate recording input.", "path"},
+        {"recording-transcode-output", "Transcode output path.", "path"},
+        {"recording-transcode-alpha", "Preserve alpha while transcoding.", "0|1", "0"},
+        {"recording-transcode-duration-ms", "Expected transcode duration.", "ms", "1"},
         {"thumbnail-delete-root", "Directory where thumbnail files may be deleted.", "path"},
         {"restore-clipboard", "Clipboard snapshot to restore when deleting the thumbnail image.", "path"},
         {"quick", "Capture immediately."},
@@ -268,6 +447,13 @@ int main(int argc, char** argv) {
     defaults.watermarkPosition = hyprcapture::parseWatermarkPosition(parser.value("watermark-position").toStdString(), defaults.watermarkPosition);
     defaults.watermarkWidth = parser.value("watermark-width").toStdString();
     defaults.watermarkOffset = parser.value("watermark-offset").toStdString();
+
+    if (hasArgument(argc, argv, "--recording-transcode-input"))
+        return showRecordingTranscode(defaults,
+                                      parser.value("recording-transcode-input"),
+                                      parser.value("recording-transcode-output"),
+                                      flagValue(parser, "recording-transcode-alpha", false),
+                                      boundedInt(parser.value("recording-transcode-duration-ms"), 1, 1, 24 * 60 * 60 * 1000));
 
     if (hasArgument(argc, argv, "--recording-result"))
         return showRecordingResult(defaults, parser.value("recording-result"));

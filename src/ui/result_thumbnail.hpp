@@ -9,12 +9,15 @@ class QLabel;
 class QPixmap;
 class QWidget;
 class SwipeBackdrop;
+class TranscodeProgressOverlay;
 
 class ResultThumbnail final : public QWidget {
     Q_OBJECT
 
   public:
     ResultThumbnail(const QPixmap& pixmap, QString path, QString restoreClipboardPath, QString deleteRoot, int timeoutMs, bool copyFile = false, QWidget* parent = nullptr);
+    void setTranscodeProgress(double progress);
+    void finishTranscodeProgress(bool success, int timeoutMs);
 
   protected:
     void closeEvent(QCloseEvent* event) override;
@@ -41,6 +44,7 @@ class ResultThumbnail final : public QWidget {
     void animateSwipeOut(SwipeAction action);
     void deleteAndClose();
     void restoreClipboard() const;
+    void startCloseTimer(int timeoutMs);
 
     QString m_path;
     QString m_restoreClipboardPath;
@@ -48,6 +52,7 @@ class ResultThumbnail final : public QWidget {
     bool    m_copyFile = false;
     QWidget* m_card = nullptr;
     SwipeBackdrop* m_swipeBackdrop = nullptr;
+    TranscodeProgressOverlay* m_transcodeOverlay = nullptr;
     QLabel* m_imageLabel = nullptr;
     QWidget* m_menuShell = nullptr;
     QWidget* m_menuPanel = nullptr;
@@ -58,6 +63,7 @@ class ResultThumbnail final : public QWidget {
     bool    m_dragMoved = false;
     bool    m_draggingFile = false;
     bool    m_swipeCompleting = false;
+    bool    m_transcodeProgressActive = false;
     QTimer  m_closeTimer;
     QTimer  m_swipeResetTimer;
 };

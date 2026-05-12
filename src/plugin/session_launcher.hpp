@@ -21,5 +21,10 @@ struct LaunchResult {
 
 LaunchResult launchHelper(const LaunchRequest& request);
 LaunchResult launchRecordingResultHelper(const CaptureDefaults& defaults, const std::string& outputPath);
+LaunchResult launchRecordingTranscodeHelper(const CaptureDefaults& defaults,
+                                            const std::string&     inputPath,
+                                            const std::string&     outputPath,
+                                            bool                  preserveAlpha,
+                                            int                   durationMs);
 
 } // namespace hyprcapture
