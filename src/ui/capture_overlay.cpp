@@ -17,7 +17,6 @@
 #include <QFile>
 #include <QFrame>
 #include <QFileInfo>
-#include <QFont>
 #include <QGuiApplication>
 #include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
@@ -2284,44 +2283,6 @@ void CaptureOverlay::paintDesktop(QPainter& painter, const QRect& target) const 
         painter.fillRect(target, QColor(30, 34, 38));
 }
 
-QRect CaptureOverlay::recordCountdownScreenRect() const {
-    const QPoint cursorLocal = globalToLocalRect(QRect(cursorLogicalPosition(), QSize(1, 1))).topLeft();
-    const QRect  screen = localScreenRectAt(cursorLocal).intersected(rect());
-    return screen.isValid() ? screen : rect();
-}
-
-void CaptureOverlay::paintRecordCountdown(QPainter& painter) const {
-    if (!m_recordCountdownActive || m_recordCountdownRemaining <= 0)
-        return;
-
-    const QRect screen = recordCountdownScreenRect();
-    if (!screen.isValid())
-        return;
-
-    const int minDim = std::max(1, std::min(screen.width(), screen.height()));
-    const int maxDiameter = std::max(64, std::min(280, minDim - 32));
-    const int diameter = std::clamp(minDim / 5, 64, maxDiameter);
-    const QPoint center = screen.center();
-    const QRectF badge(center.x() - diameter / 2.0, center.y() - diameter / 2.0, diameter, diameter);
-    const QString text = QString::number(m_recordCountdownRemaining);
-
-    painter.save();
-    painter.setOpacity(1.0);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(0, 0, 0, 150));
-    painter.drawEllipse(badge);
-
-    QFont font = painter.font();
-    font.setBold(true);
-    font.setPointSize(std::clamp(diameter * 52 / 100, 42, 128));
-    painter.setFont(font);
-    painter.setPen(QColor(0, 0, 0, 180));
-    painter.drawText(badge.translated(0, diameter * 0.04), Qt::AlignCenter, text);
-    painter.setPen(QColor(255, 255, 255, 245));
-    painter.drawText(badge, Qt::AlignCenter, text);
-    painter.restore();
-}
-
 void CaptureOverlay::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
@@ -2332,11 +2293,6 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
 
     paintDesktop(painter, rect());
     painter.fillRect(rect(), QColor(0, 0, 0, 80));
-
-    if (m_recordCountdownActive) {
-        paintRecordCountdown(painter);
-        return;
-    }
 
     const bool fusionGesture = m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen;
     const QRect sel = normalizedSelection().intersected(regionCaptureBounds());
@@ -2380,9 +2336,6 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
 }
 
 void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
-    if (m_recordCountdownActive)
-        return;
-
     if (m_toolbar->geometry().contains(event->pos()))
         return;
     rememberCursorLocalPosition(event->position());
@@ -2450,9 +2403,6 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
 }
 
 void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
-    if (m_recordCountdownActive)
-        return;
-
     rememberCursorLocalPosition(event->position());
     if (pendingConfirmActive()) {
         if (m_mode == hyprcapture::CaptureMode::Region && m_dragging) {
@@ -2488,9 +2438,6 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event) {
-    if (m_recordCountdownActive)
-        return;
-
     rememberCursorLocalPosition(event->position());
     if (event->button() != Qt::LeftButton)
         return;
@@ -2575,9 +2522,6 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 void CaptureOverlay::keyPressEvent(QKeyEvent* event) {
-    if (m_recordCountdownActive && event->key() != Qt::Key_Escape)
-        return;
-
     if (event->key() == Qt::Key_Escape) {
         cancelCapture();
     } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
@@ -3215,42 +3159,28 @@ void CaptureOverlay::startPreparedRecording(const QString& requestPath) {
     });
 }
 
-void CaptureOverlay::beginRecordingCountdown(const QString& requestPath) {
+void CaptureOverlay::launchRecordingCountdown(const QString& requestPath) {
     const int countdownSeconds = currentRecordCountdownSeconds();
     if (countdownSeconds <= 0) {
         startPreparedRecording(requestPath);
         return;
     }
 
-    m_pendingRecordRequestPath = requestPath;
-    m_recordCountdownRemaining = countdownSeconds;
-    m_recordCountdownActive = true;
-    hideOptionPopups();
-    if (m_toolbar) {
-        m_toolbar->setEnabled(false);
-        m_toolbar->hide();
-    }
-    setCursor(Qt::BlankCursor);
-    update();
-    QTimer::singleShot(1000, this, &CaptureOverlay::advanceRecordingCountdown);
-}
-
-void CaptureOverlay::advanceRecordingCountdown() {
-    if (!m_recordCountdownActive)
-        return;
-
-    --m_recordCountdownRemaining;
-    if (m_recordCountdownRemaining <= 0) {
-        m_recordCountdownActive = false;
-        m_recordCountdownRemaining = 0;
-        setCursor(Qt::CrossCursor);
-        const QString requestPath = std::exchange(m_pendingRecordRequestPath, {});
-        startPreparedRecording(requestPath);
+    hide();
+    qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
+    const QStringList args{QStringLiteral("--record-countdown-request"), requestPath, QStringLiteral("--record-countdown-seconds"), QString::number(countdownSeconds)};
+    if (!QProcess::startDetached(QCoreApplication::applicationFilePath(), args)) {
+        show();
+        QFile::remove(requestPath);
+        m_recordError = QStringLiteral("record countdown start failed");
+        m_finishing = false;
+        updateRecordOptionsVisibility();
+        updateStatus();
         return;
     }
 
-    update();
-    QTimer::singleShot(1000, this, &CaptureOverlay::advanceRecordingCountdown);
+    traceTiming(QStringLiteral("record_countdown_start"));
+    qApp->quit();
 }
 
 bool CaptureOverlay::stopRecording() {
@@ -3269,7 +3199,7 @@ void CaptureOverlay::finishCapture() {
             updateStatus();
             return;
         }
-        beginRecordingCountdown(requestPath);
+        launchRecordingCountdown(requestPath);
         return;
     }
 
@@ -3365,12 +3295,5 @@ void CaptureOverlay::showThumbnail(const QImage& image, const QString& path, con
 }
 
 void CaptureOverlay::cancelCapture() {
-    if (!m_pendingRecordRequestPath.isEmpty()) {
-        QFile::remove(m_pendingRecordRequestPath);
-        m_pendingRecordRequestPath.clear();
-    }
-    m_recordCountdownActive = false;
-    m_recordCountdownRemaining = 0;
-    setCursor(Qt::CrossCursor);
     fadeOutThen([] { qApp->quit(); });
 }

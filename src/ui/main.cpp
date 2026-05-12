@@ -4,21 +4,31 @@
 #include "ui/result_thumbnail.hpp"
 
 #include <LayerShellQt/Shell>
+#include <LayerShellQt/Window>
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QCursor>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
 #include <QImageReader>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QPaintEvent>
 #include <QPainter>
 #include <QPixmap>
 #include <QProcess>
 #include <QScreen>
+#include <QTimer>
+#include <QWidget>
 
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <utility>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -31,6 +41,7 @@ constexpr int    THUMBNAIL_DECODE_MAX_WIDTH = 360;
 constexpr int    THUMBNAIL_DECODE_MAX_HEIGHT = 240;
 constexpr int    MAX_THUMBNAIL_TIMEOUT_MS = 60 * 60 * 1000;
 constexpr int    MAX_RECORD_COUNTDOWN_SECONDS = 60;
+constexpr qint64 MAX_RECORD_REQUEST_BYTES = 64LL * 1024LL;
 constexpr int    APNG_TRANSCODE_FPS = 60;
 
 bool flagValue(const QCommandLineParser& parser, const QString& name, bool fallback) {
@@ -87,6 +98,196 @@ bool trustedDirectory(const QString& path) {
     return !native.isEmpty() && stat(native.constData(), &st) == 0 && S_ISDIR(st.st_mode) && (st.st_uid == 0 || st.st_uid == geteuid()) &&
         (st.st_mode & 0022) == 0;
 }
+
+struct DispatchCommandResult {
+    bool    success = false;
+    QString error;
+};
+
+QString compactProcessErrorText(const QByteArray& stderrData, const QByteArray& stdoutData, const QString& fallback) {
+    QString error = QString::fromUtf8(stderrData).trimmed();
+    if (error.isEmpty())
+        error = QString::fromUtf8(stdoutData).trimmed();
+    if (error.startsWith(QStringLiteral("[hyprcapture] ")))
+        error = error.mid(QStringLiteral("[hyprcapture] ").size()).trimmed();
+    if (error.isEmpty())
+        error = fallback;
+    return error.left(160);
+}
+
+bool hyprctlDispatchOutputHasError(const QByteArray& stderrData, const QByteArray& stdoutData) {
+    const QString stderrText = QString::fromUtf8(stderrData).trimmed();
+    const QString stdoutText = QString::fromUtf8(stdoutData).trimmed();
+    return stderrText.startsWith(QStringLiteral("error:"), Qt::CaseInsensitive) ||
+        stdoutText.startsWith(QStringLiteral("error:"), Qt::CaseInsensitive);
+}
+
+DispatchCommandResult runHyprctl(const QStringList& args, const QString& fallbackError) {
+    const QString hyprctl = hyprcapture::ui::trustedSystemProgram(QStringLiteral("hyprctl"));
+    if (hyprctl.isEmpty())
+        return {.success = false, .error = QStringLiteral("hyprctl unavailable")};
+
+    QProcess process;
+    process.setProgram(hyprctl);
+    process.setArguments(args);
+    process.setProcessEnvironment(hyprcapture::ui::trustedProcessEnvironment());
+    process.start();
+    if (!process.waitForStarted(1000))
+        return {.success = false, .error = QStringLiteral("hyprctl start failed")};
+    if (!process.waitForFinished(5000)) {
+        process.kill();
+        process.waitForFinished(500);
+        return {.success = false, .error = QStringLiteral("hyprctl timeout")};
+    }
+    const QByteArray stderrData = process.readAllStandardError();
+    const QByteArray stdoutData = process.readAllStandardOutput();
+    if (process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0 && !hyprctlDispatchOutputHasError(stderrData, stdoutData))
+        return {.success = true};
+    return {.success = false, .error = compactProcessErrorText(stderrData, stdoutData, fallbackError)};
+}
+
+DispatchCommandResult dispatchHyprcaptureCommand(const QString& dispatcher, const QString& argument = {}) {
+    if (dispatcher.isEmpty())
+        return {.success = false, .error = QStringLiteral("dispatcher missing")};
+
+    QStringList args{QStringLiteral("dispatch"), dispatcher};
+    if (!argument.isEmpty())
+        args.push_back(argument);
+    return runHyprctl(args, QStringLiteral("dispatch failed"));
+}
+
+QString luaStringLiteral(const QString& value) {
+    const QJsonArray array{value};
+    const QString json = QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact));
+    return json.size() >= 2 ? json.mid(1, json.size() - 2) : QStringLiteral("\"\"");
+}
+
+DispatchCommandResult evalHyprcaptureLuaFunction(const QString& function, const QString& argument = {}) {
+    if (function.isEmpty())
+        return {.success = false, .error = QStringLiteral("lua function missing")};
+
+    QString expression = QStringLiteral("hl.plugin.hyprcapture.%1(").arg(function);
+    if (!argument.isEmpty())
+        expression += luaStringLiteral(argument);
+    expression += QStringLiteral(")");
+    return runHyprctl(QStringList{QStringLiteral("eval"), expression}, QStringLiteral("eval failed"));
+}
+
+DispatchCommandResult dispatchRecordingStart(const QString& requestPath) {
+    if (requestPath.isEmpty())
+        return {.success = false, .error = QStringLiteral("record request missing")};
+    if (!hyprcapture::ui::isPrivateRuntimeFile(requestPath, MAX_RECORD_REQUEST_BYTES))
+        return {.success = false, .error = QStringLiteral("invalid record request")};
+
+    const auto legacyResult = dispatchHyprcaptureCommand(QStringLiteral("hyprcapture:record-start"), requestPath);
+    if (legacyResult.success)
+        return legacyResult;
+    return evalHyprcaptureLuaFunction(QStringLiteral("record_start"), requestPath);
+}
+
+class RecordingCountdownWindow final : public QWidget {
+  public:
+    RecordingCountdownWindow(QString requestPath, int seconds)
+        : QWidget(nullptr), m_requestPath(std::move(requestPath)), m_remaining(std::clamp(seconds, 1, MAX_RECORD_COUNTDOWN_SECONDS)) {
+        setWindowTitle(QStringLiteral("HyprCapture Countdown"));
+        setWindowFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus | Qt::WindowTransparentForInput);
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_ShowWithoutActivating);
+        setFocusPolicy(Qt::NoFocus);
+
+        QRect desktop;
+        for (const auto* screen : QGuiApplication::screens())
+            desktop = desktop.united(screen->geometry());
+        if (!desktop.isValid() && QGuiApplication::primaryScreen())
+            desktop = QGuiApplication::primaryScreen()->geometry();
+        setGeometry(desktop.isValid() ? desktop : QRect(0, 0, 1280, 720));
+
+        winId();
+        if (auto* layerWindow = LayerShellQt::Window::get(windowHandle())) {
+            layerWindow->setScope("hyprcapture-countdown");
+            layerWindow->setLayer(LayerShellQt::Window::LayerOverlay);
+            layerWindow->setAnchors(LayerShellQt::Window::Anchors{LayerShellQt::Window::AnchorTop} | LayerShellQt::Window::AnchorBottom |
+                                    LayerShellQt::Window::AnchorLeft | LayerShellQt::Window::AnchorRight);
+            layerWindow->setExclusiveZone(-1);
+            layerWindow->setKeyboardInteractivity(LayerShellQt::Window::KeyboardInteractivityNone);
+            layerWindow->setDesiredSize(QSize(0, 0));
+        }
+
+        connect(&m_timer, &QTimer::timeout, this, [this] { advance(); });
+        m_timer.setInterval(1000);
+    }
+
+    void start() {
+        show();
+        raise();
+        m_timer.start();
+    }
+
+  protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setCompositionMode(QPainter::CompositionMode_Source);
+        painter.fillRect(rect(), Qt::transparent);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+
+        const QRect screen = countdownScreenRect();
+        const int minDim = std::max(1, std::min(screen.width(), screen.height()));
+        const int maxDiameter = std::max(64, std::min(280, minDim - 32));
+        const int diameter = std::clamp(minDim / 5, 64, maxDiameter);
+        const QPoint center = screen.center();
+        const QRectF badge(center.x() - diameter / 2.0, center.y() - diameter / 2.0, diameter, diameter);
+        const QString text = QString::number(m_remaining);
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0, 0, 0, 150));
+        painter.drawEllipse(badge);
+
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPointSize(std::clamp(diameter * 52 / 100, 42, 128));
+        painter.setFont(font);
+        painter.setPen(QColor(0, 0, 0, 180));
+        painter.drawText(badge.translated(0, diameter * 0.04), Qt::AlignCenter, text);
+        painter.setPen(QColor(255, 255, 255, 245));
+        painter.drawText(badge, Qt::AlignCenter, text);
+    }
+
+  private:
+    QRect countdownScreenRect() const {
+        const QScreen* screen = QGuiApplication::screenAt(QCursor::pos());
+        if (!screen)
+            screen = QGuiApplication::primaryScreen();
+        const QRect screenGeometry = screen ? screen->geometry() : geometry();
+        return screenGeometry.translated(-geometry().topLeft()).intersected(rect());
+    }
+
+    void advance() {
+        --m_remaining;
+        if (m_remaining <= 0) {
+            startRecording();
+            return;
+        }
+        update();
+    }
+
+    void startRecording() {
+        m_timer.stop();
+        hide();
+        qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
+        QTimer::singleShot(120, this, [this] {
+            const auto result = dispatchRecordingStart(m_requestPath);
+            if (!result.success)
+                QFile::remove(m_requestPath);
+            qApp->quit();
+        });
+    }
+
+    QString m_requestPath;
+    int     m_remaining = 0;
+    QTimer  m_timer;
+};
 
 bool isTrustedRecordingResultPath(const QString& path, const hyprcapture::CaptureDefaults& defaults) {
     const QFileInfo info(path);
@@ -380,6 +581,7 @@ int main(int argc, char** argv) {
         {"session-json", "Compositor session metadata.", "json", "{}"},
         {"session-json-file", "Private compositor session metadata file.", "path"},
         {"thumbnail-window", "Show a normal thumbnail window for an image path.", "path"},
+        {"record-countdown-request", "Show an input-transparent recording countdown for a private request file.", "path"},
         {"recording-result", "Handle a completed recording result.", "path"},
         {"recording-transcode-input", "Transcode an intermediate recording input.", "path"},
         {"recording-transcode-output", "Transcode output path.", "path"},
@@ -442,6 +644,15 @@ int main(int argc, char** argv) {
     defaults.watermarkPosition = hyprcapture::parseWatermarkPosition(parser.value("watermark-position").toStdString(), defaults.watermarkPosition);
     defaults.watermarkWidth = parser.value("watermark-width").toStdString();
     defaults.watermarkOffset = parser.value("watermark-offset").toStdString();
+
+    if (hasArgument(argc, argv, "--record-countdown-request")) {
+        const QString requestPath = parser.value("record-countdown-request");
+        if (!hyprcapture::ui::isPrivateRuntimeFile(requestPath, MAX_RECORD_REQUEST_BYTES))
+            return 1;
+        RecordingCountdownWindow countdown(requestPath, defaults.recordCountdownSeconds);
+        countdown.start();
+        return app.exec();
+    }
 
     if (hasArgument(argc, argv, "--recording-transcode-input"))
         return showRecordingTranscode(defaults,
