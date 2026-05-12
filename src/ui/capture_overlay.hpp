@@ -42,6 +42,8 @@ class CaptureOverlay final : public QMainWindow {
     void resizeEvent(QResizeEvent* event) override;
 
   private:
+    enum class ConfirmDragMode { None, NewSelection, MoveSelection, ResizeLeft, ResizeTop, ResizeRight, ResizeBottom, ResizeTopLeft, ResizeTopRight, ResizeBottomRight, ResizeBottomLeft };
+
     struct MonitorArtifact {
         QRect   logicalGeometry;
         QImage  image;
@@ -66,6 +68,16 @@ class CaptureOverlay final : public QMainWindow {
     void captureScreensBeforeOverlay();
     void setMode(hyprcapture::CaptureMode mode);
     void updateToolbarControlsForMode();
+    void beginPendingConfirm(hyprcapture::CaptureMode mode);
+    void clearPendingConfirm();
+    void confirmPendingCapture();
+    bool confirmBeforeCaptureEnabled() const;
+    bool pendingConfirmActive() const;
+    void updateConfirmButtonVisibility();
+    void setSelectionRect(const QRect& rect);
+    bool regionSelectionValid(const QRect& selection) const;
+    ConfirmDragMode confirmRegionDragModeAt(const QPoint& point) const;
+    QRect regionSelectionForDrag(const QPoint& point) const;
     void finishCapture();
     void cancelCapture();
     QString prepareRecordingRequest();
@@ -111,8 +123,11 @@ class CaptureOverlay final : public QMainWindow {
     QRect windowFrameGeometry(const WindowArtifact& window) const;
     double windowFrameRadius(const WindowArtifact& window) const;
     bool hydrateWindowArtifact(WindowArtifact& window);
+    int hoveredWindowIndex() const;
     WindowArtifact* hoveredWindow();
     const WindowArtifact* hoveredWindow() const;
+    WindowArtifact* selectedWindow();
+    const WindowArtifact* selectedWindow() const;
     bool windowCaptureAvailable() const;
     void updateStatus();
     void relayoutToolbar();
@@ -129,12 +144,17 @@ class CaptureOverlay final : public QMainWindow {
     bool                      m_record = false;
     bool                      m_recordActive = false;
     QString                   m_recordError;
+    bool                      m_confirmBeforeCapture = false;
+    bool                      m_pendingConfirm = false;
+    ConfirmDragMode           m_confirmDragMode = ConfirmDragMode::None;
     bool                      m_dragging = false;
     bool                      m_finishing = false;
     bool                      m_fadeOutStarted = false;
     double                    m_overlayOpacity = 0.0;
     QPoint                    m_dragStart;
     QPoint                    m_dragEnd;
+    QPoint                    m_confirmDragStart;
+    QRect                     m_confirmDragStartSelection;
     QPoint                    m_cursorLogicalPosition;
     bool                      m_hasCursorLogicalPosition = false;
     bool                      m_recordFormatAuto = true;
@@ -153,11 +173,13 @@ class CaptureOverlay final : public QMainWindow {
     InlineSelect* m_recordBackend = nullptr;
     QLabel*       m_recordWarning = nullptr;
     QPushButton*  m_recordToggle = nullptr;
+    QPushButton*  m_confirmButton = nullptr;
     QLabel*      m_status = nullptr;
     QImage       m_desktopImage;
     QRect        m_desktopGeometry;
     int          m_sessionMonitorCount = 0;
     int          m_sessionWindowCount = 0;
+    int          m_selectedWindowIndex = -1;
     std::vector<MonitorArtifact> m_monitorArtifacts;
     std::vector<WindowArtifact>  m_windowArtifacts;
 };

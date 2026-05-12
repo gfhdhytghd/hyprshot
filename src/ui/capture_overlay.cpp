@@ -96,7 +96,10 @@ constexpr double kWindowFrameFallbackRadius = 8.0;
 constexpr int kOverlayFadeDurationMs = 100;
 constexpr int kModeIconSize = 24;
 constexpr int kCancelIconSize = 16;
+constexpr int kConfirmIconSize = 17;
 constexpr int kSelectArrowIconSize = 12;
+constexpr int kSelectionHandleHitRadius = 10;
+constexpr int kSelectionHandlePaintSize = 8;
 constexpr int kMaxArtifactDimension = 32768;
 constexpr qint64 kMaxArtifactBytes = 512LL * 1024LL * 1024LL;
 constexpr qint64 kMaxSessionArtifactBytes = 768LL * 1024LL * 1024LL;
@@ -128,6 +131,7 @@ const char* kFullscreenSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w
 const char* kWindowSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M808.125883 243.195881 134.874315 243.195881c-30.608112 0-55.513338 24.905226-55.513338 55.520501l0 505.178641c0 30.615275 24.905226 55.520501 55.513338 55.520501L808.125883 859.415524c30.607088 0 55.512315-24.905226 55.512315-55.520501L863.638197 298.716382C863.638197 268.101107 838.733994 243.195881 808.125883 243.195881zM835.629283 803.895023c0 15.167444-12.338003 27.510564-27.503401 27.510564L134.874315 831.405587c-15.167444 0-27.504424-12.343119-27.504424-27.510564L107.369891 383.246591l728.259392 0L835.629283 803.895023zM835.629283 355.236654 107.370915 355.236654l0-56.519248c0-15.173584 12.33698-27.510564 27.504424-27.510564L808.125883 271.206842c15.165398 0 27.503401 12.33698 27.503401 27.510564L835.629283 355.236654zM920.166655 131.156132 274.924002 131.156132c-30.608112 0-55.513338 24.905226-55.513338 55.514361l0 28.515451c0 7.734148 6.263657 14.004969 14.005992 14.004969 7.740288 0 14.005992-6.27082 14.005992-14.004969l0-28.515451c0-15.167444 12.33698-27.504424 27.503401-27.504424L920.167678 159.166069c15.165398 0 27.503401 12.33698 27.503401 27.504424l0 519.188726c0 15.167444-12.338003 27.511587-27.503401 27.511587l-28.516474 0c-7.739265 0-14.004969 6.27082-14.004969 14.004969 0 7.736195 6.263657 14.007015 14.004969 14.007015l28.516474 0c30.607088 0 55.512315-24.905226 55.512315-55.521524L975.679993 186.670493C975.67897 156.061358 950.773743 131.156132 920.166655 131.156132zM219.410664 299.216779l-56.019875 0c-7.740288 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.263657 14.011108 14.005992 14.011108l56.019875 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C233.415632 305.487599 227.151975 299.216779 219.410664 299.216779zM331.450413 299.216779l-56.019875 0c-7.741311 0-14.005992 6.27082-14.005992 13.998829 0 7.740288 6.262634 14.011108 14.005992 14.011108l56.019875 0c7.739265 0 14.004969-6.27082 14.004969-14.011108C345.455381 305.487599 339.191724 299.216779 331.450413 299.216779zM443.490162 299.216779l-56.018851 0c-7.741311 0-14.007015 6.27082-14.007015 13.998829 0 7.740288 6.263657 14.011108 14.007015 14.011108l56.018851 0c7.740288 0 14.005992-6.27082 14.005992-14.011108C457.49513 305.487599 451.231473 299.216779 443.490162 299.216779z" fill="#000000"/></svg>)";
 const char* kRegionSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M960 256V64H768v64H256V64H64v192h64v512H64v192h192v-64h512v64h192V768h-64V256z m-128 512h-64v64H256v-64h-64V256h64v-64h512v64h64z" fill="#000000"/></svg>)";
 const char* kCancelSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M883.8304 41.01546667L512.00213333 412.84693333 140.1696 41.01546667c-27.38026667-27.3792-71.77386667-27.3792-99.1552 0-27.37813333 27.3792-27.37813333 71.77066667 0 99.1552l371.8336 371.83146666L41.0144 883.82933333c-27.37813333 27.38026667-27.37813333 71.776 0 99.15413334 27.38133333 27.38133333 71.776 27.38133333 99.1552 0L512.00213333 611.15733333l371.82933334 371.82613334c27.37813333 27.38133333 71.77386667 27.38133333 99.15306666 0 27.3792-27.37813333 27.3792-71.77386667 0-99.15413334L611.15733333 512.00213333 982.98453333 140.17066667c27.3792-27.38133333 27.3792-71.776 0-99.1552-27.3792-27.38133333-71.7696-27.38133333-99.15413333 0z m0 0" fill="#333333"/></svg>)";
+const char* kConfirmSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M398.5 741.1 190.9 533.5c-22.2-22.2-22.2-58.2 0-80.4s58.2-22.2 80.4 0l127.2 127.2 354.2-354.2c22.2-22.2 58.2-22.2 80.4 0s22.2 58.2 0 80.4L438.7 701c-11.1 11.1-25.6 16.6-40.2 16.6s-29.1-5.5-40-16.5z" fill="#333333"/></svg>)";
 const char* kRecordSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M507.6 508.2m-229.8 0a229.8 229.8 0 1 0 459.6 0 229.8 229.8 0 1 0-459.6 0Z" fill="#1c1c1c"/><path d="M507.6 952.9c-245.2 0-444.7-199.5-444.7-444.6S262.4 63.6 507.6 63.6s444.7 199.5 444.7 444.7-199.5 444.6-444.7 444.6z m0-837.2C291.2 115.7 115 291.8 115 508.3c0 216.5 176.1 392.6 392.7 392.6s392.7-176.1 392.7-392.6c-0.1-216.5-176.2-392.6-392.8-392.6z" fill="#1c1c1c"/></svg>)";
 const char* kSelectArrowSvg = R"(<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M827.733333 411.733333L526.933333 712.533333c-8.533333 8.533333-21.333333 8.533333-29.866666 0L196.266667 411.733333c-17.066667-17.066667-17.066667-42.666667 0-59.733333 17.066667-17.066667 42.666667-17.066667 59.733333 0l256 256 256-256c17.066667-17.066667 42.666667-17.066667 59.733333 0s17.066667 42.666667 0 59.733333z"/></svg>)";
 
@@ -1391,6 +1395,7 @@ CaptureOverlay::CaptureOverlay(hyprcapture::CaptureDefaults defaults, bool quick
     QElapsedTimer parseTimer;
     parseTimer.start();
     parseSessionJson(sessionJson);
+    m_confirmBeforeCapture = m_defaults.confirmBeforeCapture && !m_quick && !m_record && !m_recordActive;
     traceTiming(QStringLiteral("parse_session"), parseTimer.elapsed());
 
     QElapsedTimer preCaptureTimer;
@@ -1593,8 +1598,12 @@ void CaptureOverlay::buildToolbar() {
         connect(button, &QPushButton::clicked, this, [this, mode] {
             const bool wasActiveMode = m_mode == mode;
             setMode(mode);
-            if (mode == hyprcapture::CaptureMode::Fullscreen && (m_defaults.fushionMode || wasActiveMode))
-                finishCapture();
+            if (mode == hyprcapture::CaptureMode::Fullscreen && (m_defaults.fushionMode || wasActiveMode)) {
+                if (confirmBeforeCaptureEnabled())
+                    beginPendingConfirm(hyprcapture::CaptureMode::Fullscreen);
+                else
+                    finishCapture();
+            }
         });
     };
     addMode("Fullscreen", hyprcapture::CaptureMode::Fullscreen, iconFromSvg(kFullscreenSvg));
@@ -1647,6 +1656,17 @@ void CaptureOverlay::buildToolbar() {
         updateStatus();
         update();
     });
+
+    m_confirmButton = new QPushButton(m_toolbar);
+    m_confirmButton->setFlat(true);
+    m_confirmButton->setFocusPolicy(Qt::NoFocus);
+    m_confirmButton->setIcon(iconFromSvg(kConfirmSvg, kConfirmIconSize));
+    m_confirmButton->setIconSize(QSize(kConfirmIconSize, kConfirmIconSize));
+    m_confirmButton->setFixedSize(36, 32);
+    m_confirmButton->setToolTip("Confirm");
+    m_confirmButton->setAccessibleName("Confirm");
+    layout->addWidget(m_confirmButton);
+    connect(m_confirmButton, &QPushButton::clicked, this, &CaptureOverlay::confirmPendingCapture);
 
     auto* cancel = new QPushButton(m_toolbar);
     cancel->setFlat(true);
@@ -1819,9 +1839,175 @@ void CaptureOverlay::hideOptionPopups() {
         m_recordBackend->hidePopup();
 }
 
+bool CaptureOverlay::confirmBeforeCaptureEnabled() const {
+    return m_confirmBeforeCapture;
+}
+
+bool CaptureOverlay::pendingConfirmActive() const {
+    return confirmBeforeCaptureEnabled() && m_pendingConfirm;
+}
+
+bool CaptureOverlay::regionSelectionValid(const QRect& selection) const {
+    const QRect clipped = selection.normalized().intersected(regionCaptureBounds());
+    return clipped.width() > 4 && clipped.height() > 4;
+}
+
+void CaptureOverlay::setSelectionRect(const QRect& rect) {
+    const QRect clipped = rect.normalized().intersected(regionCaptureBounds());
+    m_dragStart = clipped.topLeft();
+    m_dragEnd = clipped.bottomRight();
+}
+
+void CaptureOverlay::updateConfirmButtonVisibility() {
+    if (!m_confirmButton)
+        return;
+
+    const bool targetValid = pendingConfirmActive() &&
+        (m_mode == hyprcapture::CaptureMode::Fullscreen ||
+         (m_mode == hyprcapture::CaptureMode::Region && regionSelectionValid(normalizedSelection())) ||
+         (m_mode == hyprcapture::CaptureMode::Window && selectedWindow()));
+
+    if (!targetValid) {
+        m_confirmButton->hide();
+        m_confirmButton->setFixedSize(0, 0);
+        m_confirmButton->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+        return;
+    }
+
+    m_confirmButton->setVisible(true);
+    m_confirmButton->setFixedSize(36, 32);
+    m_confirmButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+}
+
+void CaptureOverlay::beginPendingConfirm(hyprcapture::CaptureMode mode) {
+    if (!confirmBeforeCaptureEnabled()) {
+        finishCapture();
+        return;
+    }
+
+    m_mode = mode;
+    m_pendingConfirm = true;
+    m_confirmDragMode = ConfirmDragMode::None;
+    m_dragging = false;
+    if (mode != hyprcapture::CaptureMode::Window)
+        m_selectedWindowIndex = -1;
+    updateToolbarControlsForMode();
+    updateStatus();
+    update();
+}
+
+void CaptureOverlay::clearPendingConfirm() {
+    m_pendingConfirm = false;
+    m_confirmDragMode = ConfirmDragMode::None;
+    m_dragging = false;
+    m_selectedWindowIndex = -1;
+    updateConfirmButtonVisibility();
+}
+
+void CaptureOverlay::confirmPendingCapture() {
+    if (!pendingConfirmActive())
+        return;
+
+    if (m_mode == hyprcapture::CaptureMode::Region && !regionSelectionValid(normalizedSelection()))
+        return;
+    if (m_mode == hyprcapture::CaptureMode::Window && !selectedWindow())
+        return;
+
+    m_pendingConfirm = false;
+    m_confirmDragMode = ConfirmDragMode::None;
+    updateConfirmButtonVisibility();
+    finishCapture();
+}
+
+CaptureOverlay::ConfirmDragMode CaptureOverlay::confirmRegionDragModeAt(const QPoint& point) const {
+    const QRect selection = normalizedSelection().intersected(regionCaptureBounds());
+    if (!regionSelectionValid(selection))
+        return ConfirmDragMode::NewSelection;
+
+    const int hit = kSelectionHandleHitRadius;
+    const bool nearLeft = std::abs(point.x() - selection.left()) <= hit && point.y() >= selection.top() - hit && point.y() <= selection.bottom() + hit;
+    const bool nearRight = std::abs(point.x() - selection.right()) <= hit && point.y() >= selection.top() - hit && point.y() <= selection.bottom() + hit;
+    const bool nearTop = std::abs(point.y() - selection.top()) <= hit && point.x() >= selection.left() - hit && point.x() <= selection.right() + hit;
+    const bool nearBottom = std::abs(point.y() - selection.bottom()) <= hit && point.x() >= selection.left() - hit && point.x() <= selection.right() + hit;
+
+    if (nearLeft && nearTop)
+        return ConfirmDragMode::ResizeTopLeft;
+    if (nearRight && nearTop)
+        return ConfirmDragMode::ResizeTopRight;
+    if (nearRight && nearBottom)
+        return ConfirmDragMode::ResizeBottomRight;
+    if (nearLeft && nearBottom)
+        return ConfirmDragMode::ResizeBottomLeft;
+    if (nearLeft)
+        return ConfirmDragMode::ResizeLeft;
+    if (nearTop)
+        return ConfirmDragMode::ResizeTop;
+    if (nearRight)
+        return ConfirmDragMode::ResizeRight;
+    if (nearBottom)
+        return ConfirmDragMode::ResizeBottom;
+    if (selection.contains(point))
+        return ConfirmDragMode::MoveSelection;
+    return ConfirmDragMode::NewSelection;
+}
+
+QRect CaptureOverlay::regionSelectionForDrag(const QPoint& point) const {
+    const QRect bounds = regionCaptureBounds();
+    const QPoint clamped = clampedToRect(point, bounds);
+    QRect selection = m_confirmDragStartSelection;
+
+    if (m_confirmDragMode == ConfirmDragMode::NewSelection)
+        return QRect(m_confirmDragStart, clamped).normalized().intersected(bounds);
+
+    if (m_confirmDragMode == ConfirmDragMode::MoveSelection) {
+        QRect moved = selection.translated(clamped - m_confirmDragStart);
+        if (moved.left() < bounds.left())
+            moved.moveLeft(bounds.left());
+        if (moved.top() < bounds.top())
+            moved.moveTop(bounds.top());
+        if (moved.right() > bounds.right())
+            moved.moveRight(bounds.right());
+        if (moved.bottom() > bounds.bottom())
+            moved.moveBottom(bounds.bottom());
+        return moved.intersected(bounds);
+    }
+
+    int left = selection.left();
+    int top = selection.top();
+    int right = selection.right();
+    int bottom = selection.bottom();
+    switch (m_confirmDragMode) {
+        case ConfirmDragMode::ResizeLeft:
+        case ConfirmDragMode::ResizeTopLeft:
+        case ConfirmDragMode::ResizeBottomLeft: left = clamped.x(); break;
+        default: break;
+    }
+    switch (m_confirmDragMode) {
+        case ConfirmDragMode::ResizeTop:
+        case ConfirmDragMode::ResizeTopLeft:
+        case ConfirmDragMode::ResizeTopRight: top = clamped.y(); break;
+        default: break;
+    }
+    switch (m_confirmDragMode) {
+        case ConfirmDragMode::ResizeRight:
+        case ConfirmDragMode::ResizeTopRight:
+        case ConfirmDragMode::ResizeBottomRight: right = clamped.x(); break;
+        default: break;
+    }
+    switch (m_confirmDragMode) {
+        case ConfirmDragMode::ResizeBottom:
+        case ConfirmDragMode::ResizeBottomRight:
+        case ConfirmDragMode::ResizeBottomLeft: bottom = clamped.y(); break;
+        default: break;
+    }
+
+    return QRect(QPoint(left, top), QPoint(right, bottom)).normalized().intersected(bounds);
+}
+
 void CaptureOverlay::setMode(hyprcapture::CaptureMode mode) {
     hideOptionPopups();
 
+    clearPendingConfirm();
     m_mode = mode;
     updateToolbarControlsForMode();
     updateStatus();
@@ -1840,6 +2026,7 @@ void CaptureOverlay::updateToolbarControlsForMode() {
     }
 
     updateRecordOptionsVisibility();
+    updateConfirmButtonVisibility();
     relayoutToolbar();
 }
 
@@ -2104,12 +2291,31 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
         paintDesktop(painter, sel);
         painter.setPen(QPen(QColor(255, 255, 255, 230), 2));
         painter.drawRect(sel.adjusted(0, 0, -1, -1));
+        if (pendingConfirmActive() && m_mode == hyprcapture::CaptureMode::Region && regionSelectionValid(sel)) {
+            painter.setPen(QPen(QColor(30, 34, 38, 220), 1));
+            painter.setBrush(QColor(255, 255, 255, 235));
+            const int half = kSelectionHandlePaintSize / 2;
+            const QPoint points[] = {sel.topLeft(), QPoint(sel.center().x(), sel.top()), sel.topRight(), QPoint(sel.right(), sel.center().y()),
+                                     sel.bottomRight(), QPoint(sel.center().x(), sel.bottom()), sel.bottomLeft(), QPoint(sel.left(), sel.center().y())};
+            for (const QPoint& point : points)
+                painter.drawRect(QRect(point - QPoint(half, half), QSize(kSelectionHandlePaintSize, kSelectionHandlePaintSize)));
+        }
+    } else if (pendingConfirmActive() && m_mode == hyprcapture::CaptureMode::Fullscreen) {
+        const QRect cap = fullscreenCaptureRect();
+        if (cap.isValid()) {
+            paintDesktop(painter, cap);
+            painter.setPen(QPen(QColor(255, 255, 255, 230), 2));
+            painter.drawRect(cap.adjusted(0, 0, -1, -1));
+        }
     } else if (m_mode == hyprcapture::CaptureMode::Window || fusionGesture) {
         const auto* window = hoveredWindow();
+        const auto* selected = selectedWindow();
         for (const auto& candidate : m_windowArtifacts) {
             const QRect target = globalToLocalRect(windowFrameGeometry(candidate));
-            const int penWidth = &candidate == window ? 3 : 1;
-            QPen pen(&candidate == window ? QColor(255, 255, 255, 240) : QColor(255, 255, 255, 110), penWidth);
+            const bool isSelected = &candidate == selected;
+            const bool isHovered = &candidate == window;
+            const int penWidth = isSelected ? 3 : (isHovered ? 2 : 1);
+            QPen pen(isSelected ? QColor(255, 255, 255, 245) : (isHovered ? QColor(255, 255, 255, 210) : QColor(255, 255, 255, 110)), penWidth);
             pen.setJoinStyle(Qt::RoundJoin);
             painter.setPen(pen);
             painter.setBrush(Qt::NoBrush);
@@ -2120,12 +2326,40 @@ void CaptureOverlay::paintEvent(QPaintEvent*) {
 }
 
 void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
-    rememberCursorLocalPosition(event->position());
     if (m_toolbar->geometry().contains(event->pos()))
         return;
+    rememberCursorLocalPosition(event->position());
     hideOptionPopups();
     if (event->button() != Qt::LeftButton)
         return;
+
+    if (pendingConfirmActive()) {
+        if (m_mode == hyprcapture::CaptureMode::Region) {
+            m_confirmDragMode = confirmRegionDragModeAt(event->pos());
+            m_confirmDragStart = clampedToRect(event->pos(), regionCaptureBounds());
+            m_confirmDragStartSelection = normalizedSelection().intersected(regionCaptureBounds());
+            m_dragging = true;
+            if (m_confirmDragMode == ConfirmDragMode::NewSelection) {
+                m_dragStart = m_confirmDragStart;
+                m_dragEnd = m_confirmDragStart;
+            }
+            updateStatus();
+            update();
+            return;
+        }
+
+        if (m_mode == hyprcapture::CaptureMode::Window) {
+            const int index = hoveredWindowIndex();
+            if (index >= 0) {
+                m_selectedWindowIndex = index;
+                updateStatus();
+                update();
+            }
+            return;
+        }
+
+        return;
+    }
 
     if (m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen) {
         if (m_record)
@@ -2140,7 +2374,10 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
     }
 
     if (m_mode == hyprcapture::CaptureMode::Fullscreen) {
-        finishCapture();
+        if (confirmBeforeCaptureEnabled())
+            beginPendingConfirm(hyprcapture::CaptureMode::Fullscreen);
+        else
+            finishCapture();
         return;
     }
 
@@ -2157,6 +2394,20 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event) {
 
 void CaptureOverlay::mouseMoveEvent(QMouseEvent* event) {
     rememberCursorLocalPosition(event->position());
+    if (pendingConfirmActive()) {
+        if (m_mode == hyprcapture::CaptureMode::Region && m_dragging) {
+            setSelectionRect(regionSelectionForDrag(event->pos()));
+            updateStatus();
+            update();
+            return;
+        }
+        if (m_mode == hyprcapture::CaptureMode::Window) {
+            updateStatus();
+            update();
+            return;
+        }
+    }
+
     if (m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen) {
         if (m_dragging)
             m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
@@ -2181,6 +2432,30 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton)
         return;
 
+    if (pendingConfirmActive()) {
+        if (m_mode == hyprcapture::CaptureMode::Region && m_dragging) {
+            m_dragging = false;
+            setSelectionRect(regionSelectionForDrag(event->pos()));
+            m_confirmDragMode = ConfirmDragMode::None;
+            if (!regionSelectionValid(normalizedSelection()))
+                m_pendingConfirm = false;
+            updateStatus();
+            update();
+            return;
+        }
+
+        if (m_mode == hyprcapture::CaptureMode::Window) {
+            const int index = hoveredWindowIndex();
+            if (index >= 0)
+                m_selectedWindowIndex = index;
+            updateStatus();
+            update();
+            return;
+        }
+
+        return;
+    }
+
     if (m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen) {
         if (!m_dragging)
             return;
@@ -2190,13 +2465,21 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event) {
         const QRect selection = normalizedSelection().intersected(regionCaptureBounds());
         if (selection.width() > 4 && selection.height() > 4) {
             m_mode = hyprcapture::CaptureMode::Region;
-            finishCapture();
+            if (confirmBeforeCaptureEnabled())
+                beginPendingConfirm(hyprcapture::CaptureMode::Region);
+            else
+                finishCapture();
             return;
         }
 
-        if (hoveredWindow()) {
+        const int windowIndex = hoveredWindowIndex();
+        if (windowIndex >= 0) {
             m_mode = hyprcapture::CaptureMode::Window;
-            finishCapture();
+            m_selectedWindowIndex = windowIndex;
+            if (confirmBeforeCaptureEnabled())
+                beginPendingConfirm(hyprcapture::CaptureMode::Window);
+            else
+                finishCapture();
             return;
         }
 
@@ -2206,29 +2489,66 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event) {
     }
 
     if (m_mode == hyprcapture::CaptureMode::Window) {
-        finishCapture();
+        const int windowIndex = hoveredWindowIndex();
+        if (windowIndex >= 0)
+            m_selectedWindowIndex = windowIndex;
+        if (confirmBeforeCaptureEnabled()) {
+            if (m_selectedWindowIndex >= 0)
+                beginPendingConfirm(hyprcapture::CaptureMode::Window);
+        } else {
+            finishCapture();
+        }
         return;
     }
     m_dragging = false;
     m_dragEnd = clampedToRect(event->pos(), regionCaptureBounds());
     const QRect selection = normalizedSelection().intersected(regionCaptureBounds());
-    if (m_mode != hyprcapture::CaptureMode::Region || (selection.width() > 4 && selection.height() > 4))
-        finishCapture();
+    if (m_mode != hyprcapture::CaptureMode::Region || (selection.width() > 4 && selection.height() > 4)) {
+        if (confirmBeforeCaptureEnabled())
+            beginPendingConfirm(m_mode);
+        else
+            finishCapture();
+    }
 }
 
 void CaptureOverlay::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Escape) {
         cancelCapture();
     } else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        if (pendingConfirmActive()) {
+            confirmPendingCapture();
+            return;
+        }
+
         if (m_defaults.fushionMode && m_mode != hyprcapture::CaptureMode::Fullscreen) {
             const QRect selection = normalizedSelection().intersected(regionCaptureBounds());
             if (selection.width() > 4 && selection.height() > 4) {
                 m_mode = hyprcapture::CaptureMode::Region;
-            } else if (hoveredWindow()) {
+                if (confirmBeforeCaptureEnabled()) {
+                    beginPendingConfirm(hyprcapture::CaptureMode::Region);
+                    return;
+                }
+            } else if (const int windowIndex = hoveredWindowIndex(); windowIndex >= 0) {
                 m_mode = hyprcapture::CaptureMode::Window;
+                m_selectedWindowIndex = windowIndex;
+                if (confirmBeforeCaptureEnabled()) {
+                    beginPendingConfirm(hyprcapture::CaptureMode::Window);
+                    return;
+                }
             } else {
                 return;
             }
+        } else if (confirmBeforeCaptureEnabled()) {
+            if (m_mode == hyprcapture::CaptureMode::Window) {
+                const int windowIndex = hoveredWindowIndex();
+                if (windowIndex < 0)
+                    return;
+                m_selectedWindowIndex = windowIndex;
+            } else if (m_mode == hyprcapture::CaptureMode::Region && !regionSelectionValid(normalizedSelection())) {
+                return;
+            }
+            beginPendingConfirm(m_mode);
+            return;
         }
         finishCapture();
     }
@@ -2247,7 +2567,8 @@ QRect CaptureOverlay::captureRectForMode() const {
     if (m_mode == hyprcapture::CaptureMode::Region && normalizedSelection().isValid())
         return normalizedSelection().intersected(regionCaptureBounds());
     if (m_mode == hyprcapture::CaptureMode::Window) {
-        if (const auto* window = hoveredWindow())
+        const auto* window = selectedWindow() ? selectedWindow() : hoveredWindow();
+        if (window)
             return globalToLocalRect(windowFrameGeometry(*window));
         return {};
     }
@@ -2376,17 +2697,34 @@ double CaptureOverlay::windowFrameRadius(const WindowArtifact& window) const {
     return std::max(0.0, window.rounding + border - correction);
 }
 
-const CaptureOverlay::WindowArtifact* CaptureOverlay::hoveredWindow() const {
+int CaptureOverlay::hoveredWindowIndex() const {
     const QPoint global = cursorLogicalPosition();
-    for (auto it = m_windowArtifacts.rbegin(); it != m_windowArtifacts.rend(); ++it) {
-        if (windowFrameGeometry(*it).contains(global))
-            return &*it;
+    for (int i = static_cast<int>(m_windowArtifacts.size()) - 1; i >= 0; --i) {
+        if (windowFrameGeometry(m_windowArtifacts[static_cast<std::size_t>(i)]).contains(global))
+            return i;
     }
-    return nullptr;
+    return -1;
+}
+
+const CaptureOverlay::WindowArtifact* CaptureOverlay::hoveredWindow() const {
+    const int index = hoveredWindowIndex();
+    if (index < 0)
+        return nullptr;
+    return &m_windowArtifacts[static_cast<std::size_t>(index)];
 }
 
 CaptureOverlay::WindowArtifact* CaptureOverlay::hoveredWindow() {
     return const_cast<WindowArtifact*>(std::as_const(*this).hoveredWindow());
+}
+
+const CaptureOverlay::WindowArtifact* CaptureOverlay::selectedWindow() const {
+    if (m_selectedWindowIndex < 0 || m_selectedWindowIndex >= static_cast<int>(m_windowArtifacts.size()))
+        return nullptr;
+    return &m_windowArtifacts[static_cast<std::size_t>(m_selectedWindowIndex)];
+}
+
+CaptureOverlay::WindowArtifact* CaptureOverlay::selectedWindow() {
+    return const_cast<WindowArtifact*>(std::as_const(*this).selectedWindow());
 }
 
 bool CaptureOverlay::hydrateWindowArtifact(WindowArtifact& window) {
@@ -2512,6 +2850,28 @@ void CaptureOverlay::updateStatus() {
         return;
     }
 
+    if (pendingConfirmActive()) {
+        if (m_mode == hyprcapture::CaptureMode::Window && !windowCaptureAvailable()) {
+            if (m_sessionMonitorCount == 0 && m_sessionWindowCount == 0)
+                setStatusText("plugin reload needed");
+            else if (m_sessionWindowCount > 0)
+                setStatusText("window artifact failed");
+            else
+                setStatusText("no visible windows");
+        } else if (m_mode == hyprcapture::CaptureMode::Window && !selectedWindow()) {
+            setStatusText("choose window");
+        } else if (m_mode == hyprcapture::CaptureMode::Region && !regionSelectionValid(normalizedSelection())) {
+            setStatusText("choose area");
+        } else {
+            setStatusText("confirm");
+        }
+        updateConfirmButtonVisibility();
+        relayoutToolbar();
+        return;
+    }
+
+    updateConfirmButtonVisibility();
+
     if (m_mode != hyprcapture::CaptureMode::Window) {
         setStatusText(QString{});
         relayoutToolbar();
@@ -2529,7 +2889,7 @@ void CaptureOverlay::updateStatus() {
         return;
     }
 
-    if (hoveredWindow())
+    if (selectedWindow() || hoveredWindow())
         setStatusText(QString{});
     else
         setStatusText("choose window");
@@ -2596,7 +2956,7 @@ QImage CaptureOverlay::renderDesktopRectAtDisplayResolution(const QRect& globalR
 QImage CaptureOverlay::renderResultImage() {
     const auto bg = currentWindowBackground();
     if (m_mode == hyprcapture::CaptureMode::Window) {
-        auto* windowArtifact = hoveredWindow();
+        auto* windowArtifact = selectedWindow() ? selectedWindow() : hoveredWindow();
         if (!windowArtifact)
             return {};
         if (windowArtifact->image.isNull() && !hydrateWindowArtifact(*windowArtifact))
@@ -2725,7 +3085,7 @@ QString CaptureOverlay::prepareRecordingRequest() {
     }
 
     if (m_mode == hyprcapture::CaptureMode::Window) {
-        const auto* window = hoveredWindow();
+        const auto* window = selectedWindow() ? selectedWindow() : hoveredWindow();
         if (!window || window->address.isEmpty()) {
             m_recordError = QStringLiteral("invalid record window");
             return {};

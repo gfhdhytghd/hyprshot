@@ -25,6 +25,7 @@ struct CaptureDefaults {
     bool             showThumbnail = true;
     bool             includeCursor = false;
     bool             allowQuick = false;
+    bool             confirmBeforeCapture = false;
     bool             fushionMode = false;
     std::string      saveDir = "$XDG_PICTURES_DIR/Screenshots";
     std::string      filenameTemplate = "Screenshot-%Y-%m-%d-%H%M%S.png";

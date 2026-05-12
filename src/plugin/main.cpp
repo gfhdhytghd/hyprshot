@@ -134,6 +134,7 @@ void registerConfigValues() {
     addBoolConfig("show_thumbnail", "Show a result thumbnail after capture", true);
     addBoolConfig("include_cursor", "Include the cursor in captures", false);
     addBoolConfig("allow_quick", "Enable no-confirmation quick capture dispatchers", false);
+    addBoolConfig("confirm_before_capture", "Require explicit confirmation after target selection for normal open captures", false);
     addBoolConfig("fusion_mode", "Fuse region and window interactions in one overlay", false);
     addBoolConfig("fushion_mode", "Legacy alias for fusion_mode", false);
     addStringConfig("save_dir", "Capture output directory", "$XDG_PICTURES_DIR/Screenshots");
@@ -181,6 +182,7 @@ hyprcapture::CaptureDefaults readDefaults() {
     defaults.showThumbnail = configBool("show_thumbnail", defaults.showThumbnail);
     defaults.includeCursor = configBool("include_cursor", defaults.includeCursor);
     defaults.allowQuick = configBool("allow_quick", defaults.allowQuick);
+    defaults.confirmBeforeCapture = configBool("confirm_before_capture", defaults.confirmBeforeCapture);
     defaults.fushionMode = configBool("fusion_mode", defaults.fushionMode) || configBool("fushion_mode", defaults.fushionMode);
     defaults.saveDir = configString("save_dir", defaults.saveDir);
     defaults.filenameTemplate = configString("filename_template", defaults.filenameTemplate);

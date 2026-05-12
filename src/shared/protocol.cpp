@@ -69,6 +69,7 @@ Json defaultsJson(const CaptureDefaults& defaults) {
         {"showThumbnail", defaults.showThumbnail},
         {"includeCursor", defaults.includeCursor},
         {"allowQuick", defaults.allowQuick},
+        {"confirmBeforeCapture", defaults.confirmBeforeCapture},
         {"fushionMode", defaults.fushionMode},
         {"saveDir", boundedString(defaults.saveDir, MAX_PATH_BYTES)},
         {"filenameTemplate", boundedString(defaults.filenameTemplate, MAX_METADATA_STRING_BYTES)},
@@ -216,7 +217,8 @@ bool parseDefaults(const Json& obj, CaptureDefaults& defaults) {
 
     return boolValue(obj, "save", defaults.save, false) && boolValue(obj, "clipboard", defaults.clipboard, false) &&
         boolValue(obj, "showThumbnail", defaults.showThumbnail, false) && boolValue(obj, "includeCursor", defaults.includeCursor, false) &&
-        boolValue(obj, "allowQuick", defaults.allowQuick, false) && boolValue(obj, "fushionMode", defaults.fushionMode, false) &&
+        boolValue(obj, "allowQuick", defaults.allowQuick, false) && boolValue(obj, "confirmBeforeCapture", defaults.confirmBeforeCapture, false) &&
+        boolValue(obj, "fushionMode", defaults.fushionMode, false) &&
         stringValue(obj, "saveDir", defaults.saveDir, MAX_PATH_BYTES, false) &&
         stringValue(obj, "filenameTemplate", defaults.filenameTemplate, MAX_METADATA_STRING_BYTES, false) &&
         stringValue(obj, "recordSaveDir", defaults.recordSaveDir, MAX_PATH_BYTES, false) &&

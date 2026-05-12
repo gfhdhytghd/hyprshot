@@ -320,6 +320,8 @@ LaunchResult launchHelper(const LaunchRequest& request) {
     args.push_back(boolArg(request.defaults.showThumbnail));
     args.push_back("--include-cursor");
     args.push_back(boolArg(request.defaults.includeCursor));
+    args.push_back("--confirm-before-capture");
+    args.push_back(boolArg(request.defaults.confirmBeforeCapture));
     args.push_back("--fushion-mode");
     args.push_back(boolArg(request.defaults.fushionMode));
     args.push_back("--save-dir");

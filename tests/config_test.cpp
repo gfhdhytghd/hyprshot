@@ -25,6 +25,7 @@ int main() {
     require(parseCaptureMode("selection") == CaptureMode::Region, "selection mode parse");
     require(parseCaptureMode("window") == CaptureMode::Window, "window mode parse");
     require(parseCaptureMode("bad", CaptureMode::Window) == CaptureMode::Window, "mode fallback");
+    require(!CaptureDefaults{}.confirmBeforeCapture, "confirm before capture default");
 
     require(parseFullscreenScope("all-monitors") == FullscreenScope::All, "all monitor scope parse");
     require(parseFullscreenScope("current-monitor") == FullscreenScope::Current, "current monitor scope parse");
@@ -68,6 +69,7 @@ int main() {
     session.id = "test-session";
     session.defaults.mode = CaptureMode::Window;
     session.defaults.allowQuick = true;
+    session.defaults.confirmBeforeCapture = true;
     session.defaults.fushionMode = true;
     session.defaults.windowBackground = WindowBackground::FollowSystem;
     session.defaults.recordTransparentFormat = "webm";
@@ -103,6 +105,7 @@ int main() {
     const auto json = encodeSessionJson(session);
     require(json.find("\"fushionMode\":true") != std::string::npos, "fushion mode json");
     require(json.find("\"allowQuick\":true") != std::string::npos, "allow quick json");
+    require(json.find("\"confirmBeforeCapture\":true") != std::string::npos, "confirm before capture json");
     require(json.find("\"windowBackground\":\"follow-system\"") != std::string::npos, "window background json");
     require(json.find("\"recordTransparentFormat\":\"webm\"") != std::string::npos, "transparent record format json");
     require(json.find("\"recordTransparentCodec\":\"auto\"") != std::string::npos, "transparent record codec json");
@@ -127,6 +130,7 @@ int main() {
     require(decoded->id == "test-session", "decoded id");
     require(decoded->defaults.mode == CaptureMode::Window, "decoded mode");
     require(decoded->defaults.allowQuick, "decoded allow quick");
+    require(decoded->defaults.confirmBeforeCapture, "decoded confirm before capture");
     require(decoded->defaults.fushionMode, "decoded fushion mode");
     require(decoded->defaults.recordTransparentFormat == "webm", "decoded transparent record format");
     require(decoded->defaults.recordTransparentCodec == "auto", "decoded transparent record codec");

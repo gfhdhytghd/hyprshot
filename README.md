@@ -229,6 +229,7 @@ plugin {
         clipboard = 1
         show_thumbnail = 1
         allow_quick = 0
+        confirm_before_capture = 0
         fusion_mode = 0
         save_dir = $XDG_PICTURES_DIR/Screenshots
         filename_template = Screenshot-%Y-%m-%d-%H%M%S.png
@@ -273,6 +274,7 @@ hl.config({
             clipboard = true,
             show_thumbnail = true,
             allow_quick = false,
+            confirm_before_capture = false,
             fusion_mode = false,
             save_dir = "$XDG_PICTURES_DIR/Screenshots",
             filename_template = "Screenshot-%Y-%m-%d-%H%M%S.png",
@@ -313,6 +315,7 @@ hl.config({
         hyprcapture = {
             default_mode = "region",
             fusion_mode = true,
+            confirm_before_capture = false,
             fullscreen_scope = "all",
             window_background = "follow-system",
             save = true,
@@ -347,6 +350,7 @@ The old misspelled `fushion_mode` key is still accepted as a compatibility alias
 | `window_shadow` | string | `keep` | Window shadow policy. Supports `keep` and `remove`. Transparent window recordings keep shadows and normalize the alpha falloff so the shadow fades out instead of encoding as a hard border. |
 | `include_cursor` | bool | `0` | Parsed and forwarded by the plugin/helper; cursor compositing is not currently rendered into the output. |
 | `allow_quick` | bool | `0` | Enable no-confirmation `hyprcapture:quick` dispatchers. Leave disabled unless your Hyprland IPC policy already restricts untrusted same-user clients. |
+| `confirm_before_capture` | bool | `0` | For `hyprcapture:open`, require an explicit confirmation after choosing a fullscreen, region, or window target. Region targets can be moved or resized; window targets can be switched before confirming. `hyprcapture:quick` and direct `hyprcapture:record` keep their existing no-extra-confirmation behavior. |
 | `fusion_mode` | bool | `0` | Fuse region and window interactions in one overlay: drag to capture a region, or single-click a window to capture that window. The toolbar keeps the fullscreen action and configuration controls; fullscreen multi-monitor scope is shown only when multiple monitors are present. |
 | `fushion_mode` | bool | `0` | Legacy compatibility alias for `fusion_mode`. New configs should use `fusion_mode`. |
 
