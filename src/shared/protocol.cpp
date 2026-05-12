@@ -24,6 +24,7 @@ constexpr int         MAX_ARTIFACT_DIMENSION = 32768;
 constexpr double      MAX_LOGICAL_COORDINATE = 1'000'000.0;
 constexpr std::int64_t MAX_RECORD_FPS = 240;
 constexpr std::int64_t MAX_RECORD_SECONDS = 24 * 60 * 60;
+constexpr std::int64_t MAX_RECORD_COUNTDOWN_SECONDS = 60;
 
 std::string boundedString(const std::string& value, std::size_t maxBytes) {
     if (value.size() <= maxBytes)
@@ -88,6 +89,7 @@ Json defaultsJson(const CaptureDefaults& defaults) {
         {"recordWindowFpsLimit", std::clamp<std::int64_t>(defaults.recordWindowFpsLimit, 0, MAX_RECORD_FPS)},
         {"recordWindowRealBgFpsLimit", std::clamp<std::int64_t>(defaults.recordWindowRealBgFpsLimit, 0, MAX_RECORD_FPS)},
         {"recordMaxSeconds", std::clamp<std::int64_t>(defaults.recordMaxSeconds, 0, MAX_RECORD_SECONDS)},
+        {"recordCountdownSeconds", std::clamp<std::int64_t>(defaults.recordCountdownSeconds, 0, MAX_RECORD_COUNTDOWN_SECONDS)},
         {"thumbnailTimeoutMs", std::clamp<std::int64_t>(defaults.thumbnailTimeoutMs, 0, 60 * 60 * 1000)},
         {"watermark", boundedString(defaults.watermark, MAX_PATH_BYTES)},
         {"watermarkPosition", toString(defaults.watermarkPosition)},
@@ -235,6 +237,7 @@ bool parseDefaults(const Json& obj, CaptureDefaults& defaults) {
         int64Value(obj, "recordWindowFpsLimit", defaults.recordWindowFpsLimit, 0, MAX_RECORD_FPS, false) &&
         int64Value(obj, "recordWindowRealBgFpsLimit", defaults.recordWindowRealBgFpsLimit, 0, MAX_RECORD_FPS, false) &&
         int64Value(obj, "recordMaxSeconds", defaults.recordMaxSeconds, 0, MAX_RECORD_SECONDS, false) &&
+        int64Value(obj, "recordCountdownSeconds", defaults.recordCountdownSeconds, 0, MAX_RECORD_COUNTDOWN_SECONDS, false) &&
         int64Value(obj, "thumbnailTimeoutMs", defaults.thumbnailTimeoutMs, 0, 60 * 60 * 1000, false) &&
         stringValue(obj, "watermark", defaults.watermark, MAX_PATH_BYTES, false) &&
         stringValue(obj, "watermarkWidth", defaults.watermarkWidth, MAX_METADATA_STRING_BYTES, false) &&

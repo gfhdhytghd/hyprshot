@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <deque>
@@ -154,6 +155,7 @@ void registerConfigValues() {
     addStringConfig("record_gsr_flags", "Extra gpu-screen-recorder flags", "");
     addStringConfig("record_window_backend", "Window recording backend", "compositor");
     addIntConfig("record_max_seconds", "Optional automatic recording stop in seconds", 0);
+    addIntConfig("record_countdown_seconds", "Recording start countdown in seconds", 0);
     addIntConfig("thumbnail_timeout_ms", "Thumbnail auto-close timeout in milliseconds", 5000);
     addStringConfig("helper", "Optional helper executable override", "");
     addStringConfig("watermark", "Watermark path or built-in name", "");
@@ -203,6 +205,7 @@ hyprcapture::CaptureDefaults readDefaults() {
     defaults.recordWindowFpsLimit = configInt("record_window_fps_limit", defaults.recordWindowFpsLimit);
     defaults.recordWindowRealBgFpsLimit = configInt("record_window_real_bg_fps_limit", defaults.recordWindowRealBgFpsLimit);
     defaults.recordMaxSeconds = configInt("record_max_seconds", defaults.recordMaxSeconds);
+    defaults.recordCountdownSeconds = std::clamp<std::int64_t>(configInt("record_countdown_seconds", defaults.recordCountdownSeconds), 0, 60);
     defaults.thumbnailTimeoutMs = configInt("thumbnail_timeout_ms", defaults.thumbnailTimeoutMs);
     defaults.watermark = configString("watermark", defaults.watermark);
     defaults.watermarkPosition =

@@ -358,6 +358,8 @@ LaunchResult launchHelper(const LaunchRequest& request) {
     args.push_back(std::to_string(request.defaults.recordWindowRealBgFpsLimit));
     args.push_back("--record-max-seconds");
     args.push_back(std::to_string(request.defaults.recordMaxSeconds));
+    args.push_back("--record-countdown-seconds");
+    args.push_back(std::to_string(request.defaults.recordCountdownSeconds));
     args.push_back("--thumbnail-timeout-ms");
     args.push_back(std::to_string(request.defaults.thumbnailTimeoutMs));
     args.push_back("--watermark");

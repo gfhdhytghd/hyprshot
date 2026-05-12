@@ -81,6 +81,9 @@ class CaptureOverlay final : public QMainWindow {
     void finishCapture();
     void cancelCapture();
     QString prepareRecordingRequest();
+    void beginRecordingCountdown(const QString& requestPath);
+    void advanceRecordingCountdown();
+    void startPreparedRecording(const QString& requestPath);
     bool startRecording(const QString& requestPath);
     bool stopRecording();
     void renderAndSaveCapture();
@@ -88,6 +91,8 @@ class CaptureOverlay final : public QMainWindow {
     QImage renderResultImage();
     QImage renderDesktopRectAtDisplayResolution(const QRect& globalRect) const;
     void paintDesktop(QPainter& painter, const QRect& target) const;
+    QRect recordCountdownScreenRect() const;
+    void paintRecordCountdown(QPainter& painter) const;
     QRect normalizedSelection() const;
     QRect captureRectForMode() const;
     QRect fullscreenCaptureRect() const;
@@ -112,6 +117,7 @@ class CaptureOverlay final : public QMainWindow {
     QString currentRecordCodec() const;
     int currentRecordFps() const;
     int currentRecordMaxSeconds() const;
+    int currentRecordCountdownSeconds() const;
     hyprcapture::RecordWindowBackend currentRecordBackend() const;
     void applyRecordDefaultsForCurrentBackground();
     QString recordOptionsConflict() const;
@@ -144,12 +150,15 @@ class CaptureOverlay final : public QMainWindow {
     bool                      m_record = false;
     bool                      m_recordActive = false;
     QString                   m_recordError;
+    QString                   m_pendingRecordRequestPath;
     bool                      m_confirmBeforeCapture = false;
     bool                      m_pendingConfirm = false;
     ConfirmDragMode           m_confirmDragMode = ConfirmDragMode::None;
     bool                      m_dragging = false;
     bool                      m_finishing = false;
     bool                      m_fadeOutStarted = false;
+    bool                      m_recordCountdownActive = false;
+    int                       m_recordCountdownRemaining = 0;
     double                    m_overlayOpacity = 0.0;
     QPoint                    m_dragStart;
     QPoint                    m_dragEnd;

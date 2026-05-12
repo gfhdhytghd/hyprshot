@@ -27,6 +27,7 @@ constexpr int    MAX_THUMBNAIL_DIMENSION = 32768;
 constexpr int    THUMBNAIL_DECODE_MAX_WIDTH = 360;
 constexpr int    THUMBNAIL_DECODE_MAX_HEIGHT = 240;
 constexpr int    MAX_THUMBNAIL_TIMEOUT_MS = 60 * 60 * 1000;
+constexpr int    MAX_RECORD_COUNTDOWN_SECONDS = 60;
 
 bool flagValue(const QCommandLineParser& parser, const QString& name, bool fallback) {
     const auto value = parser.value(name);
@@ -200,6 +201,7 @@ int main(int argc, char** argv) {
         {"record-window-fps-limit", "Window recording FPS cap.", "fps", "12"},
         {"record-window-real-bg-fps-limit", "Real background window recording FPS cap.", "fps", "8"},
         {"record-max-seconds", "Recording max seconds.", "seconds", "0"},
+        {"record-countdown-seconds", "Recording start countdown seconds.", "seconds", "0"},
         {"thumbnail-timeout-ms", "Thumbnail timeout.", "ms", "5000"},
         {"watermark", "Watermark image path or built-in id.", "path|id", ""},
         {"watermark-position", "Watermark position.", "position", "central"},
@@ -260,6 +262,7 @@ int main(int argc, char** argv) {
     defaults.recordWindowFpsLimit = boundedInt(parser.value("record-window-fps-limit"), defaults.recordWindowFpsLimit, 0, 240);
     defaults.recordWindowRealBgFpsLimit = boundedInt(parser.value("record-window-real-bg-fps-limit"), defaults.recordWindowRealBgFpsLimit, 0, 240);
     defaults.recordMaxSeconds = boundedInt(parser.value("record-max-seconds"), defaults.recordMaxSeconds, 0, 24 * 60 * 60);
+    defaults.recordCountdownSeconds = boundedInt(parser.value("record-countdown-seconds"), defaults.recordCountdownSeconds, 0, MAX_RECORD_COUNTDOWN_SECONDS);
     defaults.thumbnailTimeoutMs = boundedInt(parser.value("thumbnail-timeout-ms"), defaults.thumbnailTimeoutMs, 0, MAX_THUMBNAIL_TIMEOUT_MS);
     defaults.watermark = parser.value("watermark").toStdString();
     defaults.watermarkPosition = hyprcapture::parseWatermarkPosition(parser.value("watermark-position").toStdString(), defaults.watermarkPosition);
