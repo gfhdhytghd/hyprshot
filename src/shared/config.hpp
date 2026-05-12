@@ -57,6 +57,8 @@ WindowBackground parseWindowBackground(std::string_view value, WindowBackground 
 DecorationPolicy parseDecorationPolicy(std::string_view value, DecorationPolicy fallback = DecorationPolicy::Keep);
 RecordWindowBackend parseRecordWindowBackend(std::string_view value, RecordWindowBackend fallback = RecordWindowBackend::Compositor);
 WatermarkPosition parseWatermarkPosition(std::string_view value, WatermarkPosition fallback = WatermarkPosition::Central);
+std::string normalizeRecordFormat(std::string_view value);
+bool recordFormatIsImageAnimation(std::string_view value);
 
 std::string toString(CaptureMode value);
 std::string toString(FullscreenScope value);

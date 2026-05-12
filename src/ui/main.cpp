@@ -186,7 +186,7 @@ int main(int argc, char** argv) {
         {"filename-template", "Filename strftime template.", "template", "Screenshot-%Y-%m-%d-%H%M%S.png"},
         {"record-save-dir", "Recording save directory.", "path", "$XDG_VIDEOS_DIR/Screenrecords"},
         {"record-filename-template", "Recording filename strftime template.", "template", "Recording-%Y-%m-%d-%H%M%S.mp4"},
-        {"record-format", "Recording container format.", "format", "mp4"},
+        {"record-format", "Recording format.", "format", "mp4"},
         {"record-transparent-format", "Transparent window recording container format.", "format", "webm"},
         {"record-codec", "Recording codec.", "codec", "libx264"},
         {"record-transparent-codec", "Transparent window recording codec.", "codec", "auto"},

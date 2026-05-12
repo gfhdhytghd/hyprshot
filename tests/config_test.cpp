@@ -34,6 +34,15 @@ int main() {
     require(parseWindowBackground("transparent") == WindowBackground::Transparent, "transparent background parse");
     require(parseDecorationPolicy("strip") == DecorationPolicy::Remove, "decoration policy parse");
     require(parseRecordWindowBackend("visible_gsr") == RecordWindowBackend::GsrVisible, "visible gsr backend parse");
+    require(normalizeRecordFormat("animated_webp") == "mp4", "unknown record format fallback");
+    require(normalizeRecordFormat("matroska") == "mkv", "matroska record format parse");
+    require(normalizeRecordFormat("gif") == "gif", "gif record format parse");
+    require(normalizeRecordFormat("apng") == "apng", "apng record format parse");
+    require(normalizeRecordFormat("webp") == "webp", "webp record format parse");
+    require(recordFormatIsImageAnimation("gif"), "gif animation format detection");
+    require(recordFormatIsImageAnimation("apng"), "apng animation format detection");
+    require(recordFormatIsImageAnimation("webp"), "webp animation format detection");
+    require(!recordFormatIsImageAnimation("webm"), "webm is not image animation format");
     require(parseWatermarkPosition("central") == WatermarkPosition::Central, "central watermark position parse");
     require(parseWatermarkPosition("right-meddle") == WatermarkPosition::RightMiddle, "legacy watermark position alias");
     require(parseWatermarkPosition("top_center") == WatermarkPosition::UpMiddle, "top center watermark position parse");
@@ -138,6 +147,8 @@ int main() {
     recording.defaults.recordFilenameTemplate = "Recording-%Y.mp4";
     recording.defaults.recordTransparentFormat = "mkv";
     recording.defaults.recordTransparentCodec = "ffv1";
+    recording.defaults.recordMaxSeconds = 10;
+    recording.defaults.recordCountdownSeconds = 3;
     recording.mode = CaptureMode::Window;
     recording.targetGeometry = {.x = 10, .y = 20, .width = 640, .height = 480};
     recording.windowAddress = "0x1";
@@ -148,6 +159,8 @@ int main() {
     require(recordingJson.find("\"recordGsrFlags\":\"-k h264 -q very_high\"") != std::string::npos, "record gsr flags json");
     require(recordingJson.find("\"recordTransparentFormat\":\"mkv\"") != std::string::npos, "record transparent format json");
     require(recordingJson.find("\"recordTransparentCodec\":\"ffv1\"") != std::string::npos, "record transparent codec json");
+    require(recordingJson.find("\"recordMaxSeconds\":10") != std::string::npos, "record max seconds json");
+    require(recordingJson.find("\"recordCountdownSeconds\":3") != std::string::npos, "record countdown seconds json");
     require(recordingJson.find("\"recordWindowBackend\":\"gsr-visible\"") != std::string::npos, "record window backend json");
     require(recordingJson.find("\"recordFilenameTemplate\":\"Recording-%Y.mp4\"") != std::string::npos, "record filename json");
     const auto decodedRecording = decodeRecordingRequestJson(recordingJson);
@@ -160,6 +173,8 @@ int main() {
     require(decodedRecording->defaults.recordGsrFlags == "-k h264 -q very_high", "decoded recording gsr flags");
     require(decodedRecording->defaults.recordTransparentFormat == "mkv", "decoded recording transparent format");
     require(decodedRecording->defaults.recordTransparentCodec == "ffv1", "decoded recording transparent codec");
+    require(decodedRecording->defaults.recordMaxSeconds == 10, "decoded recording max seconds");
+    require(decodedRecording->defaults.recordCountdownSeconds == 3, "decoded recording countdown seconds");
     require(decodedRecording->defaults.recordWindowBackend == RecordWindowBackend::GsrVisible, "decoded recording window backend");
     require(!decodeRecordingRequestJson("{}").has_value(), "missing recording request fields rejected");
 

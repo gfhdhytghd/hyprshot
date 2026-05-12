@@ -99,6 +99,7 @@ class CaptureOverlay final : public QMainWindow {
     QString currentRecordFormat() const;
     QString currentRecordCodec() const;
     int currentRecordFps() const;
+    int currentRecordMaxSeconds() const;
     hyprcapture::RecordWindowBackend currentRecordBackend() const;
     void applyRecordDefaultsForCurrentBackground();
     QString recordOptionsConflict() const;
@@ -148,6 +149,7 @@ class CaptureOverlay final : public QMainWindow {
     InlineSelect* m_recordCodec = nullptr;
     InlineSelect* m_recordFormat = nullptr;
     InlineSelect* m_recordFps = nullptr;
+    InlineSelect* m_recordDuration = nullptr;
     InlineSelect* m_recordBackend = nullptr;
     QLabel*       m_recordWarning = nullptr;
     QPushButton*  m_recordToggle = nullptr;

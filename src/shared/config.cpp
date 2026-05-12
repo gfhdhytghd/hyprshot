@@ -177,6 +177,30 @@ RecordWindowBackend parseRecordWindowBackend(std::string_view value, RecordWindo
     return fallback;
 }
 
+std::string normalizeRecordFormat(std::string_view value) {
+    const auto v = normalized(value);
+    if (v == "mkv" || v == "matroska")
+        return "mkv";
+    if (v == "webm")
+        return "webm";
+    if (v == "mov" || v == "quicktime")
+        return "mov";
+    if (v == "gif")
+        return "gif";
+    if (v == "apng")
+        return "apng";
+    if (v == "webp")
+        return "webp";
+    if (v == "mp4" || v == "mpeg-4")
+        return "mp4";
+    return "mp4";
+}
+
+bool recordFormatIsImageAnimation(std::string_view value) {
+    const auto format = normalizeRecordFormat(value);
+    return format == "gif" || format == "apng" || format == "webp";
+}
+
 WatermarkPosition parseWatermarkPosition(std::string_view value, WatermarkPosition fallback) {
     const auto v = normalized(value);
     if (v == "up-left" || v == "top-left" || v == "upper-left")

@@ -143,21 +143,37 @@ QString normalizedChoice(QString value) {
 }
 
 QString normalizedRecordFormat(QString value) {
-    value = normalizedChoice(value);
-    if (value == "matroska")
-        return QStringLiteral("mkv");
-    if (value == "quicktime")
-        return QStringLiteral("mov");
-    if (value == "webm" || value == "mkv" || value == "mp4" || value == "mov")
-        return value;
-    return QStringLiteral("mp4");
+    return qString(hyprcapture::normalizeRecordFormat(value.toStdString()));
+}
+
+bool isImageAnimationRecordFormat(const QString& format) {
+    return hyprcapture::recordFormatIsImageAnimation(format.toStdString());
 }
 
 QString recordFormatFromTemplate(const std::string& filenameTemplate) {
     const QString suffix = QFileInfo(qString(filenameTemplate)).suffix().toLower();
-    if (suffix == "webm" || suffix == "mkv" || suffix == "mp4" || suffix == "mov")
+    if (suffix == "webm" || suffix == "mkv" || suffix == "mp4" || suffix == "mov" || suffix == "gif" || suffix == "apng" || suffix == "webp")
         return suffix;
     return QStringLiteral("mp4");
+}
+
+QStringList animationDurationChoices() {
+    return QStringList{"3s", "5s", "10s", "15s", "30s"};
+}
+
+int animationDurationSeconds(QString value) {
+    value = value.trimmed().toLower();
+    if (value.endsWith(QLatin1Char('s')))
+        value.chop(1);
+    bool ok = false;
+    const int seconds = value.toInt(&ok);
+    if (ok && (seconds == 3 || seconds == 5 || seconds == 10 || seconds == 15 || seconds == 30))
+        return seconds;
+    return 5;
+}
+
+QString animationDurationChoice(std::int64_t seconds) {
+    return QStringLiteral("%1s").arg(animationDurationSeconds(QString::number(seconds)));
 }
 
 QString defaultRecordFormat(const hyprcapture::CaptureDefaults& defaults) {
@@ -1654,7 +1670,7 @@ void CaptureOverlay::buildToolbar() {
 
     const auto onRecordOptionChanged = [this] {
         m_recordError.clear();
-        updateRecordWarning();
+        updateRecordOptionsVisibility();
         updateStatus();
     };
 
@@ -1670,11 +1686,14 @@ void CaptureOverlay::buildToolbar() {
 
     m_recordFormat = new InlineSelect(this, m_recordOptions);
     m_recordFormat->setPrefix("Format");
-    m_recordFormat->addItems(QStringList{"mp4", "mov", "webm", "mkv"});
+    m_recordFormat->addItems(QStringList{"mp4", "mov", "webm", "mkv", "gif", "apng", "webp"});
     m_recordFormat->setCurrentText(defaultRecordFormatForBackground(m_defaults, currentWindowBackground()));
     m_recordFormat->setOnChanged([this, onRecordOptionChanged] {
         m_recordFormatAuto = false;
-        if (alphaRecordingRequested(m_defaults, currentWindowBackground()) && m_recordCodec) {
+        if (isImageAnimationRecordFormat(currentRecordFormat())) {
+            if (m_recordDuration)
+                m_recordDuration->setCurrentText(animationDurationChoice(currentRecordMaxSeconds()));
+        } else if (alphaRecordingRequested(m_defaults, currentWindowBackground()) && m_recordCodec) {
             const QString format = currentRecordFormat();
             if (format == "webm" || format == "mkv") {
                 m_recordCodec->setCurrentText(transparentAutoChoiceForFormat(format).codec);
@@ -1691,6 +1710,13 @@ void CaptureOverlay::buildToolbar() {
     m_recordFps->setCurrentText(QString::number(std::clamp<std::int64_t>(m_defaults.recordFps, 1, 240)));
     m_recordFps->setOnChanged(onRecordOptionChanged);
     recordLayout->addWidget(m_recordFps);
+
+    m_recordDuration = new InlineSelect(this, m_recordOptions);
+    m_recordDuration->setPrefix("Duration");
+    m_recordDuration->addItems(animationDurationChoices());
+    m_recordDuration->setCurrentText(animationDurationChoice(m_defaults.recordMaxSeconds));
+    m_recordDuration->setOnChanged(onRecordOptionChanged);
+    recordLayout->addWidget(m_recordDuration);
 
     m_recordBackend = new InlineSelect(this, m_recordOptions);
     m_recordBackend->setPrefix("Backend");
@@ -1787,6 +1813,8 @@ void CaptureOverlay::hideOptionPopups() {
         m_recordFormat->hidePopup();
     if (m_recordFps)
         m_recordFps->hidePopup();
+    if (m_recordDuration)
+        m_recordDuration->hidePopup();
     if (m_recordBackend)
         m_recordBackend->hidePopup();
 }
@@ -1858,6 +1886,12 @@ int CaptureOverlay::currentRecordFps() const {
     return ok ? std::clamp(fps, 1, 240) : std::clamp<std::int64_t>(m_defaults.recordFps, 1, 240);
 }
 
+int CaptureOverlay::currentRecordMaxSeconds() const {
+    if (isImageAnimationRecordFormat(currentRecordFormat()))
+        return animationDurationSeconds(m_recordDuration ? m_recordDuration->currentText() : animationDurationChoice(m_defaults.recordMaxSeconds));
+    return std::clamp<std::int64_t>(m_defaults.recordMaxSeconds, 0, 24 * 60 * 60);
+}
+
 hyprcapture::RecordWindowBackend CaptureOverlay::currentRecordBackend() const {
     if (!m_recordBackend)
         return m_defaults.recordWindowBackend;
@@ -1900,6 +1934,10 @@ QString CaptureOverlay::recordOptionsConflict() const {
     const bool alphaRequested = transparencyRequired(currentWindowBackground());
     const QString format = currentRecordFormat();
     const QString codec = currentRecordCodec();
+    const bool imageAnimation = isImageAnimationRecordFormat(format);
+
+    if (imageAnimation)
+        return {};
 
     if (alphaRequested && currentRecordBackend() == hyprcapture::RecordWindowBackend::GsrVisible)
         return QStringLiteral("selected backend does not support transparency");
@@ -1922,11 +1960,20 @@ QString CaptureOverlay::recordOptionsConflict() const {
 }
 
 QString CaptureOverlay::recordOptionsWarning() const {
-    if (!m_record || !alphaRecordingRequested(m_defaults, currentWindowBackground()))
+    if (!m_record)
         return {};
 
     const QString format = currentRecordFormat();
     const QString codec = currentRecordCodec();
+    if (isImageAnimationRecordFormat(format)) {
+        if (format == "gif" && alphaRecordingRequested(m_defaults, currentWindowBackground()))
+            return QStringLiteral("gif has limited transparency; using compositor readback for a fixed-duration animation");
+        return QStringLiteral("animation formats use compositor readback; keep area and fps modest");
+    }
+
+    if (!alphaRecordingRequested(m_defaults, currentWindowBackground()))
+        return {};
+
     if (format == "webm" && (codec == "auto" || codec == "vp9")) {
         if (!alphaProbeSucceeded(format, QStringLiteral("vp9-vaapi")))
             return QStringLiteral("no hardware alpha encoder detected; using CPU vp9");
@@ -1965,14 +2012,19 @@ void CaptureOverlay::updateRecordOptionsVisibility() {
         return;
 
     const bool visible = m_record && !m_recordActive;
-    const auto updateSelect = [visible](InlineSelect* select) {
+    const bool imageAnimation = visible && isImageAnimationRecordFormat(currentRecordFormat());
+    if (imageAnimation && m_recordDuration)
+        m_recordDuration->setCurrentText(animationDurationChoice(currentRecordMaxSeconds()));
+
+    const auto updateSelect = [](InlineSelect* select, bool selectVisible) {
         if (select)
-            select->setControlVisible(visible);
+            select->setControlVisible(selectVisible);
     };
-    updateSelect(m_recordCodec);
-    updateSelect(m_recordFormat);
-    updateSelect(m_recordFps);
-    updateSelect(m_recordBackend);
+    updateSelect(m_recordCodec, visible && !imageAnimation);
+    updateSelect(m_recordFormat, visible);
+    updateSelect(m_recordFps, visible);
+    updateSelect(m_recordDuration, imageAnimation);
+    updateSelect(m_recordBackend, visible && !imageAnimation);
 
     m_recordOptions->setVisible(visible);
     m_recordOptions->setSizePolicy(visible ? QSizePolicy::Fixed : QSizePolicy::Ignored, visible ? QSizePolicy::Fixed : QSizePolicy::Ignored);
@@ -2656,11 +2708,14 @@ QString CaptureOverlay::prepareRecordingRequest() {
     request.defaults.windowBackground = currentWindowBackground();
     request.defaults.windowBorder = currentWindowBorder();
     request.defaults.windowShadow = currentWindowShadow();
-    request.defaults.recordFormat = currentRecordFormat().toStdString();
-    request.defaults.recordFilenameTemplate = recordTemplateWithFormat(m_defaults.recordFilenameTemplate, currentRecordFormat()).toStdString();
-    request.defaults.recordCodec = codecConfigFromChoice(currentRecordCodec()).toStdString();
+    const QString recordFormat = currentRecordFormat();
+    const bool imageAnimation = isImageAnimationRecordFormat(recordFormat);
+    request.defaults.recordFormat = recordFormat.toStdString();
+    request.defaults.recordFilenameTemplate = recordTemplateWithFormat(m_defaults.recordFilenameTemplate, recordFormat).toStdString();
+    request.defaults.recordCodec = imageAnimation ? recordFormat.toStdString() : codecConfigFromChoice(currentRecordCodec()).toStdString();
     request.defaults.recordFps = currentRecordFps();
-    request.defaults.recordWindowBackend = currentRecordBackend();
+    request.defaults.recordMaxSeconds = currentRecordMaxSeconds();
+    request.defaults.recordWindowBackend = imageAnimation ? hyprcapture::RecordWindowBackend::Compositor : currentRecordBackend();
     request.mode = m_mode;
 
     const QString conflict = recordOptionsConflict();

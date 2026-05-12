@@ -191,16 +191,22 @@ bool recordingNeedsAlpha(const RecordingFrameRequest& request) {
 }
 
 std::string sanitizedRecordFormat(std::string_view format) {
-    const auto value = normalizedToken(format);
-    if (value == "mkv" || value == "matroska")
-        return "mkv";
-    if (value == "webm")
-        return "webm";
-    if (value == "mov" || value == "quicktime")
-        return "mov";
-    if (value == "mp4" || value == "mpeg-4")
-        return "mp4";
-    return "mp4";
+    return normalizeRecordFormat(format);
+}
+
+bool isImageAnimationRecordFormat(std::string_view format) {
+    return recordFormatIsImageAnimation(format);
+}
+
+int normalizedAnimationDurationSeconds(std::int64_t seconds) {
+    switch (seconds) {
+        case 3:
+        case 5:
+        case 10:
+        case 15:
+        case 30: return static_cast<int>(seconds);
+        default: return 5;
+    }
 }
 
 bool allowEnvironmentName(std::string_view name) {
@@ -398,6 +404,12 @@ std::string effectiveRecordingCodec(const RecordingFrameRequest& request, std::s
     const auto format = sanitizedRecordFormat(request.defaults.recordFormat);
     const bool needsAlpha = recordingNeedsAlpha(request);
     const auto normalizedCodec = normalizedToken(codec);
+    if (format == "gif")
+        return "gif";
+    if (format == "apng")
+        return "apng";
+    if (format == "webp")
+        return "libwebp_anim";
     if (format == "webm" && (codec.empty() || normalizedCodec == "auto"))
         return "libvpx-vp9";
     if (needsAlpha && format == "mkv" && (codec.empty() || normalizedCodec == "auto"))
@@ -408,6 +420,8 @@ std::string effectiveRecordingCodec(const RecordingFrameRequest& request, std::s
 bool recordingEncoderSupportsAlpha(std::string_view format, std::string_view codec) {
     const auto normalizedFormat = sanitizedRecordFormat(format);
     const auto normalizedCodec = normalizedToken(codec);
+    if (normalizedFormat == "apng" || normalizedFormat == "webp")
+        return true;
     return (normalizedFormat == "webm" && normalizedCodec == "libvpx-vp9") || (normalizedFormat == "mkv" && normalizedCodec == "ffv1");
 }
 
@@ -613,8 +627,14 @@ bool makeEvenFrame(RecordingFrame& frame) {
 
 class RawVideoEncoder {
   public:
-    RawVideoEncoder(std::filesystem::path outputPath, int width, int height, int fps, std::string codec, std::string preset)
-        : m_outputPath(std::move(outputPath)), m_width(width), m_height(height), m_fps(fps), m_codec(std::move(codec)), m_preset(std::move(preset)) {}
+    RawVideoEncoder(std::filesystem::path outputPath, int width, int height, int fps, std::string format, std::string codec, std::string preset)
+        : m_outputPath(std::move(outputPath)),
+          m_width(width),
+          m_height(height),
+          m_fps(fps),
+          m_format(std::move(format)),
+          m_codec(std::move(codec)),
+          m_preset(std::move(preset)) {}
 
     ~RawVideoEncoder() {
         stopAndJoin(false);
@@ -659,7 +679,30 @@ class RawVideoEncoder {
         };
         args.insert(args.end(), inputArgs.begin(), inputArgs.end());
 
-        if (isVaapiCodec(m_codec)) {
+        if (m_format == "gif") {
+            args.push_back("-c:v");
+            args.push_back("gif");
+            args.push_back("-loop");
+            args.push_back("0");
+        } else if (m_format == "apng") {
+            args.push_back("-c:v");
+            args.push_back("apng");
+            args.push_back("-pix_fmt");
+            args.push_back("rgba");
+            args.push_back("-plays");
+            args.push_back("0");
+        } else if (m_format == "webp") {
+            args.push_back("-c:v");
+            args.push_back("libwebp_anim");
+            args.push_back("-pix_fmt");
+            args.push_back("yuva420p");
+            args.push_back("-lossless");
+            args.push_back("0");
+            args.push_back("-quality");
+            args.push_back("75");
+            args.push_back("-loop");
+            args.push_back("0");
+        } else if (isVaapiCodec(m_codec)) {
             args.push_back("-vf");
             args.push_back("format=rgba,hwupload,scale_vaapi=format=nv12");
             args.push_back("-c:v");
@@ -693,7 +736,8 @@ class RawVideoEncoder {
             args.push_back(m_codec);
         }
 
-        if (m_codec == "libx264" || m_codec == "libx264rgb" || m_codec == "libx265") {
+        if (m_format == "gif" || m_format == "apng" || m_format == "webp") {
+        } else if (m_codec == "libx264" || m_codec == "libx264rgb" || m_codec == "libx265") {
             args.push_back("-preset");
             args.push_back(m_preset);
             args.push_back("-crf");
@@ -711,12 +755,15 @@ class RawVideoEncoder {
             args.push_back("-cq");
             args.push_back("23");
         }
-        if (m_codec != "libx264rgb" && m_codec != "libvpx-vp9" && m_codec != "ffv1" && !isHardwareCodec(m_codec)) {
+        if (m_format != "gif" && m_format != "apng" && m_format != "webp" && m_codec != "libx264rgb" && m_codec != "libvpx-vp9" && m_codec != "ffv1" &&
+            !isHardwareCodec(m_codec)) {
             args.push_back("-pix_fmt");
             args.push_back("yuv420p");
         }
-        args.push_back("-movflags");
-        args.push_back("+faststart");
+        if (m_format == "mp4" || m_format == "mov") {
+            args.push_back("-movflags");
+            args.push_back("+faststart");
+        }
         args.push_back(m_outputPath.string());
 
         std::vector<char*> argv;
@@ -857,6 +904,7 @@ class RawVideoEncoder {
     int                   m_width = 0;
     int                   m_height = 0;
     int                   m_fps = 30;
+    std::string           m_format;
     std::string           m_codec;
     std::string           m_preset;
     int                   m_writeFd = -1;
@@ -1153,12 +1201,19 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
     if (!requestJson)
         return {.success = false, .error = "invalid recording request file"};
 
-    const auto request = decodeRecordingRequestJson(*requestJson);
+    auto request = decodeRecordingRequestJson(*requestJson);
     if (!request)
         return {.success = false, .error = "invalid recording request metadata"};
 
-    if (request->mode == CaptureMode::Fullscreen || request->mode == CaptureMode::Region ||
-        (request->mode == CaptureMode::Window && request->defaults.recordWindowBackend == RecordWindowBackend::GsrVisible))
+    request->defaults.recordFormat = sanitizedRecordFormat(request->defaults.recordFormat);
+    const bool imageAnimation = isImageAnimationRecordFormat(request->defaults.recordFormat);
+    if (imageAnimation) {
+        request->defaults.recordMaxSeconds = normalizedAnimationDurationSeconds(request->defaults.recordMaxSeconds);
+        request->defaults.recordWindowBackend = RecordWindowBackend::Compositor;
+    }
+
+    if (!imageAnimation && (request->mode == CaptureMode::Fullscreen || request->mode == CaptureMode::Region ||
+                            (request->mode == CaptureMode::Window && request->defaults.recordWindowBackend == RecordWindowBackend::GsrVisible)))
         return startGsrRecording(*request);
 
     RecordingFrameRequest frameRequest{.defaults = request->defaults,
@@ -1166,6 +1221,7 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
                                        .targetGeometry = request->targetGeometry,
                                        .windowAddress = request->windowAddress};
     const auto format = sanitizedRecordFormat(frameRequest.defaults.recordFormat);
+    frameRequest.defaults.recordFormat = format;
     const auto codec = effectiveRecordingCodec(frameRequest, request->defaults.recordCodec);
     const bool solidAlphaFallback =
         frameRequest.defaults.recordSolidAlpha && solidAlphaBackground(frameRequest.defaults.windowBackground) && !recordingEncoderSupportsAlpha(format, codec);
@@ -1191,6 +1247,7 @@ LaunchResult startRecordingFromRequestFile(const std::string& path) {
                                                      firstFrame->width,
                                                      firstFrame->height,
                                                      fps,
+                                                     format,
                                                      codec,
                                                      sanitizedPreset(request->defaults.recordPreset));
     if (const auto result = encoder->start(); !result.success)

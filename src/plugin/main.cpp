@@ -140,7 +140,7 @@ void registerConfigValues() {
     addStringConfig("filename_template", "Screenshot filename strftime template", "Screenshot-%Y-%m-%d-%H%M%S.png");
     addStringConfig("record_save_dir", "Recording output directory", "$XDG_VIDEOS_DIR/Screenrecords");
     addStringConfig("record_filename_template", "Recording filename strftime template", "Recording-%Y-%m-%d-%H%M%S.mp4");
-    addStringConfig("record_format", "Default recording container", "mp4");
+    addStringConfig("record_format", "Default recording format", "mp4");
     addStringConfig("record_transparent_format", "Default transparent recording container", "webm");
     addIntConfig("record_fps", "Recording frame rate", 30);
     addStringConfig("record_fps_options", "Recording frame rate choices", "15 24 30 60");

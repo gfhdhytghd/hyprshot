@@ -14,7 +14,7 @@ HyprCapture is a Hyprland-only screenshot tool split into a compositor plugin an
 ## Features
 
 - Fullscreen, region, and window capture modes
-- Fullscreen and region recording through `gpu-screen-recorder`, with compositor-side window recording for offscreen-safe captures
+- Fullscreen, region, and window recording as video or fixed-duration GIF/APNG/WebP animations
 - Immediate frozen desktop image behind the overlay
 - Display-resolution output for fullscreen and region captures
 - Compositor-side window artifacts, including windows that are occluded or partly off-screen
@@ -195,11 +195,11 @@ Use lowercase `s` for `SUPER + s`. In Lua config key strings, uppercase `S` mean
 
 ### Recording
 
-Recording is toggled from the normal screenshot overlay toolbar. Click the record icon, then choose fullscreen, drag a region, or choose a window exactly like a screenshot. Fullscreen and region recordings are handed to `gpu-screen-recorder`; window recordings use HyprCapture's compositor offscreen renderer by default, with an optional visible-region `gpu-screen-recorder` backend.
+Recording is toggled from the normal screenshot overlay toolbar. Click the record icon, choose an output format, then choose fullscreen, drag a region, or choose a window exactly like a screenshot. Fullscreen and region video recordings are handed to `gpu-screen-recorder`; GIF, APNG, WebP, and the default window backend use HyprCapture's compositor renderer. Window recordings also have an optional visible-region `gpu-screen-recorder` backend for normal video formats.
 
 To stop an active recording, open the same overlay and click the checked record icon.
 
-Current recording output is a single video file under `record_save_dir`. Fullscreen and region recordings require `gpu-screen-recorder` and avoid Hyprland's screencopy, portal, and screenshare session paths. The default window backend still uses FFmpeg rawvideo input and compositor RGBA readback for offscreen/occlusion-safe capture. `record_window_backend = gsr-visible` records the selected on-screen window rectangle through `gpu-screen-recorder` for lower overhead, without portal or managed screenshare sessions, but it captures what is visibly present in that screen region. Finished recordings use the same `clipboard` and `show_thumbnail` settings as screenshots; clipboard output is a local file URI.
+Current recording output is a single file under `record_save_dir`. Fullscreen and region video recordings require `gpu-screen-recorder` and avoid Hyprland's screencopy, portal, and screenshare session paths. GIF, APNG, and animated WebP use FFmpeg rawvideo input from compositor RGBA readback for all capture modes, so the overlay requires a fixed duration of 3, 5, 10, 15, or 30 seconds and defaults to 5 seconds. `record_window_backend = gsr-visible` records the selected on-screen window rectangle through `gpu-screen-recorder` for lower overhead on normal video formats, without portal or managed screenshare sessions, but it captures what is visibly present in that screen region. Finished recordings use the same `clipboard` and `show_thumbnail` settings as screenshots; clipboard output is a local file URI.
 
 ### Thumbnail
 
@@ -247,6 +247,7 @@ plugin {
         record_gsr_flags =
         record_window_backend = compositor
         record_max_seconds = 0
+        record_countdown_seconds = 0
         include_cursor = 0
         thumbnail_timeout_ms = 5000
         watermark =
@@ -290,6 +291,7 @@ hl.config({
             record_gsr_flags = "",
             record_window_backend = "compositor",
             record_max_seconds = 0,
+            record_countdown_seconds = 0,
             include_cursor = false,
             thumbnail_timeout_ms = 5000,
             watermark = "",
@@ -359,19 +361,20 @@ The old misspelled `fushion_mode` key is still accepted as a compatibility alias
 | `filename_template` | string | `Screenshot-%Y-%m-%d-%H%M%S.png` | `strftime` template for saved screenshot filenames. |
 | `record_save_dir` | string | `$XDG_VIDEOS_DIR/Screenrecords` | Output directory for recordings. `$XDG_VIDEOS_DIR` is read from XDG user-dirs with `~/Videos` as fallback. Finished recordings can be copied to the clipboard as local file URIs and shown in the thumbnail when those global output settings are enabled. |
 | `record_filename_template` | string | `Recording-%Y-%m-%d-%H%M%S.mp4` | `strftime` template for saved recording filenames. |
-| `record_format` | string | `mp4` | Default recording container shown in the overlay for non-transparent window backgrounds, fullscreen recording, and region recording. Supports `mp4`, `mov`, `webm`, and `mkv`; the selected value replaces the filename extension. |
+| `record_format` | string | `mp4` | Default recording format shown in the overlay for non-transparent window backgrounds, fullscreen recording, and region recording. Supports `mp4`, `mov`, `webm`, `mkv`, `gif`, `apng`, and `webp`; the selected value replaces the filename extension. |
 | `record_transparent_format` | string | `webm` | Default recording container shown when `window_background = transparent`. |
 | `record_fps` | int | `30` | Recording frame rate. Higher values increase compositor readback and encoder load. |
 | `record_fps_options` | string | `15 24 30 60` | Whitespace, comma, or semicolon separated FPS choices shown in the overlay. The current `record_fps` value is added if it is not already listed. |
 | `record_window_fps_limit` | int | `12` | Safety cap for window recording with the current compositor-readback backend. Use `0` to disable the cap. |
 | `record_window_real_bg_fps_limit` | int | `8` | Additional safety cap for window recording with `window_background = real`. Use `0` to disable the cap. |
-| `record_codec` | string | `libx264` | Default recording codec shown in the overlay for non-transparent window backgrounds, fullscreen recording, and region recording. Supports `auto`, `libx264`/`h264`, `h264_vaapi`, `libx265`/`h265`, `hevc_vaapi`/`h265_vaapi`, `libsvtav1`/`av1`, `av1_vaapi`, `libvpx-vp9`/`vp9`, `vp9_vaapi`, and `ffv1`. |
+| `record_codec` | string | `libx264` | Default recording codec shown in the overlay for normal video formats. Supports `auto`, `libx264`/`h264`, `h264_vaapi`, `libx265`/`h265`, `hevc_vaapi`/`h265_vaapi`, `libsvtav1`/`av1`, `av1_vaapi`, `libvpx-vp9`/`vp9`, `vp9_vaapi`, and `ffv1`. GIF, APNG, and WebP use fixed FFmpeg image-animation encoders. |
 | `record_transparent_codec` | string | `auto` | Default recording codec shown when `window_background = transparent`. `auto` probes a tiny FFmpeg encode/decode sample and uses a hardware alpha encoder only when it actually preserves alpha; otherwise it falls back to CPU VP9/FFV1 and shows a warning. |
 | `record_solid_alpha` | bool | `0` | For window recordings with `window_background = follow-system`, `white`, or `black`, keep alpha outside the window content when the selected format/codec supports transparency. This uses the same edge behavior as screenshot output and falls back to opaque recording when unsupported. |
 | `record_preset` | string | `veryfast` | FFmpeg preset used with `libx264`/`libx264rgb`. |
 | `record_gsr_flags` | string | empty | Extra default flags passed to `gpu-screen-recorder` for fullscreen and region recordings. `-w` and `-o` are rejected because HyprCapture owns the capture target and output path. If defaults conflict with overlay-controlled format, codec, FPS, cursor, target, or output settings, the overlay settings are appended later and take precedence. |
-| `record_window_backend` | string | `compositor` | Window recording backend. `compositor` preserves HyprCapture's offscreen window capture and background behavior. `gsr-visible` records the selected visible screen rectangle with `gpu-screen-recorder` for much lower overhead; occlusion/hidden-window capture and background replacement are not guaranteed. |
-| `record_max_seconds` | int | `0` | Optional automatic stop in seconds. `0` means no duration limit. |
+| `record_window_backend` | string | `compositor` | Window recording backend. `compositor` preserves HyprCapture's offscreen window capture and background behavior. `gsr-visible` records the selected visible screen rectangle with `gpu-screen-recorder` for much lower overhead on normal video formats; occlusion/hidden-window capture and background replacement are not guaranteed. GIF, APNG, and WebP always use the compositor backend. |
+| `record_max_seconds` | int | `0` | Optional automatic stop in seconds. `0` means no duration limit for normal video formats. GIF, APNG, and WebP require one of `3`, `5`, `10`, `15`, or `30` seconds in the overlay and fall back to `5` when configured otherwise. |
+| `record_countdown_seconds` | int | `0` | Optional countdown before recording starts. `0` disables it; values are clamped to 60 seconds. When enabled, HyprCapture shows the countdown centered on the active screen, hides the overlay, then starts recording. |
 | `thumbnail_timeout_ms` | int | `5000` | Thumbnail auto-close timeout in milliseconds. Use `0` to keep it open until user action. |
 | `helper` | string | empty | Optional absolute helper override. By default the plugin tries `HYPRCAPTURE_HELPER`, then `$HOME/.local/bin/hyprcapture-ui`, then trusted system install paths. |
 
@@ -382,9 +385,9 @@ record_fps = 60
 record_codec = auto
 ```
 
-`auto` currently prefers VAAPI when a writable `/dev/dri/renderD*` device exists and falls back to `libx264` for the window-recording FFmpeg backend. For alpha-preserving window recordings, use `webm`/VP9 or `mkv`/FFV1; `mp4` is blocked by the overlay when `window_background = transparent`. MOV/HEVC alpha exists in Apple's ecosystem, but this Linux FFmpeg path does not currently encode that alpha profile, so transparent MOV is also blocked.
+`auto` currently prefers VAAPI when a writable `/dev/dri/renderD*` device exists and falls back to `libx264` for the window-recording FFmpeg backend. For alpha-preserving window recordings, use `webm`/VP9, `mkv`/FFV1, APNG, or WebP; `mp4` is blocked by the overlay when `window_background = transparent`. MOV/HEVC alpha exists in Apple's ecosystem, but this Linux FFmpeg path does not currently encode that alpha profile, so transparent MOV is also blocked. WebP animation uses `libwebp_anim` in lossy mode at quality 75.
 
-The compositor window recording path uses synchronous compositor readback. To avoid making Hyprland sluggish, window recordings are capped by `record_window_fps_limit` until the GPU-only encoder path lands. For visible on-screen windows where 60 fps matters more than offscreen/occlusion-safe capture, set `record_window_backend = gsr-visible`.
+The compositor recording path uses synchronous compositor readback. To avoid making Hyprland sluggish, window recordings are capped by `record_window_fps_limit` until the GPU-only encoder path lands. GIF, APNG, and WebP use the same compositor path for fullscreen and region captures, so keep area and FPS modest. For visible on-screen windows where 60 fps matters more than offscreen/occlusion-safe capture, set `record_window_backend = gsr-visible` and use a normal video format.
 
 ### Watermark options
 
