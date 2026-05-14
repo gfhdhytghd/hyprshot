@@ -2518,7 +2518,10 @@ CaptureSession captureCompositorArtifacts(const CaptureDefaults& defaults, bool 
     const bool renderWindowImages = defaults.mode == CaptureMode::Window;
     const bool renderDecorations = renderWindowImages && (defaults.windowBorder == DecorationPolicy::Keep || defaults.windowShadow == DecorationPolicy::Keep);
     const bool captureMonitorArtifacts = true;
-    const bool captureWindowMetadata = defaults.fushionMode || defaults.mode == CaptureMode::Window;
+    // The helper can switch into window mode from the toolbar after launch.
+    // Keep hit-test metadata available even when the initial mode is region or
+    // fullscreen; only the heavier window image render stays window-mode gated.
+    const bool captureWindowMetadata = true;
     const bool captureRealBackgroundArtifacts = renderWindowImages && defaults.windowBackground == WindowBackground::Real;
     ArtifactBudget artifactBudget;
 
