@@ -1433,6 +1433,7 @@ void CaptureOverlay::parseSessionJson(const QString& json) {
     if (!decoded)
         return;
 
+    m_sessionDecoded = true;
     m_defaults = decoded->defaults;
     m_mode = m_defaults.mode;
     if (decoded->cursorPosition) {
@@ -2907,6 +2908,16 @@ void CaptureOverlay::updateStatus() {
         m_status->setText(text);
         m_status->adjustSize();
     };
+    const auto setMissingWindowCaptureStatus = [&] {
+        if (!m_sessionDecoded)
+            setStatusText("open via hyprcapture dispatcher");
+        else if (m_sessionMonitorCount == 0 && m_sessionWindowCount == 0)
+            setStatusText("plugin reload needed");
+        else if (m_sessionWindowCount > 0)
+            setStatusText("window artifact failed");
+        else
+            setStatusText("no visible windows");
+    };
 
     if (m_recordActive) {
         setStatusText(QString{});
@@ -2922,12 +2933,7 @@ void CaptureOverlay::updateStatus() {
 
     if (pendingConfirmActive()) {
         if (m_mode == hyprcapture::CaptureMode::Window && !windowCaptureAvailable()) {
-            if (m_sessionMonitorCount == 0 && m_sessionWindowCount == 0)
-                setStatusText("plugin reload needed");
-            else if (m_sessionWindowCount > 0)
-                setStatusText("window artifact failed");
-            else
-                setStatusText("no visible windows");
+            setMissingWindowCaptureStatus();
         } else if (m_mode == hyprcapture::CaptureMode::Window && !selectedWindow()) {
             setStatusText("choose window");
         } else if (m_mode == hyprcapture::CaptureMode::Region && !regionSelectionValid(normalizedSelection())) {
@@ -2949,12 +2955,7 @@ void CaptureOverlay::updateStatus() {
     }
 
     if (!windowCaptureAvailable()) {
-        if (m_sessionMonitorCount == 0 && m_sessionWindowCount == 0)
-            setStatusText("plugin reload needed");
-        else if (m_sessionWindowCount > 0)
-            setStatusText("window artifact failed");
-        else
-            setStatusText("no visible windows");
+        setMissingWindowCaptureStatus();
         relayoutToolbar();
         return;
     }

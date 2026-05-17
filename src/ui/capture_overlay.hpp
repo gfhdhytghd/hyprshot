@@ -149,6 +149,7 @@ class CaptureOverlay final : public QMainWindow {
     bool                      m_record = false;
     bool                      m_recordActive = false;
     QString                   m_recordError;
+    bool                      m_sessionDecoded = false;
     bool                      m_confirmBeforeCapture = false;
     bool                      m_pendingConfirm = false;
     ConfirmDragMode           m_confirmDragMode = ConfirmDragMode::None;
